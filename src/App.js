@@ -3,14 +3,28 @@ import { Loader } from 'lucide-react';
 import OfficerRosterView from './officer-roster-view-supabase';
 import StaffApp from './StaffApp';
 import Login from './Login';
+import SetPassword from './SetPassword';
 import DepartmentSwitcher from './DepartmentSwitcher';
 import { supabase, getMyMemberships, signOut } from './supabaseClient';
+
+// Supabase redirects invite/password-recovery links back here with
+// ?type=invite / ?type=recovery (or, on older/implicit-flow projects,
+// #access_token=...&type=invite in the hash) — either way it establishes a
+// session automatically from the link's one-time token, with no password
+// involved. This is the only signal that "you're logged in, but via a
+// link, not a password you can reuse" — captured in a useState initializer
+// so it's read during React's first synchronous render, before
+// supabase-js's own async URL processing has a chance to strip it.
+function needsPasswordSetupFromUrl() {
+  return /[?&#]type=(invite|recovery)\b/.test(window.location.href);
+}
 
 function App() {
   const [session, setSession] = useState(undefined); // undefined = still checking, null = signed out
   const [memberships, setMemberships] = useState(null);
   const [membershipsLoading, setMembershipsLoading] = useState(false);
   const [activeMembership, setActiveMembership] = useState(null);
+  const [needsPasswordSetup, setNeedsPasswordSetup] = useState(needsPasswordSetupFromUrl);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session: s } }) => setSession(s));
@@ -40,12 +54,21 @@ function App() {
 
   const handleSwitchDepartment = () => setActiveMembership(null);
 
+  const handlePasswordSet = () => {
+    setNeedsPasswordSetup(false);
+    window.history.replaceState(null, '', window.location.pathname);
+  };
+
   if (session === undefined) {
     return <FullScreenLoader />;
   }
 
   if (!session) {
     return <Login />;
+  }
+
+  if (needsPasswordSetup) {
+    return <SetPassword onDone={handlePasswordSet} />;
   }
 
   if (memberships === null || membershipsLoading) {

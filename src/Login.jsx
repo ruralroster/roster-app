@@ -1,17 +1,19 @@
 import React, { useState } from 'react';
-import { Loader, AlertCircle } from 'lucide-react';
-import { signIn } from './supabaseClient';
+import { Loader, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { signIn, supabase } from './supabaseClient';
 
 export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [resetSent, setResetSent] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
+    setResetSent(false);
 
     const { error: signInError } = await signIn(email.trim(), password);
 
@@ -21,6 +23,29 @@ export default function Login() {
     }
     // On success, the onAuthStateChange listener in App.js picks up the new
     // session and moves on — nothing else to do here.
+  };
+
+  const handleForgotPassword = async () => {
+    if (!email.trim()) {
+      setError('Enter your email above first, then click "Forgot password".');
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    setResetSent(false);
+
+    // Sends a link back to this same app with ?type=recovery — App.js
+    // recognizes that and shows the same SetPassword screen an invite uses.
+    const { error: resetError } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+      redirectTo: window.location.origin + window.location.pathname,
+    });
+
+    setLoading(false);
+    if (resetError) {
+      setError(resetError.message);
+    } else {
+      setResetSent(true);
+    }
   };
 
   return (
@@ -34,6 +59,13 @@ export default function Login() {
             <div className="mb-6 p-4 bg-red-50 border border-red-300 rounded-lg flex gap-2 items-start">
               <AlertCircle size={18} className="text-red-600 flex-shrink-0 mt-0.5" />
               <p className="text-sm text-red-700">{error}</p>
+            </div>
+          )}
+
+          {resetSent && (
+            <div className="mb-6 p-4 bg-green-50 border border-green-300 rounded-lg flex gap-2 items-start">
+              <CheckCircle2 size={18} className="text-green-600 flex-shrink-0 mt-0.5" />
+              <p className="text-sm text-green-700">Check your email for a password reset link.</p>
             </div>
           )}
 
@@ -75,6 +107,15 @@ export default function Login() {
               {loading ? 'Signing in...' : 'Sign in'}
             </button>
           </form>
+
+          <button
+            type="button"
+            onClick={handleForgotPassword}
+            disabled={loading}
+            className="w-full text-center text-sm text-blue-600 hover:text-blue-700 mt-4"
+          >
+            Forgot password?
+          </button>
 
           <p className="text-xs text-gray-500 text-center mt-6">
             Don't have an account? Ask your department officer to invite you.
