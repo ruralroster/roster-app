@@ -45,11 +45,9 @@ $$;
 
 COMMIT;
 
--- To make yourself a super admin after signing up / being invited:
+-- To make yourself a super admin after accepting your invite:
 --   UPDATE profiles SET is_super_admin = true WHERE email = 'you@example.com';
--- A super admin still needs at least one `staff` row (any department, any
--- role) to pass App.js's membership lookup and land in the app at all —
--- getMyMemberships() only returns rows from `staff`, not a synthetic
--- "every department" list. Give them one ordinary staff row anywhere; the
--- functions above grant them officer-level DB access everywhere regardless
--- of that row's own department/role.
+-- No `staff` row is needed — supabaseClient.js's getMyMemberships()
+-- synthesizes a membership list straight from `departments` for anyone
+-- with is_super_admin = true, so the flag alone is enough to log in and
+-- see every department.
