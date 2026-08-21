@@ -2,6 +2,7 @@
   "name": "roster-app",
   "version": "0.1.0",
   "private": true,
+  "homepage": "https://ruralroster.github.io/roster-app",
   "dependencies": {
     "@supabase/supabase-js": "^2.112.1",
     "@testing-library/dom": "^10.4.1",

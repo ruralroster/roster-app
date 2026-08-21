@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client';
 import './index.css';
 import App from './App';
 import reportWebVitals from './reportWebVitals';
+import * as serviceWorkerRegistration from './serviceWorkerRegistration';
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(
@@ -15,3 +16,8 @@ root.render(
 // to log results (for example: reportWebVitals(console.log))
 // or send to an analytics endpoint. Learn more: https://bit.ly/CRA-vitals
 reportWebVitals();
+
+// Registers the app-shell service worker (src/service-worker.js) so the
+// app installs as a PWA and loads instantly offline. It never caches
+// Supabase requests — see that file's own comment.
+serviceWorkerRegistration.register();

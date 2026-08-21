@@ -1,0 +1,117 @@
+// Creates (or links) a login for a staff member and makes them a member of
+// `departmentId`. Runs server-side because creating an auth.users row needs
+// the service_role key, which must never reach the browser — the anon key
+// the rest of the app uses can't do this.
+//
+// Deploy: `supabase functions deploy invite-staff`
+// Required secret (never committed, set via the Supabase CLI or dashboard):
+//   supabase secrets set SUPABASE_SERVICE_ROLE_KEY=<service role key>
+// SUPABASE_URL is provided automatically to every Edge Function.
+//
+// Request body: { departmentId, name, email, rank, role }
+// Response:     { data: { staffId, invited } } | { error }
+
+import { createClient } from 'jsr:@supabase/supabase-js@2';
+
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL');
+const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY');
+const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+Deno.serve(async (req) => {
+  if (req.method !== 'POST') {
+    return json({ error: 'Method not allowed' }, 405);
+  }
+
+  const authHeader = req.headers.get('Authorization');
+  if (!authHeader) {
+    return json({ error: 'Missing Authorization header' }, 401);
+  }
+
+  let body: { departmentId?: string; name?: string; email?: string; rank?: string; role?: string };
+  try {
+    body = await req.json();
+  } catch {
+    return json({ error: 'Invalid JSON body' }, 400);
+  }
+
+  const { departmentId, name, email, rank, role } = body;
+  if (!departmentId || !name || !email || !rank || !role) {
+    return json({ error: 'departmentId, name, email, rank, and role are all required' }, 400);
+  }
+  if (role !== 'staff' && role !== 'officer') {
+    return json({ error: "role must be 'staff' or 'officer'" }, 400);
+  }
+
+  // User-scoped client: identifies the caller from their own JWT, and lets
+  // us reuse the exact same is_department_officer() check the database
+  // policies use, instead of re-deriving officer status here.
+  const userClient = createClient(SUPABASE_URL!, SUPABASE_ANON_KEY!, {
+    global: { headers: { Authorization: authHeader } },
+  });
+
+  const { data: { user }, error: userError } = await userClient.auth.getUser();
+  if (userError || !user) {
+    return json({ error: 'Not authenticated' }, 401);
+  }
+
+  const { data: isOfficer, error: officerCheckError } = await userClient.rpc('is_department_officer', {
+    dept_id: departmentId,
+  });
+  if (officerCheckError) {
+    return json({ error: `Officer check failed: ${officerCheckError.message}` }, 500);
+  }
+  if (!isOfficer) {
+    return json({ error: 'Only officers can invite staff for this department' }, 403);
+  }
+
+  // Admin client: only from here on, and only holds the service_role key
+  // as an Edge Function secret — never sent to or readable by the browser.
+  const adminClient = createClient(SUPABASE_URL!, SERVICE_ROLE_KEY!);
+
+  const { data: existingProfile } = await adminClient
+    .from('profiles')
+    .select('user_id')
+    .eq('email', email)
+    .maybeSingle();
+
+  let invited = false;
+  let targetUserId: string;
+
+  if (existingProfile) {
+    // Same person, another department — link without sending a second invite.
+    targetUserId = existingProfile.user_id;
+  } else {
+    const { data: inviteData, error: inviteError } = await adminClient.auth.admin.inviteUserByEmail(email);
+    if (inviteError) {
+      return json({ error: `Invite failed: ${inviteError.message}` }, 500);
+    }
+    targetUserId = inviteData.user.id;
+    invited = true;
+
+    const { error: profileError } = await adminClient
+      .from('profiles')
+      .upsert({ user_id: targetUserId, email });
+    if (profileError) {
+      return json({ error: `Profile link failed: ${profileError.message}` }, 500);
+    }
+  }
+
+  const { data: staffRow, error: staffError } = await adminClient
+    .from('staff')
+    .insert([{ department_id: departmentId, name, rank, email, user_id: targetUserId, role }])
+    .select('staff_id')
+    .single();
+
+  if (staffError) {
+    return json({ error: `Staff record failed: ${staffError.message}` }, 500);
+  }
+
+  return json({ data: { staffId: staffRow.staff_id, invited } });
+});

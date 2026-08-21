@@ -13,11 +13,12 @@ import {
   getStaffWeekScheduleForExport,
   getAvailableShiftsForStaff,
   createVolunteerRequest,
-  updateStaffCoffeeOrder,
+  updateMyCoffeeOrder,
   getActivityTypes,
-  updateStaffActivityRestrictions,
-  updateStaffEmail,
-  updateStaffPhone,
+  updateMyActivityRestrictions,
+  updateMyEmail,
+  updateMyPhone,
+  signOut,
 } from './supabaseClient';
 import CollapsibleSection from './CollapsibleSection';
 import CoffeePicker from './CoffeePicker';
@@ -310,7 +311,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
 
     setSavingActivityName(activityName);
     try {
-      const { error: updateError } = await updateStaffActivityRestrictions(staffId, nextRestrictions);
+      const { error: updateError } = await updateMyActivityRestrictions(staffId, nextRestrictions);
       if (updateError) throw updateError;
       setStaffMember(prev => prev && { ...prev, activity_restrictions: nextRestrictions });
       setError(null);
@@ -352,7 +353,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
   const handleCoffeeOrderChange = async (coffeeOrder) => {
     if (!staffId) return;
     try {
-      const { error: updateError } = await updateStaffCoffeeOrder(staffId, coffeeOrder);
+      const { error: updateError } = await updateMyCoffeeOrder(staffId, coffeeOrder);
       if (updateError) throw updateError;
       setStaffMember(prev => prev && { ...prev, coffee_order: coffeeOrder });
       setError(null);
@@ -365,7 +366,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
     if (!staffId) return;
     setSavingProfileField('email');
     try {
-      const { error: updateError } = await updateStaffEmail(staffId, email);
+      const { error: updateError } = await updateMyEmail(staffId, email);
       if (updateError) throw updateError;
       setStaffMember(prev => prev && { ...prev, email });
       setError(null);
@@ -380,7 +381,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
     if (!staffId) return;
     setSavingProfileField('phone');
     try {
-      const { error: updateError } = await updateStaffPhone(staffId, phone);
+      const { error: updateError } = await updateMyPhone(staffId, phone);
       if (updateError) throw updateError;
       setStaffMember(prev => prev && { ...prev, phone });
       setError(null);
@@ -1369,8 +1370,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
         <button
           onClick={() => {
             if (window.confirm('Log out?')) {
-              localStorage.removeItem('selectedStaffId');
-              window.location.reload();
+              signOut();
             }
           }}
           className="px-3 py-2 bg-red-600 hover:bg-red-700 text-white font-medium rounded text-sm transition"

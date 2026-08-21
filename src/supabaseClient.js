@@ -2229,3 +2229,134 @@ export async function validateShiftAssignment(staffId, date, shiftId, department
     return { data: allow, error: err };
   }
 }
+
+// ============================================================
+// AUTH / MEMBERSHIPS
+// ============================================================
+
+export async function signIn(email, password) {
+  try {
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    return { data, error };
+  } catch (err) {
+    console.error('signIn error:', err);
+    return { data: null, error: err };
+  }
+}
+
+export async function signOut() {
+  try {
+    const { error } = await supabase.auth.signOut();
+    return { error };
+  } catch (err) {
+    console.error('signOut error:', err);
+    return { error: err };
+  }
+}
+
+// Every active staff row linked to the current auth session — one row per
+// department the signed-in person belongs to (staff is already the
+// per-person-per-department table, so "multi-department" just means more
+// than one row sharing the same user_id; no separate join table needed).
+// Each membership carries its own `role` ('staff' | 'officer'), since a
+// person can be an officer in one department and plain staff in another.
+export async function getMyMemberships() {
+  console.log('getMyMemberships called');
+
+  try {
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
+    if (userError) throw userError;
+    if (!user) return { data: [], error: null };
+
+    const { data, error } = await supabase
+      .from('staff')
+      .select('staff_id, department_id, name, rank, role, departments(name)')
+      .eq('user_id', user.id)
+      .eq('active', true)
+      .order('name');
+
+    if (error) throw error;
+
+    console.log('Memberships:', data?.length || 0);
+    return { data: data || [], error: null };
+  } catch (err) {
+    console.error('getMyMemberships error:', err);
+    return { data: [], error: err };
+  }
+}
+
+// Lets a staff member edit specific fields on their own `staff` row
+// (phone, email, coffee_order, activity_restrictions — the same four
+// fields staffRosterView.jsx already exposes as self-service) without
+// touching fte/payroll_number/role/user_id/rank/active, which stay
+// officer-only. Routed through SECURITY DEFINER RPCs rather than a table
+// policy since RLS can't restrict by column, only by row. See
+// migrations/2026-08-21_rls_policies_self_service.sql. Each mirrors the
+// equivalent officer-side function above (updateStaffPhone, etc.) in
+// return shape, so callers can swap one for the other without changes.
+export async function updateMyPhone(staffId, phone) {
+  console.log('updateMyPhone called', staffId, phone);
+  try {
+    const { error } = await supabase.rpc('update_my_phone', { p_staff_id: staffId, p_phone: phone || null });
+    return { error };
+  } catch (err) {
+    console.error('updateMyPhone error:', err);
+    return { error: err };
+  }
+}
+
+export async function updateMyEmail(staffId, email) {
+  console.log('updateMyEmail called', staffId, email);
+  try {
+    const { error } = await supabase.rpc('update_my_email', { p_staff_id: staffId, p_email: email || null });
+    return { error };
+  } catch (err) {
+    console.error('updateMyEmail error:', err);
+    return { error: err };
+  }
+}
+
+export async function updateMyCoffeeOrder(staffId, coffeeOrder) {
+  console.log('updateMyCoffeeOrder called', staffId, coffeeOrder);
+  try {
+    const { error } = await supabase.rpc('update_my_coffee_order', { p_staff_id: staffId, p_coffee_order: coffeeOrder || null });
+    return { error };
+  } catch (err) {
+    console.error('updateMyCoffeeOrder error:', err);
+    return { error: err };
+  }
+}
+
+export async function updateMyActivityRestrictions(staffId, activityNames) {
+  console.log('updateMyActivityRestrictions called', staffId, activityNames);
+  try {
+    const { error } = await supabase.rpc('update_my_activity_restrictions', { p_staff_id: staffId, p_activity_names: activityNames });
+    return { error };
+  } catch (err) {
+    console.error('updateMyActivityRestrictions error:', err);
+    return { error: err };
+  }
+}
+
+// Invites a new staff login via the invite-staff Edge Function (creating an
+// auth user requires the service_role key, which must never reach the
+// browser — see supabase/functions/invite-staff/index.ts). The function
+// re-checks officer status itself server-side; this call fails harmlessly
+// if the caller isn't actually an officer for departmentId.
+export async function inviteStaff(departmentId, name, email, rank, role) {
+  console.log('inviteStaff called', departmentId, name, email, rank, role);
+
+  try {
+    const { data, error } = await supabase.functions.invoke('invite-staff', {
+      body: { departmentId, name, email, rank, role },
+    });
+
+    if (error) throw error;
+    if (data?.error) throw new Error(data.error);
+
+    return { data: data?.data ?? data, error: null };
+  } catch (err) {
+    console.error('inviteStaff error:', err);
+    return { data: null, error: err };
+  }
+}

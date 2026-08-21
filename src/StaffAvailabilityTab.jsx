@@ -38,7 +38,7 @@ const WEEKS_SHOWN = 4;
 const DAYS_SHOWN = WEEKS_SHOWN * 7;
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-const RANK_OPTIONS = [
+export const RANK_OPTIONS = [
   { value: 'consultant', label: 'Consultant' },
   { value: 'fellow', label: 'Fellow' },
   { value: 'advanced_trainee', label: 'Advanced Trainee' },

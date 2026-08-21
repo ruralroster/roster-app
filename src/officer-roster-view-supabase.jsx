@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import StaffProfilesTab from './StaffProfilesTab';
+import StaffAccountsTab from './StaffAccountsTab';
 import StaffAvailabilityTab from './StaffAvailabilityTab';
 import ShiftPatternRulesUI from './ShiftPatternRulesUI';
 import CaseMixReport from './CaseMixReport';
@@ -72,7 +73,8 @@ function startOfWeek(date) {
   return d;
 }
 
-export default function OfficerRosterView({ departmentId: departmentIdProp } = {}) {
+// eslint-disable-next-line no-unused-vars -- staffId (the signed-in officer's own staff_id, now known via App.js) is threaded through for upcoming self-service/audit features; not consumed internally yet.
+export default function OfficerRosterView({ departmentId: departmentIdProp, staffId } = {}) {
   const departmentId = departmentIdProp || process.env.REACT_APP_DEPARTMENT_ID;
 
   // UI State
@@ -2442,6 +2444,11 @@ export default function OfficerRosterView({ departmentId: departmentIdProp } = {
             {/* Staff Profiles Section */}
             <CollapsibleSection title="Staff Activity Profiles">
               <StaffProfilesTab departmentId={departmentId} refreshKey={staffVersion} />
+            </CollapsibleSection>
+
+            {/* Staff Accounts Section */}
+            <CollapsibleSection title="Staff Accounts">
+              <StaffAccountsTab departmentId={departmentId} refreshKey={staffVersion} />
             </CollapsibleSection>
           </div>
         </div>
