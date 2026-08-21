@@ -1,0 +1,2602 @@
+import React, { useState, useEffect } from 'react';
+import StaffProfilesTab from './StaffProfilesTab';
+import StaffAvailabilityTab from './StaffAvailabilityTab';
+import ShiftPatternRulesUI from './ShiftPatternRulesUI';
+import CaseMixReport from './CaseMixReport';
+import FairnessReport from './FairnessReport';
+import CollapsibleSection from './CollapsibleSection';
+import { toLocalDateStr } from './dateUtils';
+import { ChevronLeft, ChevronRight, X, AlertCircle, Loader } from 'lucide-react';
+import { createTheatreActivity,
+  initializeDepartment,
+  getTheatreActivitiesForDate,
+  getStaffAssignmentsForDate,
+  getDutyAssignmentsForDate,
+  getStaffAvailabilityForDate,
+  createStaffAssignment,
+  updateStaffAssignment,
+  deleteStaffAssignment,
+  updateDutyAssignment,
+  updateTheatreActivity,
+  copyLastWeekActivities,
+  validateSupervision,
+  createShift,
+  updateShift,
+  deactivateShift,
+  reactivateShift,
+  createLocation,
+  updateLocationName,
+  deactivateLocation,
+  reactivateLocation,
+  createActivityType,
+  updateActivityTypeName,
+  deleteActivityType,
+  getSortedStaffForActivity,
+  deleteTheatreActivity,
+  getStaffFatigueStatus,
+  getStaffList,
+  getAllocationStatusForRange,
+  getVolunteerRequestsForActivities,
+  clearVolunteerRequestsForRole,
+  createLeaveType,
+  updateLeaveType,
+  deleteLeaveType,
+  updateStaffAssignmentLeaveCode,
+  updateDepartmentPayCentreNumber,
+  getAllStaffAssignmentsForRange,
+  getStaffShiftAllocationsForRange,
+  upsertStaffShiftAllocation,
+  deleteStaffShiftAllocation,
+  validateShiftAssignment,
+} from './supabaseClient';
+import { downloadPayrollExcel, getMondayOfWeek } from './payrollExport';
+import { getSessionGroups, SESSION_GROUP_ORDER, SESSION_GROUP_LABELS } from './shiftSessionUtils';
+import { formatFte, DEFAULT_FTE } from './availabilityUtils';
+
+const CALENDAR_WEEKS_SHOWN = 4;
+const CALENDAR_DAYS_SHOWN = CALENDAR_WEEKS_SHOWN * 7;
+
+const EMPTY_FATIGUE_STATUS = { postNightRestStaffIds: new Set(), nightCooldownStaffIds: new Set(), fatigueRiskStaffIds: new Set() };
+
+const ALLOCATION_STATUS_STYLES = {
+  none: { classes: 'bg-white border-gray-200 text-gray-900 hover:border-blue-500 hover:bg-blue-50', swatch: 'bg-white border-gray-300', label: 'No activities' },
+  green: { classes: 'bg-green-500 border-green-600 text-white hover:bg-green-600', swatch: 'bg-green-500 border-green-600', label: 'Fully allocated' },
+  yellow: { classes: 'bg-yellow-400 border-yellow-500 text-gray-900 hover:bg-yellow-500', swatch: 'bg-yellow-400 border-yellow-500', label: 'Partially allocated' },
+  red: { classes: 'bg-red-500 border-red-600 text-white hover:bg-red-600', swatch: 'bg-red-500 border-red-600', label: 'Unallocated activities' },
+};
+
+function startOfWeek(date) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - d.getDay());
+  return d;
+}
+
+export default function OfficerRosterView({ departmentId: departmentIdProp } = {}) {
+  const departmentId = departmentIdProp || process.env.REACT_APP_DEPARTMENT_ID;
+
+  // UI State
+  const [activeTab, setActiveTab] = useState('calendar');
+  const [calendarWeekStart, setCalendarWeekStart] = useState(() => startOfWeek(new Date()));
+  const [calendarAllocationStatus, setCalendarAllocationStatus] = useState({}); // dateStr -> 'none'|'green'|'yellow'|'red'
+  const [fortnightStart, setFortnightStart] = useState(() => startOfWeek(new Date()));
+  const [fortnightSelectedStaffId, setFortnightSelectedStaffId] = useState('');
+  const [fortnightAllocations, setFortnightAllocations] = useState([]);
+  const [loadingFortnight, setLoadingFortnight] = useState(false);
+  const [fortnightModalDate, setFortnightModalDate] = useState(null); // Date | null — which day cell's picker is open
+  const [selectedDate, setSelectedDate] = useState(null);
+  const [selectedStaff, setSelectedStaff] = useState(null);
+  const [openDropdown, setOpenDropdown] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  // Reference Data (from DB)
+  const [refData, setRefData] = useState({
+    locations: [],
+    activities: [],
+    shifts: [],
+    staff: [],
+    leaveTypes: [],
+    department: null,
+  });
+  // Bumped whenever staff are added/removed, so components that fetch their
+  // own staff-derived data independently (Case Mix, Fairness, Staff Profiles,
+  // the ranked assignment dropdowns) know to refetch instead of going stale.
+  const [staffVersion, setStaffVersion] = useState(0);
+
+  // Date-specific Data
+  const [theatreActivities, setTheatreActivities] = useState([]);
+  const [staffAssignments, setStaffAssignments] = useState([]);
+  const [dutyAssignments, setDutyAssignments] = useState({});
+  const [staffAvailabilityStatus, setStaffAvailabilityStatus] = useState(null); // Map staff_id -> 'available' | 'unavailable' | 'unset'
+  const [fatigueStatus, setFatigueStatus] = useState(EMPTY_FATIGUE_STATUS);
+  const [sortedStaffByActivity, setSortedStaffByActivity] = useState({});
+  const [volunteerRequests, setVolunteerRequests] = useState([]); // pending volunteer_requests for the visible theatreActivities
+  const [loadingDate, setLoadingDate] = useState(false);
+  const [showAddActivity, setShowAddActivity] = useState(false);
+  const [newActivityLocation, setNewActivityLocation] = useState('');
+  const [newActivityType, setNewActivityType] = useState('');
+  const [newActivitySession, setNewActivitySession] = useState('full');
+  const [pendingAssignment, setPendingAssignment] = useState(null); // { theatreActivityId, locationId, role, staffId, staffName, overrideReason }
+  const [overridePrompt, setOverridePrompt] = useState(null); // { theatreActivityId, locationId, role, staffId, staffName, blockType, shiftId, reason }
+  const [patternRuleAlert, setPatternRuleAlert] = useState(null); // { theatreActivityId, locationId, role, staffId, staffName, shiftId, action: 'BLOCK'|'WARN', description }
+
+  // Management UI State
+  const [newActivityName, setNewActivityName] = useState('');
+  const [newLocationName, setNewLocationName] = useState('');
+  const [newStaffName, setNewStaffName] = useState('');
+  const [newStaffPhone, setNewStaffPhone] = useState('');
+  
+  // Shift Management State (list itself lives in refData.shifts — the single
+  // source of truth also used by the Day view — not a separate local copy)
+  const [newShiftName, setNewShiftName] = useState('');
+  const [newShiftDayType, setNewShiftDayType] = useState('weekday');
+  const [newShiftStartTime, setNewShiftStartTime] = useState('08:00');
+  const [newShiftEndTime, setNewShiftEndTime] = useState('16:30');
+  const [newShiftSession, setNewShiftSession] = useState('full');
+  const [editingShiftId, setEditingShiftId] = useState(null);
+  const [editShiftName, setEditShiftName] = useState('');
+  const [editShiftDayType, setEditShiftDayType] = useState('weekday');
+  const [editShiftStartTime, setEditShiftStartTime] = useState('');
+  const [editShiftEndTime, setEditShiftEndTime] = useState('');
+  const [editShiftSession, setEditShiftSession] = useState('full');
+
+  // Location Management State
+  const [newLocationInput, setNewLocationInput] = useState('');
+  const [editingLocationId, setEditingLocationId] = useState(null);
+  const [editLocationName, setEditLocationName] = useState('');
+
+  // Activity Management State
+  const [newActivityInput, setNewActivityInput] = useState('');
+  const [editingActivityId, setEditingActivityId] = useState(null);
+  const [editActivityName, setEditActivityName] = useState('');
+
+  // Leave Type Management State
+  const [newLeaveTypeName, setNewLeaveTypeName] = useState('');
+  const [newLeaveTypeCode, setNewLeaveTypeCode] = useState('');
+  const [editingLeaveTypeId, setEditingLeaveTypeId] = useState(null);
+  const [editLeaveTypeName, setEditLeaveTypeName] = useState('');
+  const [editLeaveTypeCode, setEditLeaveTypeCode] = useState('');
+
+  // Department Settings State (Pay Centre Number local edit buffer, kept
+  // separate from refData.department so typing doesn't need a round-trip)
+  const [payCentreNumberInput, setPayCentreNumberInput] = useState('');
+  const [savingPayCentreNumber, setSavingPayCentreNumber] = useState(false);
+
+  // Leave/Special Code popover state — which assignment is being edited and
+  // the in-progress value, following the same "local draft object, confirm
+  // commits it" shape as pendingAssignment/overridePrompt above.
+  const [editingLeaveCode, setEditingLeaveCode] = useState(null); // { assignmentId, value }
+  const [exportingPayroll, setExportingPayroll] = useState(false);
+  const [showPayrollModal, setShowPayrollModal] = useState(false);
+
+  // Initialize department data on mount
+  useEffect(() => {
+    const init = async () => {
+      if (!departmentId) {
+        setError('Department ID not configured. Set REACT_APP_DEPARTMENT_ID in .env');
+        setLoading(false);
+        return;
+      }
+
+      try {
+        const result = await initializeDepartment(departmentId);
+        if (result.errors.length > 0) {
+          console.error('Initialization errors:', result.errors);
+        }
+        setRefData(result);
+        setPayCentreNumberInput(result.department?.pay_centre_number || '');
+        setError(null);
+      } catch (err) {
+        setError(`Failed to load department: ${err.message}`);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    init();
+  }, [departmentId]);
+
+  const refreshStaffList = async () => {
+    if (!departmentId) return;
+    try {
+      const { data, error: fetchError } = await getStaffList(departmentId);
+      if (fetchError) throw fetchError;
+      setRefData(prev => ({ ...prev, staff: data }));
+      setStaffVersion(v => v + 1);
+      setError(null);
+    } catch (err) {
+      setError(`Failed to refresh staff list: ${err.message}`);
+    }
+  };
+
+  useEffect(() => {
+    const loadDateData = async () => {
+      if (!selectedDate || !departmentId) return;
+
+      setLoadingDate(true);
+      try {
+        const [theatreRes, staffRes, dutyRes, availRes, fatigueRes] = await Promise.all([
+          getTheatreActivitiesForDate(departmentId, selectedDate),
+          getStaffAssignmentsForDate(departmentId, selectedDate),
+          getDutyAssignmentsForDate(departmentId, selectedDate),
+          getStaffAvailabilityForDate(departmentId, selectedDate),
+          getStaffFatigueStatus(departmentId, selectedDate),
+        ]);
+
+        if (theatreRes.error) throw theatreRes.error;
+        if (staffRes.error) throw staffRes.error;
+        if (dutyRes.error) throw dutyRes.error;
+        if (availRes.error) throw availRes.error;
+        if (fatigueRes.error) throw fatigueRes.error;
+
+        setTheatreActivities(theatreRes.data);
+        setStaffAssignments(staffRes.data);
+        setStaffAvailabilityStatus(new Map(availRes.allStaff.map(s => [s.staff_id, s.availability_status])));
+        setFatigueStatus(fatigueRes.data);
+
+        // Map duty assignments by type for easy lookup
+        const dutyMap = {};
+        dutyRes.data.forEach(duty => {
+          dutyMap[duty.duty_type] = duty.staff_id;
+        });
+        setDutyAssignments(dutyMap);
+      } catch (err) {
+        setError(`Failed to load date data: ${err.message}`);
+      } finally {
+        setLoadingDate(false);
+      }
+    };
+
+    loadDateData();
+  }, [selectedDate, departmentId, staffVersion]);
+
+  // Load case-mix-sorted staff lists for each activity present on this date,
+  // so assignment dropdowns can rank staff by exposure rate (lowest first).
+  useEffect(() => {
+    const loadSortedStaff = async () => {
+      if (!departmentId || !selectedDate || theatreActivities.length === 0) {
+        setSortedStaffByActivity({});
+        return;
+      }
+
+      const activityIds = [...new Set(theatreActivities.map(ta => ta.activity_id).filter(Boolean))];
+
+      try {
+        const results = await Promise.all(
+          activityIds.map(activityId => getSortedStaffForActivity(departmentId, activityId, selectedDate))
+        );
+
+        const map = {};
+        activityIds.forEach((activityId, idx) => {
+          map[activityId] = results[idx].data;
+        });
+        setSortedStaffByActivity(map);
+      } catch (err) {
+        console.error('Failed to load case mix sorted staff:', err);
+      }
+    };
+
+    loadSortedStaff();
+  }, [departmentId, selectedDate, theatreActivities, staffVersion]);
+
+  const refreshVolunteerRequests = async () => {
+    const activityIds = theatreActivities.map(ta => ta.theatre_activity_id);
+    if (activityIds.length === 0) {
+      setVolunteerRequests([]);
+      return;
+    }
+    try {
+      const { data, error } = await getVolunteerRequestsForActivities(activityIds);
+      if (error) throw error;
+      setVolunteerRequests(data);
+    } catch (err) {
+      console.error('Failed to load volunteer requests:', err);
+    }
+  };
+
+  useEffect(() => {
+    refreshVolunteerRequests();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [theatreActivities]);
+
+  // Calendar tab allocation-status colouring — refetches whenever the visible
+  // 4-week window changes, and also when returning to the calendar tab (so
+  // assignments made in the Day view are reflected without needing the week
+  // itself to change).
+  useEffect(() => {
+    const loadAllocationStatus = async () => {
+      if (!departmentId || activeTab !== 'calendar') return;
+
+      const rangeEnd = new Date(calendarWeekStart);
+      rangeEnd.setDate(rangeEnd.getDate() + CALENDAR_DAYS_SHOWN - 1);
+
+      try {
+        const { data, error } = await getAllocationStatusForRange(departmentId, calendarWeekStart, rangeEnd);
+        if (error) throw error;
+        setCalendarAllocationStatus(data);
+      } catch (err) {
+        console.error('Failed to load calendar allocation status:', err);
+      }
+    };
+
+    loadAllocationStatus();
+  }, [departmentId, calendarWeekStart, activeTab]);
+
+  // Fortnight tab — whole department's shift allocations for the visible
+  // 14-day window, refetched whenever that window changes or an allocation
+  // is added/cleared (via fortnightRefreshKey).
+  const [fortnightRefreshKey, setFortnightRefreshKey] = useState(0);
+  useEffect(() => {
+    const loadFortnightAllocations = async () => {
+      if (!departmentId || activeTab !== 'fortnight') return;
+
+      setLoadingFortnight(true);
+      const rangeEnd = new Date(fortnightStart);
+      rangeEnd.setDate(rangeEnd.getDate() + 13);
+
+      try {
+        const { data, error } = await getStaffShiftAllocationsForRange(departmentId, fortnightStart, rangeEnd);
+        if (error) throw error;
+        setFortnightAllocations(data);
+        setError(null);
+      } catch (err) {
+        setError(`Failed to load fortnight allocations: ${err.message}`);
+      } finally {
+        setLoadingFortnight(false);
+      }
+    };
+
+    loadFortnightAllocations();
+  }, [departmentId, fortnightStart, activeTab, fortnightRefreshKey]);
+
+  // Returns staff matching filterFn, ordered by exposure rate for the given
+  // activity (lowest first) when case-mix data is available; falls back to
+  // reference-data order otherwise.
+  const getRankedStaffOptions = (activityId, filterFn) => {
+    const ranked = sortedStaffByActivity[activityId];
+    if (ranked) return ranked.filter(filterFn); // already active-only (getSortedStaffForActivity filters at the query)
+    return refData.staff.filter(s => s.active !== false).filter(filterFn);
+  };
+
+  const getVolunteersForActivity = (theatreActivityId, role) => {
+    return volunteerRequests
+      .filter(v => v.theatre_activity_id === theatreActivityId && v.role === role && v.staff)
+      .map(v => ({ ...v.staff, staff_id: v.staff_id }));
+  };
+
+  const getTotalVolunteerCount = (theatreActivityId) => {
+    return volunteerRequests.filter(v => v.theatre_activity_id === theatreActivityId).length;
+  };
+
+  // Activity restrictions are a staff preference, not a hard rule — an
+  // officer can still assign a restricted person if there's genuinely no
+  // one else, so this never blocks selection. It only drives a visible
+  // warning, both while picking (in the dropdown) and afterwards (as a
+  // badge next to the assignment), so the choice stays visible rather than
+  // silently overriding what the staff member asked for.
+  const isActivityRestricted = (staffId, activityId) => {
+    const staff = refData.staff.find(s => s.staff_id === staffId);
+    const activity = refData.activities.find(a => a.activity_id === activityId);
+    if (!staff || !activity) return false;
+    return (staff.activity_restrictions || []).includes(activity.name);
+  };
+
+  // A staff member is only assignable once they've explicitly confirmed
+  // availability for the date — an unconfirmed ('unset') day is not enough.
+  // Fatigue overrides this: a mandatory rest day after a night shift blocks
+  // assignment outright, regardless of what they've marked themselves — but
+  // unlike an unconfirmed/unavailable day, this specific block can be
+  // overridden (with a reason) since it's a soft policy, not a hard fact.
+  const getAssignabilityInfo = (staffId) => {
+    const fatigueRisk = fatigueStatus.fatigueRiskStaffIds.has(staffId);
+
+    if (fatigueStatus.postNightRestStaffIds.has(staffId)) {
+      return { blocked: true, overridable: true, blockType: 'post_night_rest', label: ' — Resting after night shift', fatigueRisk };
+    }
+
+    if (staffAvailabilityStatus === null) return { blocked: false, overridable: false, blockType: null, label: '', fatigueRisk };
+    const status = staffAvailabilityStatus.get(staffId) || 'unset';
+    if (status === 'available') return { blocked: false, overridable: false, blockType: null, label: '', fatigueRisk };
+    if (status === 'unavailable') return { blocked: true, overridable: false, blockType: 'unavailable', label: ' — Unavailable', fatigueRisk };
+    return { blocked: true, overridable: false, blockType: 'unconfirmed', label: ' — Not Confirmed', fatigueRisk };
+  };
+
+  const handleConfirmOverride = () => {
+    if (!overridePrompt || overridePrompt.reason.trim().length < 10) return;
+    const reason = overridePrompt.reason.trim();
+
+    if (overridePrompt.blockType === 'night_cooldown') {
+      handleAssignStaff(overridePrompt.theatreActivityId, overridePrompt.locationId, overridePrompt.shiftId, overridePrompt.staffId, overridePrompt.role, reason);
+      return;
+    }
+
+    // post_night_rest: staff is confirmed, but still needs a shift type chosen
+    setPendingAssignment({
+      theatreActivityId: overridePrompt.theatreActivityId,
+      locationId: overridePrompt.locationId,
+      role: overridePrompt.role,
+      staffId: overridePrompt.staffId,
+      staffName: overridePrompt.staffName,
+      overrideReason: reason,
+    });
+    setOverridePrompt(null);
+  };
+
+  // Duty roster (am/pm coordinator, on-call) should only offer confirmed-available
+  // staff — including the same "worked a night, not available the next day" rule
+  // used for theatre assignment. The currently-assigned person for a duty is kept
+  // in the list (marked unavailable) rather than silently dropped, so the <select>
+  // doesn't appear to reset if someone becomes unavailable after being assigned.
+  const isAvailableForDuty = (staffId) => {
+    if (staffAvailabilityStatus === null) return true;
+    if (fatigueStatus.postNightRestStaffIds.has(staffId)) return false;
+    return (staffAvailabilityStatus.get(staffId) || 'unset') === 'available';
+  };
+
+  const getDutyStaffOptions = (dutyType) => {
+    const currentStaffId = dutyAssignments[dutyType];
+    return refData.staff
+      .filter(s => (s.active !== false && isAvailableForDuty(s.staff_id)) || s.staff_id === currentStaffId)
+      .map(s => ({ ...s, unavailable: s.active === false || !isAvailableForDuty(s.staff_id) }));
+  };
+
+  // Handlers for staff assignment. skipPatternCheck is set when re-calling
+  // this after an officer has already seen and accepted a WARN-level shift
+  // pattern rule via the Override button.
+  const handleAssignStaff = async (theatreActivityId, locationId, shiftId, staffId, role, overrideReason = null, skipPatternCheck = false) => {
+    if (!selectedDate || !departmentId) return;
+
+    try {
+      // Get staff rank for validation
+      const staff = refData.staff.find(s => s.staff_id === staffId);
+      if (!staff) throw new Error('Staff not found');
+
+      // For non-consultant roles, validate supervision
+      if (role !== 'consultant') {
+        const validation = await validateSupervision(
+          departmentId,
+          selectedDate,
+          locationId,
+          shiftId,
+          staffId,
+          staff.rank
+        );
+
+        if (!validation.is_valid) {
+          setError(`Cannot assign: ${validation.reason}`);
+          return;
+        }
+      }
+
+      if (!skipPatternCheck) {
+        // validateShiftAssignment() fails open (returns a valid:true ALLOW
+        // result) on its own internal errors, so a rules-lookup failure
+        // shouldn't block a genuine assignment here either.
+        const { data: patternResult } = await validateShiftAssignment(staffId, selectedDate, shiftId, departmentId);
+
+        if (!patternResult.valid) {
+          setPatternRuleAlert({
+            theatreActivityId,
+            locationId,
+            role,
+            staffId,
+            staffName: staff.name,
+            shiftId,
+            action: patternResult.action,
+            description: patternResult.rule.description,
+          });
+          setOpenDropdown(null);
+          setPendingAssignment(null);
+          setOverridePrompt(null);
+          return;
+        }
+      }
+
+      // Check if this activity/role already has someone — scoped to this
+      // specific theatre_activity, not just the location, so a Day activity
+      // and a Night activity at the same location can carry different
+      // people. Older rows from before theatre_activity_id existed fall
+      // back to the previous location+role match so they don't vanish from
+      // view; touching them here "heals" them onto the new key.
+      const existing = staffAssignments.find(a => a.theatre_activity_id === theatreActivityId && a.role === role)
+        || staffAssignments.find(a => !a.theatre_activity_id && a.location_id === locationId && a.role === role);
+
+      if (existing) {
+        // Update
+        const { error } = await updateStaffAssignment(existing.assignment_id, staffId, role, shiftId, overrideReason, theatreActivityId);
+        if (error) throw error;
+      } else {
+        // Create
+        const { error } = await createStaffAssignment(departmentId, selectedDate, locationId, staffId, shiftId, role, overrideReason, theatreActivityId);
+        if (error) throw error;
+      }
+
+      // Refresh assignments
+      const { data, error: fetchError } = await getStaffAssignmentsForDate(departmentId, selectedDate);
+      if (fetchError) throw fetchError;
+      setStaffAssignments(data);
+
+      // This role is now filled — any other pending volunteer requests for it
+      // (not just the one who got picked) are moot, so clear them all.
+      if (theatreActivityId) {
+        await clearVolunteerRequestsForRole(theatreActivityId, role);
+        await refreshVolunteerRequests();
+      }
+
+      setOpenDropdown(null);
+      setPendingAssignment(null);
+      setOverridePrompt(null);
+      setPatternRuleAlert(null);
+      setError(null);
+    } catch (err) {
+      setError(`Failed to assign staff: ${err.message}`);
+    }
+  };
+
+  const handleConfirmPatternOverride = () => {
+    if (!patternRuleAlert) return;
+    handleAssignStaff(patternRuleAlert.theatreActivityId, patternRuleAlert.locationId, patternRuleAlert.shiftId, patternRuleAlert.staffId, patternRuleAlert.role, patternRuleAlert.description, true);
+  };
+
+  const handleRemoveStaff = async (theatreActivityId, locationId, role) => {
+    if (!selectedDate) return;
+
+    try {
+      const assignment = staffAssignments.find(a => a.theatre_activity_id === theatreActivityId && a.role === role)
+        || staffAssignments.find(a => !a.theatre_activity_id && a.location_id === locationId && a.role === role);
+
+      if (!assignment) return;
+
+      const { error } = await deleteStaffAssignment(assignment.assignment_id);
+      if (error) throw error;
+
+      // Refresh
+      const { data, error: fetchError } = await getStaffAssignmentsForDate(departmentId, selectedDate);
+      if (fetchError) throw fetchError;
+      setStaffAssignments(data);
+    } catch (err) {
+      setError(`Failed to remove staff: ${err.message}`);
+    }
+  };
+
+  const handleActivityChange = async (theatreActivityId, newActivityId) => {
+    try {
+      const { error } = await updateTheatreActivity(theatreActivityId, newActivityId);
+      if (error) throw error;
+
+      // Refresh
+      const { data, error: fetchError } = await getTheatreActivitiesForDate(departmentId, selectedDate);
+      if (fetchError) throw fetchError;
+      setTheatreActivities(data);
+    } catch (err) {
+      setError(`Failed to update activity: ${err.message}`);
+    }
+  };
+
+  const handleDutyChange = async (dutyType, staffId) => {
+    if (!selectedDate || !departmentId) return;
+
+    try {
+      const { error } = await updateDutyAssignment(departmentId, selectedDate, dutyType, staffId);
+      if (error) throw error;
+
+      setDutyAssignments(prev => ({
+        ...prev,
+        [dutyType]: staffId,
+      }));
+    } catch (err) {
+      setError(`Failed to update duty: ${err.message}`);
+    }
+  };
+
+  const handleAllocateFortnightShift = async (staffId, date, shiftId) => {
+    if (!departmentId) return;
+
+    try {
+      const { error } = await upsertStaffShiftAllocation(departmentId, staffId, date, shiftId);
+      if (error) throw error;
+
+      setFortnightModalDate(null);
+      setFortnightRefreshKey(k => k + 1);
+      setError(null);
+    } catch (err) {
+      setError(`Failed to allocate shift: ${err.message}`);
+    }
+  };
+
+  const handleClearFortnightShift = async (staffId, date) => {
+    try {
+      const { error } = await deleteStaffShiftAllocation(staffId, date);
+      if (error) throw error;
+
+      setFortnightModalDate(null);
+      setFortnightRefreshKey(k => k + 1);
+      setError(null);
+    } catch (err) {
+      setError(`Failed to clear shift: ${err.message}`);
+    }
+  };
+
+  const handleCopyLastWeek = async () => {
+    if (!selectedDate || !departmentId) return;
+
+    try {
+      const { data, error } = await copyLastWeekActivities(departmentId, selectedDate);
+      if (error) throw error;
+
+      // Refresh
+      const { data: theatreData, error: theatreError } = await getTheatreActivitiesForDate(departmentId, selectedDate);
+      if (theatreError) throw theatreError;
+      setTheatreActivities(theatreData);
+
+      setError(null); // Clear any errors
+    } catch (err) {
+      setError(`Failed to copy week: ${err.message}`);
+    }
+  };
+
+  // Called as soon as an activity is picked (location must already be set) —
+  // the modal closes immediately rather than waiting on a separate submit
+  // step. The chosen session (Whole Day / Morning / Afternoon / Night)
+  // decides the activity's nominal shift_id, which in turn decides which of
+  // the Morning/Afternoon/Night Allocations sections it's grouped under —
+  // individual staff still pick their own shift independently when assigned
+  // below, but this is what makes a Night-only activity show up under Night
+  // instead of defaulting to Whole Day every time.
+  const handleAddActivity = async (activityId) => {
+    if (!newActivityLocation || !activityId || !selectedDate || !departmentId) {
+      setError('Please select a location and an activity');
+      return;
+    }
+
+    const sessionShift = refData.shifts.find(s => s.session === newActivitySession && s.active !== false && !/on.?call/i.test(s.name || ''));
+    const defaultShift = sessionShift || refData.shifts.find(s => s.active !== false);
+    if (!defaultShift) {
+      setError('No shifts configured — add a shift in Settings first');
+      return;
+    }
+    if (!sessionShift) {
+      setError(`No active shift configured for that session — add one in Settings, or pick a different session.`);
+      return;
+    }
+
+    try {
+      const { error: addError } = await createTheatreActivity(
+        departmentId,
+        selectedDate,
+        newActivityLocation,
+        defaultShift.shift_id,
+        activityId
+      );
+      if (addError) throw addError;
+
+      // Refresh theatre activities for this date
+      const { data, error: fetchError } = await getTheatreActivitiesForDate(departmentId, selectedDate);
+      if (fetchError) throw fetchError;
+      setTheatreActivities(data);
+
+      // Reset form
+      setShowAddActivity(false);
+      setNewActivityLocation('');
+      setNewActivityType('');
+      setNewActivitySession('full');
+      setError(null);
+    } catch (err) {
+      setError(`Failed to add activity: ${err.message}`);
+    }
+  };
+
+  const handleRemoveActivity = async (ta) => {
+    if (!window.confirm(`Remove ${ta.locations.name} from this day? This will also remove any staff assigned there.`)) {
+      return;
+    }
+
+    try {
+      const { error } = await deleteTheatreActivity(ta.theatre_activity_id, departmentId, selectedDate, ta.location_id);
+      if (error) throw error;
+
+      const [theatreRes, staffRes] = await Promise.all([
+        getTheatreActivitiesForDate(departmentId, selectedDate),
+        getStaffAssignmentsForDate(departmentId, selectedDate),
+      ]);
+      if (theatreRes.error) throw theatreRes.error;
+      if (staffRes.error) throw staffRes.error;
+      setTheatreActivities(theatreRes.data);
+      setStaffAssignments(staffRes.data);
+      setError(null);
+    } catch (err) {
+      setError(`Failed to remove activity: ${err.message}`);
+    }
+  };
+
+  // Shift Management Handlers
+  const handleCreateShift = async () => {
+    if (!newShiftName.trim() || !departmentId) return;
+
+    try {
+      const { data, error } = await createShift(
+        departmentId,
+        newShiftName,
+        newShiftDayType,
+        newShiftStartTime,
+        newShiftEndTime,
+        newShiftSession
+      );
+
+      if (error) throw error;
+
+      setRefData(prev => ({ ...prev, shifts: [...prev.shifts, data] }));
+      setNewShiftName('');
+      setNewShiftDayType('weekday');
+      setNewShiftStartTime('08:00');
+      setNewShiftEndTime('16:30');
+      setNewShiftSession('full');
+      setError(null);
+    } catch (err) {
+      setError(`Failed to create shift: ${err.message}`);
+    }
+  };
+
+  const handleUpdateShift = async () => {
+    if (!editingShiftId || !editShiftName.trim() || !editShiftStartTime || !editShiftEndTime) return;
+
+    try {
+      const { data, error } = await updateShift(editingShiftId, editShiftName.trim(), editShiftDayType, editShiftStartTime, editShiftEndTime, editShiftSession);
+      if (error) throw error;
+
+      setRefData(prev => ({ ...prev, shifts: prev.shifts.map(s => s.shift_id === editingShiftId ? data : s) }));
+      setEditingShiftId(null);
+      setEditShiftName('');
+      setEditShiftDayType('weekday');
+      setEditShiftStartTime('');
+      setEditShiftEndTime('');
+      setEditShiftSession('full');
+      setError(null);
+    } catch (err) {
+      setError(`Failed to update shift: ${err.message}`);
+    }
+  };
+
+  const handleDeactivateShift = async (shiftId) => {
+    if (!window.confirm("Deactivate this shift? It won't be offered for new assignments, but everything already using it is unaffected.")) {
+      return;
+    }
+
+    try {
+      const { error } = await deactivateShift(shiftId);
+      if (error) throw error;
+
+      setRefData(prev => ({ ...prev, shifts: prev.shifts.map(s => s.shift_id === shiftId ? { ...s, active: false } : s) }));
+      setError(null);
+    } catch (err) {
+      setError(`Failed to deactivate shift: ${err.message}`);
+    }
+  };
+
+  const handleReactivateShift = async (shiftId) => {
+    try {
+      const { error } = await reactivateShift(shiftId);
+      if (error) throw error;
+
+      setRefData(prev => ({ ...prev, shifts: prev.shifts.map(s => s.shift_id === shiftId ? { ...s, active: true } : s) }));
+      setError(null);
+    } catch (err) {
+      setError(`Failed to reactivate shift: ${err.message}`);
+    }
+  };
+
+  const handleStartEditShift = (shift) => {
+    setEditingShiftId(shift.shift_id);
+    setEditShiftName(shift.name);
+    setEditShiftDayType(shift.day_type);
+    setEditShiftStartTime(shift.start_time);
+    setEditShiftEndTime(shift.end_time);
+    setEditShiftSession(shift.session);
+  };
+
+  // Location Management Handlers
+  const handleCreateLocation = async () => {
+    if (!newLocationInput.trim() || !departmentId) return;
+
+    try {
+      const { data, error } = await createLocation(departmentId, newLocationInput);
+      if (error) throw error;
+
+      setRefData(prev => ({ ...prev, locations: [...prev.locations, data] }));
+      setNewLocationInput('');
+      setError(null);
+    } catch (err) {
+      setError(`Failed to create location: ${err.message}`);
+    }
+  };
+
+  const handleDeactivateLocation = async (locationId) => {
+    if (!window.confirm("Deactivate this location? It won't be offered for new activities, but everything already scheduled there is unaffected.")) {
+      return;
+    }
+
+    try {
+      const { error } = await deactivateLocation(locationId);
+      if (error) throw error;
+
+      setRefData(prev => ({ ...prev, locations: prev.locations.map(l => l.location_id === locationId ? { ...l, active: false } : l) }));
+      setError(null);
+    } catch (err) {
+      setError(`Failed to deactivate location: ${err.message}`);
+    }
+  };
+
+  const handleReactivateLocation = async (locationId) => {
+    try {
+      const { error } = await reactivateLocation(locationId);
+      if (error) throw error;
+
+      setRefData(prev => ({ ...prev, locations: prev.locations.map(l => l.location_id === locationId ? { ...l, active: true } : l) }));
+      setError(null);
+    } catch (err) {
+      setError(`Failed to reactivate location: ${err.message}`);
+    }
+  };
+
+  const handleStartEditLocation = (location) => {
+    setEditingLocationId(location.location_id);
+    setEditLocationName(location.name);
+  };
+
+  const handleUpdateLocation = async () => {
+    if (!editingLocationId || !editLocationName.trim()) return;
+
+    try {
+      const { data, error } = await updateLocationName(editingLocationId, editLocationName.trim());
+      if (error) throw error;
+
+      setRefData(prev => ({ ...prev, locations: prev.locations.map(l => l.location_id === editingLocationId ? data : l) }));
+      setEditingLocationId(null);
+      setEditLocationName('');
+      setError(null);
+    } catch (err) {
+      setError(`Failed to rename location: ${err.message}`);
+    }
+  };
+
+  // Activity Management Handlers
+  const handleCreateActivity = async () => {
+    if (!newActivityInput.trim() || !departmentId) return;
+
+    try {
+      const { data, error } = await createActivityType(departmentId, newActivityInput);
+      if (error) throw error;
+
+      setRefData(prev => ({ ...prev, activities: [...prev.activities, data] }));
+      setNewActivityInput('');
+      setError(null);
+    } catch (err) {
+      setError(`Failed to create activity: ${err.message}`);
+    }
+  };
+
+  const handleDeleteActivity = async (activityId) => {
+    if (!window.confirm('Delete this activity type? Any theatre activities and staff assignments using it will be removed too.')) {
+      return;
+    }
+
+    try {
+      const { error } = await deleteActivityType(activityId);
+      if (error) throw error;
+
+      setRefData(prev => ({ ...prev, activities: prev.activities.filter(a => a.activity_id !== activityId) }));
+      setError(null);
+    } catch (err) {
+      setError(`Failed to delete activity: ${err.message}`);
+    }
+  };
+
+  const handleStartEditActivity = (activity) => {
+    setEditingActivityId(activity.activity_id);
+    setEditActivityName(activity.name);
+  };
+
+  const handleUpdateActivity = async () => {
+    if (!editingActivityId || !editActivityName.trim()) return;
+
+    try {
+      const { data, error } = await updateActivityTypeName(editingActivityId, editActivityName.trim());
+      if (error) throw error;
+
+      setRefData(prev => ({ ...prev, activities: prev.activities.map(a => a.activity_id === editingActivityId ? data : a) }));
+      setEditingActivityId(null);
+      setEditActivityName('');
+      setError(null);
+    } catch (err) {
+      setError(`Failed to rename activity: ${err.message}`);
+    }
+  };
+
+  // Leave Type Management Handlers
+  const handleCreateLeaveType = async () => {
+    if (!newLeaveTypeName.trim() || !newLeaveTypeCode.trim() || !departmentId) return;
+
+    try {
+      const { data, error } = await createLeaveType(departmentId, newLeaveTypeName.trim(), newLeaveTypeCode.trim());
+      if (error) throw error;
+
+      setRefData(prev => ({ ...prev, leaveTypes: [...prev.leaveTypes, data].sort((a, b) => a.name.localeCompare(b.name)) }));
+      setNewLeaveTypeName('');
+      setNewLeaveTypeCode('');
+      setError(null);
+    } catch (err) {
+      setError(`Failed to create leave type: ${err.message}`);
+    }
+  };
+
+  const handleStartEditLeaveType = (leaveType) => {
+    setEditingLeaveTypeId(leaveType.leave_type_id);
+    setEditLeaveTypeName(leaveType.name);
+    setEditLeaveTypeCode(leaveType.code);
+  };
+
+  const handleUpdateLeaveType = async () => {
+    if (!editingLeaveTypeId || !editLeaveTypeName.trim() || !editLeaveTypeCode.trim()) return;
+
+    try {
+      const { data, error } = await updateLeaveType(editingLeaveTypeId, editLeaveTypeName.trim(), editLeaveTypeCode.trim());
+      if (error) throw error;
+
+      setRefData(prev => ({
+        ...prev,
+        leaveTypes: prev.leaveTypes.map(lt => lt.leave_type_id === editingLeaveTypeId ? data : lt).sort((a, b) => a.name.localeCompare(b.name)),
+      }));
+      setEditingLeaveTypeId(null);
+      setEditLeaveTypeName('');
+      setEditLeaveTypeCode('');
+      setError(null);
+    } catch (err) {
+      setError(`Failed to update leave type: ${err.message}`);
+    }
+  };
+
+  const handleDeleteLeaveType = async (leaveTypeId) => {
+    if (!window.confirm('Delete this leave type? Any assignments already using its code keep the text, but it will no longer appear as a preset option.')) {
+      return;
+    }
+
+    try {
+      const { error } = await deleteLeaveType(leaveTypeId);
+      if (error) throw error;
+
+      setRefData(prev => ({ ...prev, leaveTypes: prev.leaveTypes.filter(lt => lt.leave_type_id !== leaveTypeId) }));
+      setError(null);
+    } catch (err) {
+      setError(`Failed to delete leave type: ${err.message}`);
+    }
+  };
+
+  // Department Settings Handlers
+  const handleSavePayCentreNumber = async () => {
+    if (!departmentId) return;
+
+    setSavingPayCentreNumber(true);
+    try {
+      const { error } = await updateDepartmentPayCentreNumber(departmentId, payCentreNumberInput.trim());
+      if (error) throw error;
+
+      setRefData(prev => ({ ...prev, department: { ...prev.department, pay_centre_number: payCentreNumberInput.trim() || null } }));
+      setError(null);
+    } catch (err) {
+      setError(`Failed to save pay centre number: ${err.message}`);
+    } finally {
+      setSavingPayCentreNumber(false);
+    }
+  };
+
+  // Leave/Special Code Handler (on an existing staff assignment)
+  const handleSaveLeaveCode = async () => {
+    if (!editingLeaveCode || !selectedDate || !departmentId) return;
+
+    try {
+      const { error } = await updateStaffAssignmentLeaveCode(editingLeaveCode.assignmentId, editingLeaveCode.value.trim());
+      if (error) throw error;
+
+      const { data, error: fetchError } = await getStaffAssignmentsForDate(departmentId, selectedDate);
+      if (fetchError) throw fetchError;
+      setStaffAssignments(data);
+
+      setEditingLeaveCode(null);
+      setError(null);
+    } catch (err) {
+      setError(`Failed to save leave code: ${err.message}`);
+    }
+  };
+
+  // Payroll Export Handler — covers a Mon-Sun/Mon-Sun (14-day) fortnight,
+  // the whole department's roster, starting from fortnightStart (a Monday).
+  const handleExportPayroll = async (fortnightStart) => {
+    if (!fortnightStart || !departmentId) return;
+
+    setExportingPayroll(true);
+    try {
+      const [assignRes, staffRes] = await Promise.all([
+        getAllStaffAssignmentsForRange(departmentId, fortnightStart, 14),
+        getStaffList(departmentId),
+      ]);
+      if (assignRes.error) throw assignRes.error;
+      if (staffRes.error) throw staffRes.error;
+
+      downloadPayrollExcel({
+        departmentName: refData.department?.name || 'Department',
+        payCentreNumber: refData.department?.pay_centre_number || '',
+        periodStart: fortnightStart,
+        numDays: 14,
+        staffList: staffRes.data,
+        assignments: assignRes.data,
+      });
+      setError(null);
+      setShowPayrollModal(false);
+    } catch (err) {
+      setError(`Failed to export payroll: ${err.message}`);
+    } finally {
+      setExportingPayroll(false);
+    }
+  };
+
+  // Fortnight options offered in the payroll export modal: 14-day blocks
+  // anchored to the Monday of the current week (2 past, this one, 3 ahead)
+  // — there's no real payroll-period epoch in the data model, so "this
+  // week" is treated as the start of a fortnight bucket by convention.
+  const getPayrollFortnightOptions = () => {
+    const anchor = getMondayOfWeek(new Date());
+    return [-2, -1, 0, 1, 2, 3].map(offset => {
+      const start = new Date(anchor);
+      start.setDate(start.getDate() + offset * 14);
+      const end = new Date(start);
+      end.setDate(end.getDate() + 13);
+      return { start, end };
+    });
+  };
+
+  const getDateStatus = (date) => {
+    // For MVP, return blank for all dates
+    // Real implementation would query database for that date
+    return 'blank';
+  };
+
+  const formatDate = (date) => date.toLocaleDateString('en-AU', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  const isSameDate = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+
+  // "Dr Sarah Jones" -> "SJ" — drops a leading title so initials reflect the
+  // person's actual name, for the fortnight grid's brief per-day view.
+  const getInitials = (name) => {
+    if (!name) return '?';
+    const words = name.split(' ').filter(Boolean).filter(w => !/^(Dr|Mr|Mrs|Ms|Prof)\.?$/i.test(w));
+    return words.slice(0, 2).map(w => w[0].toUpperCase()).join('') || '?';
+  };
+
+  // Scoped to a specific theatre_activity (a Day activity and a Night
+  // activity at the same location are independent, each with their own
+  // consultant/registrar) — falls back to the old location-only match for
+  // rows created before theatre_activity_id existed, so they don't just
+  // disappear from the roster.
+  const getStaffForRole = (theatreActivityId, locationId, role) => {
+    return staffAssignments.find(a => a.theatre_activity_id === theatreActivityId && a.role === role)
+      || staffAssignments.find(a => !a.theatre_activity_id && a.location_id === locationId && a.role === role);
+  };
+
+  const getConsultantAllocationCount = (staffId) => {
+    if (!selectedDate) return 0;
+    return staffAssignments.filter(a => a.staff_id === staffId && a.role === 'consultant').length;
+  };
+
+  const StaffBadge = ({ name, clickable = true }) => (
+    <button
+      onClick={() => clickable && setSelectedStaff(name)}
+      className="px-3 py-2 text-sm rounded font-medium transition bg-blue-100 text-blue-900 hover:bg-blue-200"
+    >
+      {name}
+    </button>
+  );
+
+  const FatigueRiskBadge = () => (
+    <span
+      title="Was on overnight on-call the night before — flagged as a fatigue risk"
+      className="px-2 py-0.5 bg-orange-100 text-orange-800 text-xs font-semibold rounded border border-orange-300"
+    >
+      ⚠ Fatigue Risk
+    </span>
+  );
+
+  const ActivityRestrictionBadge = () => (
+    <span
+      title="This staff member marked themselves as unable to do this activity — assigned anyway"
+      className="px-2 py-0.5 bg-red-100 text-red-800 text-xs font-semibold rounded border border-red-300"
+    >
+      ⚠ Restricted Activity
+    </span>
+  );
+
+  // Optional leave/special code on an existing staff assignment (e.g. "Cairns
+  // Leave" recorded against a day someone's rostered but actually on leave).
+  // Shown as a small badge with an edit popover — never required, so an
+  // assignment with no leave_code just shows a muted "+ Leave code" prompt.
+  const LEAVE_CODE_CUSTOM = '__custom__';
+  const LeaveCodeControl = ({ assignment }) => {
+    const isEditing = editingLeaveCode?.assignmentId === assignment.assignment_id;
+
+    if (isEditing) {
+      const matchesPreset = refData.leaveTypes.some(lt => lt.code === editingLeaveCode.value);
+      const selectValue = editingLeaveCode.value === '' ? '' : (matchesPreset ? editingLeaveCode.value : LEAVE_CODE_CUSTOM);
+
+      return (
+        <div className="flex items-center gap-1">
+          <select
+            value={selectValue}
+            onChange={(e) => {
+              const next = e.target.value === LEAVE_CODE_CUSTOM ? '' : e.target.value;
+              setEditingLeaveCode({ assignmentId: assignment.assignment_id, value: next });
+            }}
+            className="px-2 py-1 border border-gray-300 rounded text-xs"
+          >
+            <option value="">— No leave/special code —</option>
+            {refData.leaveTypes.map(lt => (
+              <option key={lt.leave_type_id} value={lt.code}>{lt.name}</option>
+            ))}
+            <option value={LEAVE_CODE_CUSTOM}>Custom…</option>
+          </select>
+          {(selectValue === LEAVE_CODE_CUSTOM) && (
+            <input
+              type="text"
+              autoFocus
+              placeholder="Custom code"
+              value={editingLeaveCode.value}
+              onChange={(e) => setEditingLeaveCode({ assignmentId: assignment.assignment_id, value: e.target.value })}
+              className="px-2 py-1 border border-gray-300 rounded text-xs w-28"
+            />
+          )}
+          <button onClick={handleSaveLeaveCode} className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white font-medium rounded text-xs transition">
+            Save
+          </button>
+          <button onClick={() => setEditingLeaveCode(null)} className="px-2 py-1 bg-gray-400 hover:bg-gray-500 text-white font-medium rounded text-xs transition">
+            Cancel
+          </button>
+        </div>
+      );
+    }
+
+    return (
+      <button
+        onClick={() => setEditingLeaveCode({ assignmentId: assignment.assignment_id, value: assignment.leave_code || '' })}
+        className={assignment.leave_code
+          ? 'px-2 py-0.5 bg-purple-100 text-purple-900 text-xs font-semibold rounded border border-purple-300'
+          : 'text-xs text-gray-400 italic hover:text-gray-600'}
+      >
+        {assignment.leave_code || '+ Leave code'}
+      </button>
+    );
+  };
+
+  // ============================================================
+  // RENDER CONTENT
+  // ============================================================
+
+  const renderContent = () => {
+    if (activeTab === 'calendar') {
+      const today = new Date();
+      const days = [];
+      for (let i = 0; i < CALENDAR_DAYS_SHOWN; i++) {
+        const d = new Date(calendarWeekStart);
+        d.setDate(d.getDate() + i);
+        days.push(d);
+      }
+
+      return (
+        <div className="p-4">
+          <div className="max-w-2xl mx-auto">
+            <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
+              <div className="flex items-center justify-between mb-6">
+                <button
+                  onClick={() => {
+                    const d = new Date(calendarWeekStart);
+                    d.setDate(d.getDate() - 7);
+                    setCalendarWeekStart(d);
+                  }}
+                  className="p-2 hover:bg-gray-100 rounded-lg transition"
+                >
+                  <ChevronLeft size={24} />
+                </button>
+                <h1 className="text-lg font-bold text-gray-900 text-center">
+                  {days[0].toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}
+                  {' – '}
+                  {days[days.length - 1].toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}
+                </h1>
+                <button
+                  onClick={() => {
+                    const d = new Date(calendarWeekStart);
+                    d.setDate(d.getDate() + 7);
+                    setCalendarWeekStart(d);
+                  }}
+                  className="p-2 hover:bg-gray-100 rounded-lg transition"
+                >
+                  <ChevronRight size={24} />
+                </button>
+              </div>
+
+              <button
+                onClick={() => setShowPayrollModal(true)}
+                className="mb-6 px-4 py-2 bg-gray-800 hover:bg-gray-900 text-white font-medium rounded-lg transition text-sm"
+              >
+                Export to Payroll
+              </button>
+
+              <div className="grid grid-cols-7 gap-2">
+                {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
+                  <div key={day} className="text-center text-xs font-bold text-gray-600 py-2">
+                    {day}
+                  </div>
+                ))}
+
+                {days.map((date, idx) => {
+                  const isToday = isSameDate(date, today);
+                  const isFirstOfMonth = date.getDate() === 1;
+                  const dateStr = toLocalDateStr(date);
+                  const status = calendarAllocationStatus[dateStr] || 'none';
+                  const statusStyle = ALLOCATION_STATUS_STYLES[status];
+                  return (
+                    <button
+                      key={idx}
+                      onClick={() => {
+                        setSelectedDate(date);
+                        setActiveTab('day');
+                      }}
+                      title={statusStyle.label}
+                      className={`aspect-square p-2 rounded-lg font-semibold text-sm transition flex flex-col items-center justify-center gap-0.5 border-2 cursor-pointer ${statusStyle.classes} ${
+                        isToday ? 'ring-2 ring-blue-600 ring-offset-1' : ''
+                      }`}
+                    >
+                      {isFirstOfMonth && (
+                        <span className="text-[10px] font-medium uppercase opacity-75 leading-none">
+                          {date.toLocaleDateString('en-AU', { month: 'short' })}
+                        </span>
+                      )}
+                      {date.getDate()}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="flex flex-wrap gap-3 mt-4">
+                {Object.entries(ALLOCATION_STATUS_STYLES).map(([key, style]) => (
+                  <div key={key} className="flex items-center gap-1.5">
+                    <span className={`w-3 h-3 rounded border ${style.swatch}`} />
+                    <span className="text-xs text-gray-600">{style.label}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {showPayrollModal && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+              <div className="bg-white rounded-lg shadow-lg w-full max-w-sm">
+                <div className="p-4 border-b border-gray-200 flex items-center justify-between">
+                  <h2 className="text-lg font-bold text-gray-900">Export to Payroll</h2>
+                  <button onClick={() => setShowPayrollModal(false)} className="p-1 hover:bg-gray-100 rounded-lg">
+                    <X size={20} />
+                  </button>
+                </div>
+                <div className="p-4">
+                  <p className="text-xs text-gray-600 mb-3">
+                    Pick the fortnight to export — the whole department's roster for those 14 days.
+                  </p>
+                  <div className="space-y-2">
+                    {getPayrollFortnightOptions().map(({ start, end }) => (
+                      <button
+                        key={toLocalDateStr(start)}
+                        onClick={() => handleExportPayroll(start)}
+                        disabled={exportingPayroll}
+                        className="w-full text-left px-3 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50 disabled:opacity-50 transition"
+                      >
+                        {start.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}
+                        {' – '}
+                        {end.toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}
+                        {isSameDate(getMondayOfWeek(new Date()), start) && (
+                          <span className="ml-2 text-xs text-blue-600 font-semibold">(current)</span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                  {exportingPayroll && <p className="text-xs text-gray-500 mt-3">Exporting…</p>}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    if (activeTab === 'fortnight') {
+      const days = [];
+      for (let i = 0; i < 14; i++) {
+        const d = new Date(fortnightStart);
+        d.setDate(d.getDate() + i);
+        days.push(d);
+      }
+
+      const allocationsByDate = {};
+      fortnightAllocations.forEach(a => {
+        (allocationsByDate[a.date] = allocationsByDate[a.date] || []).push(a);
+      });
+
+      const selectedStaff = refData.staff.find(s => s.staff_id === fortnightSelectedStaffId);
+      const selectedStaffAllocations = fortnightAllocations.filter(a => a.staff_id === fortnightSelectedStaffId);
+      const expectedShifts = selectedStaff ? (selectedStaff.fte ?? DEFAULT_FTE) * 10 : 0;
+      const remainingShifts = expectedShifts - selectedStaffAllocations.length;
+
+      const modalDateStr = fortnightModalDate ? toLocalDateStr(fortnightModalDate) : null;
+      const modalDateAllocations = modalDateStr ? (allocationsByDate[modalDateStr] || []) : [];
+      const modalExistingForStaff = modalDateAllocations.find(a => a.staff_id === fortnightSelectedStaffId);
+      const activeShifts = refData.shifts.filter(s => s.active !== false);
+
+      return (
+        <div className="p-4 pb-24">
+          <div className="max-w-3xl mx-auto">
+            {error && (
+              <div className="mb-6 p-3 bg-red-50 border border-red-300 rounded-lg flex gap-2 items-start">
+                <AlertCircle size={18} className="text-red-600 flex-shrink-0 mt-0.5" />
+                <p className="text-sm text-red-700">{error}</p>
+              </div>
+            )}
+
+            {/* Staff picker + FTE counter */}
+            <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
+              <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Staff Member</label>
+              <select
+                value={fortnightSelectedStaffId}
+                onChange={(e) => setFortnightSelectedStaffId(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">— Select a staff member —</option>
+                {refData.staff.filter(s => s.active !== false).map(s => (
+                  <option key={s.staff_id} value={s.staff_id}>{s.name} ({s.rank})</option>
+                ))}
+              </select>
+
+              {selectedStaff ? (
+                <div className={`mt-4 p-3 rounded-lg border ${remainingShifts < 0 ? 'bg-orange-50 border-orange-300' : 'bg-blue-50 border-blue-200'}`}>
+                  <p className="text-sm font-semibold text-gray-900">
+                    {selectedStaffAllocations.length} of {expectedShifts.toFixed(1)} shifts allocated this fortnight ({formatFte(selectedStaff.fte ?? DEFAULT_FTE)} FTE)
+                  </p>
+                  <p className={`text-xs mt-1 ${remainingShifts < 0 ? 'text-orange-700 font-semibold' : 'text-gray-600'}`}>
+                    {remainingShifts >= 0 ? `${remainingShifts.toFixed(1)} remaining` : `${Math.abs(remainingShifts).toFixed(1)} over FTE`}
+                  </p>
+                </div>
+              ) : (
+                <p className="text-xs text-gray-500 mt-3">Select a staff member, then click a day below to allocate them a shift.</p>
+              )}
+            </div>
+
+            {/* Fortnight grid */}
+            <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
+              <div className="flex items-center justify-between mb-4">
+                <button
+                  onClick={() => {
+                    const d = new Date(fortnightStart);
+                    d.setDate(d.getDate() - 14);
+                    setFortnightStart(d);
+                  }}
+                  className="p-2 hover:bg-gray-100 rounded-lg transition"
+                >
+                  <ChevronLeft size={24} />
+                </button>
+                <h1 className="text-lg font-bold text-gray-900 text-center">
+                  {days[0].toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}
+                  {' – '}
+                  {days[13].toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}
+                </h1>
+                <button
+                  onClick={() => {
+                    const d = new Date(fortnightStart);
+                    d.setDate(d.getDate() + 14);
+                    setFortnightStart(d);
+                  }}
+                  className="p-2 hover:bg-gray-100 rounded-lg transition"
+                >
+                  <ChevronRight size={24} />
+                </button>
+              </div>
+
+              {loadingFortnight ? (
+                <div className="text-center py-8">
+                  <Loader size={32} className="text-blue-600 animate-spin mx-auto mb-2" />
+                </div>
+              ) : (
+                <div className="grid grid-cols-7 gap-2">
+                  {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
+                    <div key={day} className="text-center text-xs font-bold text-gray-600 py-1">{day}</div>
+                  ))}
+                  {days.map((date, idx) => {
+                    const dateStr = toLocalDateStr(date);
+                    const dayAllocations = allocationsByDate[dateStr] || [];
+                    const staffOwnAllocation = dayAllocations.find(a => a.staff_id === fortnightSelectedStaffId);
+                    return (
+                      <button
+                        key={idx}
+                        disabled={!fortnightSelectedStaffId}
+                        onClick={() => setFortnightModalDate(date)}
+                        title={!fortnightSelectedStaffId ? 'Select a staff member first' : undefined}
+                        className={`min-h-[76px] p-1.5 rounded-lg border text-left align-top transition ${
+                          !fortnightSelectedStaffId
+                            ? 'border-gray-100 bg-gray-50 cursor-not-allowed'
+                            : staffOwnAllocation
+                              ? 'border-blue-400 bg-blue-50 hover:bg-blue-100'
+                              : 'border-gray-200 bg-white hover:border-blue-400 hover:bg-blue-50'
+                        }`}
+                      >
+                        <div className="text-xs font-semibold text-gray-700 mb-1">{date.getDate()}</div>
+                        <div className="space-y-0.5">
+                          {dayAllocations.map(a => (
+                            <div
+                              key={a.allocation_id}
+                              className={`text-[10px] leading-tight px-1 py-0.5 rounded truncate ${
+                                a.staff_id === fortnightSelectedStaffId ? 'bg-blue-600 text-white font-semibold' : 'bg-gray-100 text-gray-700'
+                              }`}
+                            >
+                              {getInitials(a.staff?.name)} · {a.shifts?.name}
+                            </div>
+                          ))}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Shift Picker Modal */}
+          {fortnightModalDate && selectedStaff && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+              <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-md max-h-[85vh] overflow-y-auto">
+                <div className="flex justify-between items-start mb-4">
+                  <div>
+                    <h2 className="text-lg font-bold text-gray-900">{selectedStaff.name}</h2>
+                    <p className="text-sm text-gray-600">
+                      {fortnightModalDate.toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long' })}
+                    </p>
+                  </div>
+                  <button onClick={() => setFortnightModalDate(null)} className="p-1 hover:bg-gray-100 rounded-lg">
+                    <X size={20} />
+                  </button>
+                </div>
+
+                {modalDateAllocations.length > 0 && (
+                  <div className="mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
+                    <p className="text-xs font-semibold text-gray-600 uppercase mb-2">Already on this day</p>
+                    <div className="space-y-1">
+                      {modalDateAllocations.map(a => (
+                        <p key={a.allocation_id} className="text-sm text-gray-800">
+                          {a.staff?.name} — {a.shifts?.name}
+                          {a.staff_id === fortnightSelectedStaffId && (
+                            <span className="ml-1 text-xs text-blue-600 font-semibold">(this person)</span>
+                          )}
+                        </p>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <p className="text-xs font-semibold text-gray-600 uppercase mb-2">Choose a shift</p>
+                {activeShifts.length === 0 ? (
+                  <p className="text-sm text-gray-500">No shifts configured — add some in Settings.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {activeShifts.map(shift => (
+                      <button
+                        key={shift.shift_id}
+                        onClick={() => handleAllocateFortnightShift(fortnightSelectedStaffId, fortnightModalDate, shift.shift_id)}
+                        className={`w-full text-left px-3 py-2 rounded-lg text-sm border transition ${
+                          modalExistingForStaff?.shift_id === shift.shift_id
+                            ? 'bg-blue-600 text-white border-blue-600'
+                            : 'bg-white border-gray-300 hover:bg-blue-50 hover:border-blue-400'
+                        }`}
+                      >
+                        {shift.name} ({shift.start_time?.slice(0, 5)}–{shift.end_time?.slice(0, 5)})
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {modalExistingForStaff && (
+                  <button
+                    onClick={() => handleClearFortnightShift(fortnightSelectedStaffId, fortnightModalDate)}
+                    className="w-full mt-3 px-3 py-2 bg-red-50 hover:bg-red-100 text-red-700 text-sm font-semibold rounded-lg transition"
+                  >
+                    Clear Assignment
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    if (activeTab === 'day' && selectedDate && !loadingDate) {
+      const getDutyStaffName = (dutyType) => {
+        const staffId = dutyAssignments[dutyType];
+        if (!staffId) return null;
+        return refData.staff.find(s => s.staff_id === staffId)?.name;
+      };
+
+      // Every active shift a location assignment can use, one button each —
+      // not a guess at "the" Whole Day/AM/PM/Night shift, because a
+      // department can have more than one shift sharing a session (e.g. an
+      // "AM" shift actually in use alongside an unused "Half Day" left over
+      // from earlier setup). On-call shifts are excluded here: those are
+      // assigned through the separate duty-roster system, not this picker.
+      const SESSION_SORT_ORDER = { full: 0, AM: 1, PM: 2, evening: 3, night: 4 };
+      const assignableShifts = refData.shifts
+        .filter(s => s.active !== false && !/on.?call/i.test(s.name || ''))
+        .slice()
+        .sort((a, b) => (SESSION_SORT_ORDER[a.session] ?? 5) - (SESSION_SORT_ORDER[b.session] ?? 5) || (a.start_time || '').localeCompare(b.start_time || ''));
+      const formatShiftTime = (shift) => (shift?.start_time && shift?.end_time ? ` (${shift.start_time.slice(0, 5)}–${shift.end_time.slice(0, 5)})` : '');
+
+      return (
+        <div className="p-4">
+          <div className="max-w-3xl mx-auto">
+            <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
+              <h1 className="text-2xl font-bold text-gray-900">{formatDate(selectedDate)}</h1>
+              <p className="text-sm text-gray-500">Large Rural Hospital — Rostering Officer</p>
+              {error && (
+                <div className="mt-4 p-3 bg-red-50 border border-red-300 rounded-lg flex gap-2 items-start">
+                  <AlertCircle size={18} className="text-red-600 flex-shrink-0 mt-0.5" />
+                  <p className="text-sm text-red-700">{error}</p>
+                </div>
+              )}
+            </div>
+
+            {/* Duty Assignments */}
+            <div className="bg-white rounded-lg shadow-sm p-6 mb-6 border-l-4 border-orange-500">
+              <h2 className="text-lg font-bold text-gray-900 mb-4">Duty Assignments</h2>
+              <div className="grid grid-cols-2 gap-4">
+                {['am_coordinator', 'pm_coordinator', 'first_on_call', 'second_on_call'].map(dutyType => (
+                  <div key={dutyType}>
+                    <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">
+                      {dutyType.replace(/_/g, ' ')}
+                    </label>
+                    <select
+                      value={dutyAssignments[dutyType] || ''}
+                      onChange={(e) => handleDutyChange(dutyType, e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="" style={{ color: '#dc2626', fontStyle: 'italic' }}>— Clear Assignment —</option>
+                      {getDutyStaffOptions(dutyType).map(s => (
+                        <option key={s.staff_id} value={s.staff_id}>{s.name}{s.unavailable ? ' (unavailable)' : ''}</option>
+                      ))}
+                    </select>
+                    {!getDutyStaffName(dutyType) && (
+                      <p className="text-xs text-red-500 italic mt-1">Unassigned</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Copy Last Week / Add Activity Buttons */}
+            <div className="mb-6 flex gap-3">
+              <button
+                onClick={handleCopyLastWeek}
+                className="px-4 py-2 bg-green-500 hover:bg-green-600 text-white font-medium rounded-lg transition"
+              >
+                Copy Last Week's Activities
+              </button>
+              <button
+                onClick={() => setShowAddActivity(true)}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition"
+              >
+                + Add Activity
+              </button>
+            </div>
+
+            {/* Theatre Assignments — grouped into Morning/Afternoon/Night so a
+                whole day's roster doesn't read as one flat, interleaved list.
+                A Whole Day activity spans both Morning and Afternoon, so it's
+                rendered (with a group-qualified key) in both sections. */}
+            {(() => {
+              const groupedActivities = { morning: [], afternoon: [], night: [] };
+              theatreActivities.forEach(ta => {
+                getSessionGroups(ta.shifts).forEach(group => groupedActivities[group].push(ta));
+              });
+
+              const renderActivityCard = (ta, groupKey) => {
+                const consultantAssignment = getStaffForRole(ta.theatre_activity_id, ta.location_id, 'consultant');
+                const registrarAssignment = getStaffForRole(ta.theatre_activity_id, ta.location_id, 'registrar');
+                const consultantPending = pendingAssignment?.theatreActivityId === ta.theatre_activity_id && pendingAssignment.role === 'consultant';
+                const registrarPending = pendingAssignment?.theatreActivityId === ta.theatre_activity_id && pendingAssignment.role === 'registrar';
+                const consultantOverride = overridePrompt?.theatreActivityId === ta.theatre_activity_id && overridePrompt.role === 'consultant';
+                const registrarOverride = overridePrompt?.theatreActivityId === ta.theatre_activity_id && overridePrompt.role === 'registrar';
+                const consultantPatternAlert = patternRuleAlert?.theatreActivityId === ta.theatre_activity_id && patternRuleAlert.role === 'consultant';
+                const registrarPatternAlert = patternRuleAlert?.theatreActivityId === ta.theatre_activity_id && patternRuleAlert.role === 'registrar';
+
+                const ShiftTypePicker = ({ role }) => {
+                  const dayShiftsBlocked = fatigueStatus.nightCooldownStaffIds.has(pendingAssignment.staffId);
+
+                  const pickDayShift = (shift) => {
+                    if (dayShiftsBlocked) {
+                      setOverridePrompt({
+                        theatreActivityId: ta.theatre_activity_id,
+                        locationId: ta.location_id,
+                        role,
+                        staffId: pendingAssignment.staffId,
+                        staffName: pendingAssignment.staffName,
+                        blockType: 'night_cooldown',
+                        shiftId: shift.shift_id,
+                        reason: '',
+                      });
+                      setPendingAssignment(null);
+                      return;
+                    }
+                    handleAssignStaff(ta.theatre_activity_id, ta.location_id, shift.shift_id, pendingAssignment.staffId, role, pendingAssignment.overrideReason);
+                  };
+
+                  return (
+                    <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                      <p className="text-xs font-semibold text-gray-700 mb-2">
+                        Choose shift for {pendingAssignment.staffName}:
+                      </p>
+                      {dayShiftsBlocked && (
+                        <p className="text-xs text-orange-700 mb-2">
+                          Just finished a run of nights — needs one more day off before a Day shift (override available). Night is unaffected.
+                        </p>
+                      )}
+                      <div className="flex gap-2 flex-wrap">
+                        {assignableShifts.map(shift => {
+                          const isNight = shift.session === 'night';
+                          return (
+                            <button
+                              key={shift.shift_id}
+                              title={!isNight && dayShiftsBlocked ? 'Still in post-night cooldown — click to override' : undefined}
+                              onClick={() => (isNight
+                                ? handleAssignStaff(ta.theatre_activity_id, ta.location_id, shift.shift_id, pendingAssignment.staffId, role, pendingAssignment.overrideReason)
+                                : pickDayShift(shift))}
+                              className={`flex-1 px-3 py-2 text-xs font-semibold rounded-lg transition ${
+                                isNight
+                                  ? 'bg-indigo-700 hover:bg-indigo-800 text-white'
+                                  : dayShiftsBlocked
+                                    ? 'bg-orange-100 hover:bg-orange-200 text-orange-800 border border-orange-300'
+                                    : 'bg-blue-600 hover:bg-blue-700 text-white'
+                              }`}
+                            >
+                              {shift.name}{formatShiftTime(shift)}{!isNight && dayShiftsBlocked ? ' ⚠' : ''}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {assignableShifts.length === 0 && (
+                        <p className="text-xs text-gray-500 mt-2">
+                          No shifts configured — add one in Settings → Shift Management.
+                        </p>
+                      )}
+                      <button onClick={() => setPendingAssignment(null)} className="mt-2 text-xs text-gray-500 hover:text-gray-700">
+                        Cancel
+                      </button>
+                    </div>
+                  );
+                };
+
+                const OverridePanel = () => (
+                  <div className="mt-2 p-3 bg-orange-50 border border-orange-300 rounded-lg">
+                    <p className="text-xs font-semibold text-orange-800 mb-1">
+                      ⚠ {overridePrompt.blockType === 'post_night_rest'
+                        ? `${overridePrompt.staffName} worked a night shift yesterday and is due a mandatory rest day.`
+                        : `${overridePrompt.staffName} is still in the post-night cooldown period.`}
+                    </p>
+                    <p className="text-xs text-orange-700 mb-2">
+                      Overriding this is a fatigue risk. Enter a reason (10+ characters) to proceed — it's recorded against the assignment.
+                    </p>
+                    <textarea
+                      value={overridePrompt.reason}
+                      onChange={(e) => setOverridePrompt({ ...overridePrompt, reason: e.target.value })}
+                      placeholder="Reason for override (required)…"
+                      rows={2}
+                      className="w-full px-2 py-1.5 border border-orange-300 rounded text-sm mb-2 focus:outline-none focus:ring-2 focus:ring-orange-400"
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setOverridePrompt(null)}
+                        className="flex-1 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold rounded-lg transition"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        disabled={overridePrompt.reason.trim().length < 10}
+                        onClick={handleConfirmOverride}
+                        className="flex-1 px-3 py-1.5 bg-orange-600 hover:bg-orange-700 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition"
+                      >
+                        Confirm Override
+                      </button>
+                    </div>
+                  </div>
+                );
+
+                const PatternRuleAlertPanel = () => {
+                  const isBlock = patternRuleAlert.action === 'BLOCK';
+                  return (
+                    <div className={`mt-2 p-3 rounded-lg border ${isBlock ? 'bg-red-50 border-red-300' : 'bg-yellow-50 border-yellow-300'}`}>
+                      <p className={`text-xs font-semibold mb-2 ${isBlock ? 'text-red-800' : 'text-yellow-800'}`}>
+                        {isBlock ? '⛔' : '⚠'} Pattern violation: {patternRuleAlert.description}
+                      </p>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => setPatternRuleAlert(null)}
+                          className="flex-1 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold rounded-lg transition"
+                        >
+                          Cancel
+                        </button>
+                        {!isBlock && (
+                          <button
+                            onClick={handleConfirmPatternOverride}
+                            className="flex-1 px-3 py-1.5 bg-yellow-600 hover:bg-yellow-700 text-white text-xs font-semibold rounded-lg transition"
+                          >
+                            Override
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                };
+
+                return (
+                <div key={`${ta.theatre_activity_id}-${groupKey}`} className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-blue-500">
+                  <div className="flex items-start justify-between gap-3 mb-4">
+                    <div className="flex-1">
+                      <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Activity</label>
+                      <select
+                        value={ta.activity_id || ''}
+                        onChange={(e) => handleActivityChange(ta.theatre_activity_id, e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-semibold text-gray-900"
+                      >
+                        {refData.activities.map(act => (
+                          <option key={act.activity_id} value={act.activity_id}>{act.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <button
+                      onClick={() => handleRemoveActivity(ta)}
+                      title="Remove this location for the day"
+                      className="p-2 mt-5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition flex-shrink-0"
+                    >
+                      <X size={18} />
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-2 mb-4">
+                    <h3 className="text-lg font-bold text-gray-900">
+                      {ta.locations.name}
+                      {ta.shifts && (
+                        <span className="ml-2 text-sm font-normal text-gray-500">
+                          ({ta.shifts.name}{ta.shifts.start_time && ta.shifts.end_time ? ` ${ta.shifts.start_time.slice(0, 5)}–${ta.shifts.end_time.slice(0, 5)}` : ''})
+                        </span>
+                      )}
+                    </h3>
+                    {getTotalVolunteerCount(ta.theatre_activity_id) > 0 && (
+                      <span className="px-2 py-0.5 bg-purple-100 text-purple-900 text-xs font-semibold rounded-full">
+                        🙋 {getTotalVolunteerCount(ta.theatre_activity_id)} volunteer{getTotalVolunteerCount(ta.theatre_activity_id) === 1 ? '' : 's'} waiting
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Consultant */}
+                  <div className="mb-4">
+                    <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Consultant</label>
+                    {consultantAssignment ? (
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <StaffBadge name={consultantAssignment.staff.name} />
+                        <span className="text-xs text-gray-500">({getConsultantAllocationCount(consultantAssignment.staff_id)}/2)</span>
+                        {consultantAssignment.shifts && (
+                          <span className="text-xs text-gray-500">
+                            {consultantAssignment.shifts.name} ({consultantAssignment.shifts.start_time?.slice(0, 5)}–{consultantAssignment.shifts.end_time?.slice(0, 5)})
+                          </span>
+                        )}
+                        {fatigueStatus.fatigueRiskStaffIds.has(consultantAssignment.staff_id) && <FatigueRiskBadge />}
+                        {isActivityRestricted(consultantAssignment.staff_id, ta.activity_id) && <ActivityRestrictionBadge />}
+                        {consultantAssignment.fatigue_override_reason && (
+                          <span
+                            title={`Fatigue override: ${consultantAssignment.fatigue_override_reason}`}
+                            className="px-2 py-0.5 bg-orange-600 text-white text-xs font-semibold rounded"
+                          >
+                            ⚠ Override
+                          </span>
+                        )}
+                        <LeaveCodeControl assignment={consultantAssignment} />
+                        <button onClick={() => handleRemoveStaff(ta.theatre_activity_id, ta.location_id, 'consultant')} className="text-red-600 hover:text-red-700 text-xs font-semibold">
+                          Remove
+                        </button>
+                      </div>
+                    ) : consultantPending ? (
+                      <ShiftTypePicker role="consultant" />
+                    ) : consultantOverride ? (
+                      <OverridePanel />
+                    ) : consultantPatternAlert ? (
+                      <PatternRuleAlertPanel />
+                    ) : (
+                      <button
+                        onClick={() => setOpenDropdown(openDropdown === `${ta.theatre_activity_id}-consultant` ? null : `${ta.theatre_activity_id}-consultant`)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-left bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      >
+                        Select Consultant
+                      </button>
+                    )}
+                    {!consultantAssignment && !consultantPending && !consultantOverride && !consultantPatternAlert && openDropdown === `${ta.theatre_activity_id}-consultant` && (() => {
+                      const selectStaff = (s, blocked, overridable, blockType, label) => {
+                        if (blocked && !overridable) return;
+                        if (blocked && overridable) {
+                          setOverridePrompt({ theatreActivityId: ta.theatre_activity_id, locationId: ta.location_id, role: 'consultant', staffId: s.staff_id, staffName: s.name, blockType, shiftId: null, reason: '' });
+                          setOpenDropdown(null);
+                          return;
+                        }
+                        setPendingAssignment({ theatreActivityId: ta.theatre_activity_id, locationId: ta.location_id, role: 'consultant', staffId: s.staff_id, staffName: s.name, overrideReason: null });
+                      };
+                      const volunteers = getVolunteersForActivity(ta.theatre_activity_id, 'consultant');
+                      const volunteerIds = new Set(volunteers.map(v => v.staff_id));
+
+                      return (
+                        <div className="mt-2 bg-white border border-gray-300 rounded-lg shadow-lg p-2 max-h-48 overflow-y-auto">
+                          {volunteers.map(s => {
+                            const { blocked, overridable, blockType, label } = getAssignabilityInfo(s.staff_id);
+                            const hardBlocked = blocked && !overridable;
+                            return (
+                              <button
+                                key={`volunteer-${s.staff_id}`}
+                                onClick={() => selectStaff(s, blocked, overridable, blockType, label)}
+                                disabled={hardBlocked}
+                                title={hardBlocked ? `Not confirmed available for this date${label}` : 'Volunteered for this role'}
+                                className={`w-full text-left px-3 py-2 rounded text-sm mb-1 border ${
+                                  hardBlocked ? 'text-gray-400 cursor-not-allowed bg-gray-50 border-gray-200' : 'bg-purple-50 border-purple-200 text-purple-900 hover:bg-purple-100'
+                                }`}
+                              >
+                                🙋 {s.name}{label}
+                              </button>
+                            );
+                          })}
+                          {getRankedStaffOptions(ta.activity_id, s => s.rank === 'consultant' && !volunteerIds.has(s.staff_id)).map(s => {
+                            const { blocked, overridable, blockType, label, fatigueRisk } = getAssignabilityInfo(s.staff_id);
+                            const hardBlocked = blocked && !overridable;
+                            const restricted = isActivityRestricted(s.staff_id, ta.activity_id);
+                            return (
+                              <button
+                                key={s.staff_id}
+                                onClick={() => selectStaff(s, blocked, overridable, blockType, label)}
+                                disabled={hardBlocked}
+                                title={hardBlocked ? `Not confirmed available for this date${label}` : blocked ? `Requires override${label}` : restricted ? 'Marked themselves as unable to do this activity — can still be assigned' : undefined}
+                                className={`w-full text-left px-3 py-2 rounded text-sm ${
+                                  hardBlocked ? 'text-gray-400 cursor-not-allowed bg-gray-50' : blocked ? 'text-orange-700 hover:bg-orange-50' : restricted ? 'text-red-700 hover:bg-red-50' : 'hover:bg-blue-50'
+                                }`}
+                              >
+                                {s.name} ({getConsultantAllocationCount(s.staff_id)}/2){typeof s.exposure_rate === 'number' ? ` — ${s.exposure_rate}% exposure` : ''}{label}
+                                {blocked && overridable && <span className="font-semibold"> (override required)</span>}
+                                {fatigueRisk && <span className="text-orange-600 font-semibold"> ⚠ Fatigue risk (overnight on-call)</span>}
+                                {restricted && <span className="text-red-600 font-semibold"> ⚠ Can't do this activity (by preference)</span>}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()}
+                  </div>
+
+                  {/* Registrar */}
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Registrar</label>
+                    {registrarAssignment ? (
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <StaffBadge name={registrarAssignment.staff.name} />
+                        {registrarAssignment.shifts && (
+                          <span className="text-xs text-gray-500">
+                            {registrarAssignment.shifts.name} ({registrarAssignment.shifts.start_time?.slice(0, 5)}–{registrarAssignment.shifts.end_time?.slice(0, 5)})
+                          </span>
+                        )}
+                        {fatigueStatus.fatigueRiskStaffIds.has(registrarAssignment.staff_id) && <FatigueRiskBadge />}
+                        {isActivityRestricted(registrarAssignment.staff_id, ta.activity_id) && <ActivityRestrictionBadge />}
+                        {registrarAssignment.fatigue_override_reason && (
+                          <span
+                            title={`Fatigue override: ${registrarAssignment.fatigue_override_reason}`}
+                            className="px-2 py-0.5 bg-orange-600 text-white text-xs font-semibold rounded"
+                          >
+                            ⚠ Override
+                          </span>
+                        )}
+                        <LeaveCodeControl assignment={registrarAssignment} />
+                        <button onClick={() => handleRemoveStaff(ta.theatre_activity_id, ta.location_id, 'registrar')} className="text-red-600 hover:text-red-700 text-xs font-semibold">
+                          Remove
+                        </button>
+                      </div>
+                    ) : registrarPending ? (
+                      <ShiftTypePicker role="registrar" />
+                    ) : registrarOverride ? (
+                      <OverridePanel />
+                    ) : registrarPatternAlert ? (
+                      <PatternRuleAlertPanel />
+                    ) : (
+                      <button
+                        onClick={() => setOpenDropdown(openDropdown === `${ta.theatre_activity_id}-registrar` ? null : `${ta.theatre_activity_id}-registrar`)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-left bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      >
+                        Select Registrar
+                      </button>
+                    )}
+                    {!registrarAssignment && !registrarPending && !registrarOverride && !registrarPatternAlert && openDropdown === `${ta.theatre_activity_id}-registrar` && (() => {
+                      const selectStaff = (s, blocked, overridable, blockType, label) => {
+                        if (blocked && !overridable) return;
+                        if (blocked && overridable) {
+                          setOverridePrompt({ theatreActivityId: ta.theatre_activity_id, locationId: ta.location_id, role: 'registrar', staffId: s.staff_id, staffName: s.name, blockType, shiftId: null, reason: '' });
+                          setOpenDropdown(null);
+                          return;
+                        }
+                        setPendingAssignment({ theatreActivityId: ta.theatre_activity_id, locationId: ta.location_id, role: 'registrar', staffId: s.staff_id, staffName: s.name, overrideReason: null });
+                      };
+                      const volunteers = getVolunteersForActivity(ta.theatre_activity_id, 'registrar');
+                      const volunteerIds = new Set(volunteers.map(v => v.staff_id));
+
+                      return (
+                        <div className="mt-2 bg-white border border-gray-300 rounded-lg shadow-lg p-2 max-h-48 overflow-y-auto">
+                          {volunteers.map(s => {
+                            const { blocked, overridable, blockType, label } = getAssignabilityInfo(s.staff_id);
+                            const hardBlocked = blocked && !overridable;
+                            return (
+                              <button
+                                key={`volunteer-${s.staff_id}`}
+                                onClick={() => selectStaff(s, blocked, overridable, blockType, label)}
+                                disabled={hardBlocked}
+                                title={hardBlocked ? `Not confirmed available for this date${label}` : 'Volunteered for this role'}
+                                className={`w-full text-left px-3 py-2 rounded text-sm mb-1 border ${
+                                  hardBlocked ? 'text-gray-400 cursor-not-allowed bg-gray-50 border-gray-200' : 'bg-purple-50 border-purple-200 text-purple-900 hover:bg-purple-100'
+                                }`}
+                              >
+                                🙋 {s.name}{label}
+                              </button>
+                            );
+                          })}
+                          {getRankedStaffOptions(ta.activity_id, s => s.rank.includes('trainee') && !volunteerIds.has(s.staff_id)).map(s => {
+                            const { blocked, overridable, blockType, label, fatigueRisk } = getAssignabilityInfo(s.staff_id);
+                            const hardBlocked = blocked && !overridable;
+                            const restricted = isActivityRestricted(s.staff_id, ta.activity_id);
+                            return (
+                              <button
+                                key={s.staff_id}
+                                onClick={() => selectStaff(s, blocked, overridable, blockType, label)}
+                                disabled={hardBlocked}
+                                title={hardBlocked ? `Not confirmed available for this date${label}` : blocked ? `Requires override${label}` : restricted ? 'Marked themselves as unable to do this activity — can still be assigned' : undefined}
+                                className={`w-full text-left px-3 py-2 rounded text-sm ${
+                                  hardBlocked ? 'text-gray-400 cursor-not-allowed bg-gray-50' : blocked ? 'text-orange-700 hover:bg-orange-50' : restricted ? 'text-red-700 hover:bg-red-50' : 'hover:bg-blue-50'
+                                }`}
+                              >
+                                {s.name}{typeof s.exposure_rate === 'number' ? ` — ${s.exposure_rate}% exposure` : ''}{label}
+                                {blocked && overridable && <span className="font-semibold"> (override required)</span>}
+                                {fatigueRisk && <span className="text-orange-600 font-semibold"> ⚠ Fatigue risk (overnight on-call)</span>}
+                                {restricted && <span className="text-red-600 font-semibold"> ⚠ Can't do this activity (by preference)</span>}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
+                );
+              };
+
+              return (
+                <div className="space-y-6">
+                  {SESSION_GROUP_ORDER.map(groupKey => (
+                    <CollapsibleSection key={groupKey} title={SESSION_GROUP_LABELS[groupKey]} defaultOpen={true}>
+                      {groupedActivities[groupKey].length === 0 ? (
+                        <p className="text-sm text-gray-500">No activities scheduled.</p>
+                      ) : (
+                        <div className="space-y-4">
+                          {groupedActivities[groupKey].map(ta => renderActivityCard(ta, groupKey))}
+                        </div>
+                      )}
+                    </CollapsibleSection>
+                  ))}
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+      );
+    }
+
+    if (activeTab === 'settings') {
+      return (
+        <div className="p-4">
+          <div className="max-w-3xl mx-auto">
+            <h1 className="text-2xl font-bold text-gray-900 mb-6">Settings</h1>
+
+            {error && (
+              <div className="mb-6 p-3 bg-red-50 border border-red-300 rounded-lg flex gap-2 items-start">
+                <AlertCircle size={18} className="text-red-600 flex-shrink-0 mt-0.5" />
+                <p className="text-sm text-red-700">{error}</p>
+              </div>
+            )}
+
+            {/* Department Settings Section */}
+            <CollapsibleSection title="Department Settings">
+              <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Pay Centre Number</label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="e.g., PC-1234"
+                  value={payCentreNumberInput}
+                  onChange={(e) => setPayCentreNumberInput(e.target.value)}
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                />
+                <button
+                  onClick={handleSavePayCentreNumber}
+                  disabled={savingPayCentreNumber}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-medium rounded-lg transition text-sm"
+                >
+                  {savingPayCentreNumber ? 'Saving...' : 'Save'}
+                </button>
+              </div>
+              <p className="text-xs text-gray-500 mt-2">Printed in the header row of the payroll Excel export.</p>
+            </CollapsibleSection>
+
+            {/* Shifts Section */}
+            <CollapsibleSection title="Shifts">
+              <div className="mb-6 p-4 bg-blue-50 rounded-lg">
+                <div className="grid grid-cols-2 gap-3 mb-3">
+                  <input
+                    type="text"
+                    placeholder="Shift name (e.g., 'Full Day')"
+                    value={newShiftName}
+                    onChange={(e) => setNewShiftName(e.target.value)}
+                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  />
+                  <select
+                    value={newShiftDayType}
+                    onChange={(e) => setNewShiftDayType(e.target.value)}
+                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  >
+                    <option value="weekday">Weekday</option>
+                    <option value="weekend">Weekend</option>
+                  </select>
+                  <input
+                    type="time"
+                    value={newShiftStartTime}
+                    onChange={(e) => setNewShiftStartTime(e.target.value)}
+                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  />
+                  <input
+                    type="time"
+                    value={newShiftEndTime}
+                    onChange={(e) => setNewShiftEndTime(e.target.value)}
+                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  />
+                  <select
+                    value={newShiftSession}
+                    onChange={(e) => setNewShiftSession(e.target.value)}
+                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm col-span-2"
+                  >
+                    <option value="full">Full Day</option>
+                    <option value="AM">AM</option>
+                    <option value="PM">PM</option>
+                    <option value="evening">Evening</option>
+                    <option value="night">Night</option>
+                  </select>
+                </div>
+                <button
+                  onClick={handleCreateShift}
+                  className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition text-sm"
+                >
+                  Add Shift
+                </button>
+              </div>
+
+              <div className="space-y-2">
+                {refData.shifts.map(shift => (
+                  <div key={shift.shift_id} className={`p-3 border rounded-lg flex items-center justify-between ${shift.active === false ? 'border-gray-200 bg-gray-50 opacity-60' : 'border-gray-200'}`}>
+                    {editingShiftId === shift.shift_id ? (
+                      <div className="flex-1">
+                        <div className="grid grid-cols-2 gap-2 mb-2">
+                          <input
+                            type="text"
+                            value={editShiftName}
+                            onChange={(e) => setEditShiftName(e.target.value)}
+                            className="px-2 py-1 border border-gray-300 rounded text-sm"
+                          />
+                          <select
+                            value={editShiftDayType}
+                            onChange={(e) => setEditShiftDayType(e.target.value)}
+                            className="px-2 py-1 border border-gray-300 rounded text-sm"
+                          >
+                            <option value="weekday">Weekday</option>
+                            <option value="weekend">Weekend</option>
+                          </select>
+                          <input
+                            type="time"
+                            value={editShiftStartTime}
+                            onChange={(e) => setEditShiftStartTime(e.target.value)}
+                            className="px-2 py-1 border border-gray-300 rounded text-sm"
+                          />
+                          <input
+                            type="time"
+                            value={editShiftEndTime}
+                            onChange={(e) => setEditShiftEndTime(e.target.value)}
+                            className="px-2 py-1 border border-gray-300 rounded text-sm"
+                          />
+                          <select
+                            value={editShiftSession}
+                            onChange={(e) => setEditShiftSession(e.target.value)}
+                            className="px-2 py-1 border border-gray-300 rounded text-sm col-span-2"
+                          >
+                            <option value="full">Full Day</option>
+                            <option value="AM">AM</option>
+                            <option value="PM">PM</option>
+                            <option value="evening">Evening</option>
+                            <option value="night">Night</option>
+                          </select>
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={handleUpdateShift}
+                            className="px-3 py-1 bg-green-600 hover:bg-green-700 text-white font-medium rounded text-xs transition"
+                          >
+                            Save
+                          </button>
+                          <button
+                            onClick={() => setEditingShiftId(null)}
+                            className="px-3 py-1 bg-gray-400 hover:bg-gray-500 text-white font-medium rounded text-xs transition"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="flex-1">
+                          <p className="font-semibold text-sm text-gray-900">
+                            {shift.name}{shift.active === false && <span className="ml-2 text-xs font-normal text-gray-500">(inactive)</span>}
+                          </p>
+                          <p className="text-xs text-gray-600">
+                            {shift.day_type} • {shift.start_time} - {shift.end_time} • {shift.session}
+                          </p>
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleStartEditShift(shift)}
+                            className="px-3 py-1 bg-blue-100 hover:bg-blue-200 text-blue-900 font-medium rounded text-xs transition"
+                          >
+                            Edit
+                          </button>
+                          {shift.active === false ? (
+                            <button
+                              onClick={() => handleReactivateShift(shift.shift_id)}
+                              className="px-3 py-1 bg-green-100 hover:bg-green-200 text-green-900 font-medium rounded text-xs transition"
+                            >
+                              Reactivate
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => handleDeactivateShift(shift.shift_id)}
+                              className="px-3 py-1 bg-red-100 hover:bg-red-200 text-red-900 font-medium rounded text-xs transition"
+                            >
+                              Deactivate
+                            </button>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </CollapsibleSection>
+
+            {/* Shift Pattern Rules Section */}
+            <CollapsibleSection title="Shift Pattern Rules">
+              <ShiftPatternRulesUI departmentId={departmentId} shifts={refData.shifts} />
+            </CollapsibleSection>
+
+            {/* Locations Section */}
+            <CollapsibleSection title="Locations">
+              <div className="flex gap-2 mb-4">
+                <input
+                  type="text"
+                  placeholder="Location name (e.g., 'Theatre 1')"
+                  value={newLocationInput}
+                  onChange={(e) => setNewLocationInput(e.target.value)}
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                />
+                <button
+                  onClick={handleCreateLocation}
+                  className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition text-sm"
+                >
+                  Add
+                </button>
+              </div>
+
+              <div className="space-y-2">
+                {refData.locations.map(loc => (
+                  <div key={loc.location_id} className={`p-3 border rounded-lg flex items-center justify-between gap-2 ${loc.active === false ? 'border-gray-200 bg-gray-50 opacity-60' : 'border-gray-200'}`}>
+                    {editingLocationId === loc.location_id ? (
+                      <div className="flex gap-2 items-center flex-1">
+                        <input
+                          type="text"
+                          value={editLocationName}
+                          onChange={(e) => setEditLocationName(e.target.value)}
+                          className="flex-1 px-2 py-1 border border-gray-300 rounded text-sm"
+                        />
+                        <button
+                          onClick={handleUpdateLocation}
+                          className="px-3 py-1 bg-green-600 hover:bg-green-700 text-white font-medium rounded text-xs transition"
+                        >
+                          Save
+                        </button>
+                        <button
+                          onClick={() => setEditingLocationId(null)}
+                          className="px-3 py-1 bg-gray-400 hover:bg-gray-500 text-white font-medium rounded text-xs transition"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <p className="font-semibold text-sm text-gray-900">
+                          {loc.name}{loc.active === false && <span className="ml-2 text-xs font-normal text-gray-500">(inactive)</span>}
+                        </p>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleStartEditLocation(loc)}
+                            className="px-3 py-1 bg-blue-100 hover:bg-blue-200 text-blue-900 font-medium rounded text-xs transition"
+                          >
+                            Edit
+                          </button>
+                          {loc.active === false ? (
+                            <button
+                              onClick={() => handleReactivateLocation(loc.location_id)}
+                              className="px-3 py-1 bg-green-100 hover:bg-green-200 text-green-900 font-medium rounded text-xs transition"
+                            >
+                              Reactivate
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => handleDeactivateLocation(loc.location_id)}
+                              className="px-3 py-1 bg-red-100 hover:bg-red-200 text-red-900 font-medium rounded text-xs transition"
+                            >
+                              Deactivate
+                            </button>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </CollapsibleSection>
+
+            {/* Activities Section */}
+            <CollapsibleSection title="Activities">
+              <div className="flex gap-2 mb-4">
+                <input
+                  type="text"
+                  placeholder="Activity name (e.g., 'STOP')"
+                  value={newActivityInput}
+                  onChange={(e) => setNewActivityInput(e.target.value)}
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                />
+                <button
+                  onClick={handleCreateActivity}
+                  className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition text-sm"
+                >
+                  Add
+                </button>
+              </div>
+
+              <div className="space-y-2">
+                {refData.activities.map(act => (
+                  <div key={act.activity_id} className="p-3 border border-gray-200 rounded-lg flex items-center justify-between gap-2">
+                    {editingActivityId === act.activity_id ? (
+                      <div className="flex gap-2 items-center flex-1">
+                        <input
+                          type="text"
+                          value={editActivityName}
+                          onChange={(e) => setEditActivityName(e.target.value)}
+                          className="flex-1 px-2 py-1 border border-gray-300 rounded text-sm"
+                        />
+                        <button
+                          onClick={handleUpdateActivity}
+                          className="px-3 py-1 bg-green-600 hover:bg-green-700 text-white font-medium rounded text-xs transition"
+                        >
+                          Save
+                        </button>
+                        <button
+                          onClick={() => setEditingActivityId(null)}
+                          className="px-3 py-1 bg-gray-400 hover:bg-gray-500 text-white font-medium rounded text-xs transition"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <p className="font-semibold text-sm text-gray-900">{act.name}</p>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleStartEditActivity(act)}
+                            className="px-3 py-1 bg-blue-100 hover:bg-blue-200 text-blue-900 font-medium rounded text-xs transition"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => handleDeleteActivity(act.activity_id)}
+                            className="px-3 py-1 bg-red-100 hover:bg-red-200 text-red-900 font-medium rounded text-xs transition"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </CollapsibleSection>
+
+            {/* Leave Types Section */}
+            <CollapsibleSection title="Leave Types">
+              <div className="grid grid-cols-2 gap-2 mb-4">
+                <input
+                  type="text"
+                  placeholder="Name (e.g., 'Cairns Leave')"
+                  value={newLeaveTypeName}
+                  onChange={(e) => setNewLeaveTypeName(e.target.value)}
+                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                />
+                <input
+                  type="text"
+                  placeholder="Code (e.g., 'Cairns Leave')"
+                  value={newLeaveTypeCode}
+                  onChange={(e) => setNewLeaveTypeCode(e.target.value)}
+                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                />
+                <button
+                  onClick={handleCreateLeaveType}
+                  className="col-span-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition text-sm"
+                >
+                  Add Leave Type
+                </button>
+              </div>
+
+              <div className="space-y-2">
+                {refData.leaveTypes.map(lt => (
+                  <div key={lt.leave_type_id} className="p-3 border border-gray-200 rounded-lg flex items-center justify-between gap-2">
+                    {editingLeaveTypeId === lt.leave_type_id ? (
+                      <div className="flex gap-2 items-center flex-1">
+                        <input
+                          type="text"
+                          value={editLeaveTypeName}
+                          onChange={(e) => setEditLeaveTypeName(e.target.value)}
+                          className="flex-1 px-2 py-1 border border-gray-300 rounded text-sm"
+                        />
+                        <input
+                          type="text"
+                          value={editLeaveTypeCode}
+                          onChange={(e) => setEditLeaveTypeCode(e.target.value)}
+                          className="flex-1 px-2 py-1 border border-gray-300 rounded text-sm"
+                        />
+                        <button
+                          onClick={handleUpdateLeaveType}
+                          className="px-3 py-1 bg-green-600 hover:bg-green-700 text-white font-medium rounded text-xs transition"
+                        >
+                          Save
+                        </button>
+                        <button
+                          onClick={() => setEditingLeaveTypeId(null)}
+                          className="px-3 py-1 bg-gray-400 hover:bg-gray-500 text-white font-medium rounded text-xs transition"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="flex-1">
+                          <p className="font-semibold text-sm text-gray-900">{lt.name}</p>
+                          <p className="text-xs text-gray-600">Code: {lt.code}</p>
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleStartEditLeaveType(lt)}
+                            className="px-3 py-1 bg-blue-100 hover:bg-blue-200 text-blue-900 font-medium rounded text-xs transition"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => handleDeleteLeaveType(lt.leave_type_id)}
+                            className="px-3 py-1 bg-red-100 hover:bg-red-200 text-red-900 font-medium rounded text-xs transition"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                ))}
+                {refData.leaveTypes.length === 0 && (
+                  <p className="text-sm text-gray-500">No leave types yet — add one above.</p>
+                )}
+              </div>
+            </CollapsibleSection>
+
+            {/* Case Mix Report Section */}
+            <CollapsibleSection title="Case Mix Report">
+              <CaseMixReport departmentId={departmentId} refreshKey={staffVersion} />
+            </CollapsibleSection>
+
+            {/* On-Call / Weekend Fairness Section */}
+            <CollapsibleSection title="On-Call & Weekend Fairness">
+              <FairnessReport departmentId={departmentId} refreshKey={staffVersion} />
+            </CollapsibleSection>
+
+            {/* Staff and Availability Section */}
+            <CollapsibleSection title="Staff and Availability">
+              <StaffAvailabilityTab departmentId={departmentId} staffList={refData.staff} leaveTypes={refData.leaveTypes} onStaffChanged={refreshStaffList} />
+            </CollapsibleSection>
+
+            {/* Staff Profiles Section */}
+            <CollapsibleSection title="Staff Activity Profiles">
+              <StaffProfilesTab departmentId={departmentId} refreshKey={staffVersion} />
+            </CollapsibleSection>
+          </div>
+        </div>
+      );
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center">
+        <div className="text-center">
+          <Loader size={32} className="text-blue-600 animate-spin mx-auto mb-4" />
+          <p className="text-gray-600">Loading department...</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 pb-24">
+      {renderContent()}
+
+      {/* Staff Popup */}
+      {selectedStaff && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-sm">
+            <div className="flex justify-between items-start mb-4">
+              <h2 className="text-2xl font-bold text-gray-900">{selectedStaff}</h2>
+              <button onClick={() => setSelectedStaff(null)} className="p-1 hover:bg-gray-100 rounded-lg">
+                <X size={20} />
+              </button>
+            </div>
+            {refData.staff.find(s => s.name === selectedStaff) && (
+              <div className="bg-green-50 rounded-lg p-4 mb-6">
+                <p className="text-xs text-gray-600 uppercase tracking-wide mb-1">Phone</p>
+                <p className="text-lg font-mono font-semibold text-gray-900">{refData.staff.find(s => s.name === selectedStaff)?.phone}</p>
+              </div>
+            )}
+            <button onClick={() => setSelectedStaff(null)} className="w-full bg-gray-100 hover:bg-gray-200 text-gray-900 font-medium py-2 rounded-lg">
+              Close
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Add Activity Modal */}
+      {showAddActivity && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-sm">
+            <div className="flex justify-between items-start mb-4">
+              <h2 className="text-xl font-bold text-gray-900">Add Activity</h2>
+              <button onClick={() => setShowAddActivity(false)} className="p-1 hover:bg-gray-100 rounded-lg">
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="space-y-4 mb-6">
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Location</label>
+                <select
+                  value={newActivityLocation}
+                  onChange={(e) => setNewActivityLocation(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">Select location…</option>
+                  {refData.locations.filter(loc => loc.active !== false).map(loc => (
+                    <option key={loc.location_id} value={loc.location_id}>{loc.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Session</label>
+                <select
+                  value={newActivitySession}
+                  onChange={(e) => setNewActivitySession(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="full">Whole Day</option>
+                  <option value="AM">Morning</option>
+                  <option value="PM">Afternoon</option>
+                  <option value="night">Night</option>
+                </select>
+                <p className="text-xs text-gray-500 mt-2">Which part of the day this activity covers — controls whether it groups under Morning, Afternoon or Night Allocations.</p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Activity</label>
+                <select
+                  value={newActivityType}
+                  onChange={(e) => handleAddActivity(e.target.value)}
+                  disabled={!newActivityLocation}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-400"
+                >
+                  <option value="">{newActivityLocation ? 'Select activity…' : 'Select a location first'}</option>
+                  {refData.activities.map(act => (
+                    <option key={act.activity_id} value={act.activity_id}>{act.name}</option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-500 mt-2">Choosing an activity adds it and closes this dialog.</p>
+              </div>
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => { setShowAddActivity(false); setNewActivityLocation(''); setNewActivityType(''); setNewActivitySession('full'); }}
+                className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-900 font-medium py-2 rounded-lg transition"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* BOTTOM TAB NAVIGATION */}
+      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-lg">
+        <div className="max-w-3xl mx-auto flex justify-around">
+          <button
+            onClick={() => setActiveTab('calendar')}
+            className={`flex-1 py-4 text-center transition ${
+              activeTab === 'calendar' ? 'text-blue-600 border-t-2 border-blue-600' : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            <div className="text-sm font-semibold">Calendar</div>
+          </button>
+          <button
+            onClick={() => setActiveTab('fortnight')}
+            className={`flex-1 py-4 text-center transition ${
+              activeTab === 'fortnight' ? 'text-blue-600 border-t-2 border-blue-600' : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            <div className="text-sm font-semibold">Fortnight</div>
+          </button>
+          <button
+            onClick={() => {
+              if (!selectedDate) setSelectedDate(new Date());
+              setActiveTab('day');
+            }}
+            className={`flex-1 py-4 text-center transition ${
+              activeTab === 'day' ? 'text-blue-600 border-t-2 border-blue-600' : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            <div className="text-sm font-semibold">Day</div>
+          </button>
+          <button
+            onClick={() => setActiveTab('settings')}
+            className={`flex-1 py-4 text-center transition ${
+              activeTab === 'settings' ? 'text-blue-600 border-t-2 border-blue-600' : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            <div className="text-sm font-semibold">Settings</div>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
