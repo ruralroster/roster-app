@@ -16,11 +16,11 @@ export default function DepartmentSwitcher({ memberships, onSelect }) {
           <div className="space-y-2">
             {memberships.map((m) => (
               <button
-                key={m.staff_id}
+                key={m.department_id}
                 onClick={() => onSelect(m)}
                 className="w-full text-left p-4 border-2 border-gray-200 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition"
               >
-                <div className="font-medium text-gray-900">{m.departments?.name || 'Department'}</div>
+                <div className="font-medium text-gray-900">{m.department_name || 'Department'}</div>
                 <div className="text-xs text-gray-600 capitalize">{m.role}</div>
               </button>
             ))}

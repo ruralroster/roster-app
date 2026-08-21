@@ -2260,6 +2260,14 @@ export async function signOut() {
 // than one row sharing the same user_id; no separate join table needed).
 // Each membership carries its own `role` ('staff' | 'officer'), since a
 // person can be an officer in one department and plain staff in another.
+// A super admin (profiles.is_super_admin) isn't necessarily on any `staff`
+// row at all — the flag grants them officer-level DB access to every
+// department regardless (see is_department_officer in
+// migrations/2026-08-21_super_admin.sql), including ones added after they
+// were made an admin. So a super admin's "memberships" here are synthesized
+// from every department that exists, not looked up from `staff`. Both
+// branches return the same flat shape so callers (App.js, DepartmentSwitcher)
+// don't need to know which case they're in.
 export async function getMyMemberships() {
   console.log('getMyMemberships called');
 
@@ -2267,6 +2275,31 @@ export async function getMyMemberships() {
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError) throw userError;
     if (!user) return { data: [], error: null };
+
+    const { data: profile, error: profileError } = await supabase
+      .from('profiles')
+      .select('is_super_admin')
+      .eq('user_id', user.id)
+      .maybeSingle();
+    if (profileError) throw profileError;
+
+    if (profile?.is_super_admin) {
+      const { data, error } = await supabase
+        .from('departments')
+        .select('department_id, name')
+        .order('name');
+      if (error) throw error;
+
+      const memberships = (data || []).map(d => ({
+        staff_id: null,
+        department_id: d.department_id,
+        department_name: d.name,
+        role: 'officer',
+      }));
+
+      console.log('Memberships (super admin):', memberships.length);
+      return { data: memberships, error: null };
+    }
 
     const { data, error } = await supabase
       .from('staff')
@@ -2277,8 +2310,15 @@ export async function getMyMemberships() {
 
     if (error) throw error;
 
-    console.log('Memberships:', data?.length || 0);
-    return { data: data || [], error: null };
+    const memberships = (data || []).map(s => ({
+      staff_id: s.staff_id,
+      department_id: s.department_id,
+      department_name: s.departments?.name,
+      role: s.role,
+    }));
+
+    console.log('Memberships:', memberships.length);
+    return { data: memberships, error: null };
   } catch (err) {
     console.error('getMyMemberships error:', err);
     return { data: [], error: err };
