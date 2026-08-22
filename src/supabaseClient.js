@@ -1549,13 +1549,14 @@ export async function getStaffFatigueStatus(departmentId, date) {
 // ============================================================
 
 // For each date in range, classifies staffing coverage across that day's
-// theatre activities (each activity has exactly two role slots: consultant
-// and registrar):
+// theatre activities. A registrar/junior is optional — a consultant-only
+// activity (solo, or several consultants with nobody junior) counts as
+// fully staffed; what actually matters is whether a consultant (present or
+// on-call) is rostered at all, same rule Complete Allocation warns on:
 //   'none'   - no theatre activities exist for that date at all
-//   'red'    - at least one activity has nobody assigned to either role
-//   'yellow' - every activity has at least one role filled, but not all
-//              activities have both roles filled
-//   'green'  - every activity has both roles filled
+//   'red'    - at least one activity has nobody assigned at all
+//   'yellow' - every activity has someone, but at least one has no consultant
+//   'green'  - every activity has a consultant (present or on-call)
 export async function getAllocationStatusForRange(departmentId, startDate, endDate) {
   console.log('getAllocationStatusForRange called', departmentId, startDate, endDate);
 
@@ -1601,8 +1602,12 @@ export async function getAllocationStatusForRange(departmentId, startDate, endDa
 
       locationIds.forEach(locationId => {
         const roles = rolesByDateLocation.get(`${date}|${locationId}`) || new Set();
+        // A junior is optional — a consultant covering solo (or several
+        // consultants with no registrar) is a legitimate, complete roster.
+        // What actually matters, same as Complete Allocation's own check, is
+        // whether a consultant (present or on-call) is rostered at all.
         if (roles.size === 0) hasEmptyActivity = true;
-        else if (roles.size < 2) hasIncompleteActivity = true;
+        else if (!roles.has('consultant')) hasIncompleteActivity = true;
       });
 
       if (hasEmptyActivity) statusByDate[date] = 'red';
