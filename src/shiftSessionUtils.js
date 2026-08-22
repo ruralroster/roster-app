@@ -15,6 +15,17 @@ const NIGHT_START = '20:00:00';
 
 export const SESSION_GROUP_ORDER = ['morning', 'afternoon', 'night'];
 
+// Fixed defaults for the Add Activity form's Session picker — deliberately
+// hardcoded to match the windows above exactly (Whole Day = Morning +
+// Afternoon, nothing else), rather than derived from whatever shift happens
+// to be tagged with that session, whose times aren't guaranteed to line up.
+export const SESSION_DEFAULT_TIMES = {
+  full: { start: '08:00', end: '18:00' },
+  AM: { start: '08:00', end: '12:00' },
+  PM: { start: '12:00', end: '18:00' },
+  night: { start: '20:00', end: '07:00' },
+};
+
 export const SESSION_GROUP_LABELS = {
   morning: 'Morning Allocations',
   afternoon: 'Afternoon Allocations',

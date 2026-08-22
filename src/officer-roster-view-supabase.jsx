@@ -51,7 +51,7 @@ import { createTheatreActivity,
   validateShiftAssignment,
 } from './supabaseClient';
 import { downloadPayrollExcel, getMondayOfWeek } from './payrollExport';
-import { getSessionGroups, SESSION_GROUP_ORDER, SESSION_GROUP_LABELS } from './shiftSessionUtils';
+import { getSessionGroups, SESSION_GROUP_ORDER, SESSION_GROUP_LABELS, SESSION_DEFAULT_TIMES } from './shiftSessionUtils';
 import { formatFte, DEFAULT_FTE } from './availabilityUtils';
 
 const CALENDAR_WEEKS_SHOWN = 4;
@@ -627,22 +627,28 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     }
   };
 
-  // Pre-fills the Add Activity time fields: the picked location's default
-  // hours take priority (e.g. Ward defaults to 08:00-18:00), falling back
-  // to the picked Session's matching shift when the location has no default
-  // (e.g. an always-open ED). Either way the officer can still hand-edit
-  // the result before submitting.
+  // Pre-fills the Add Activity time fields. For Morning/Afternoon/Night,
+  // always use the fixed SESSION_DEFAULT_TIMES — these are specific,
+  // unambiguous choices and shouldn't be second-guessed by a location's
+  // generic default hours (e.g. picking Night at a Ward, which defaults to
+  // day hours, must still prefill Night's actual times, not the Ward's).
+  // Only Whole Day defers to the location's own hours when set (e.g. Ward's
+  // "explicitly manned" 08:00-18:00), since that's genuinely what "whole
+  // day" means for that specific location; falls back to the fixed 08:00-
+  // 18:00 default otherwise. Either way, still hand-editable afterward.
   const prefillActivityTimes = (locationId, session) => {
-    const location = refData.locations.find(l => l.location_id === locationId);
-    if (location?.default_start_time && location?.default_end_time) {
-      setNewActivityStartTime(location.default_start_time.slice(0, 5));
-      setNewActivityEndTime(location.default_end_time.slice(0, 5));
-      return;
+    if (session === 'full') {
+      const location = refData.locations.find(l => l.location_id === locationId);
+      if (location?.default_start_time && location?.default_end_time) {
+        setNewActivityStartTime(location.default_start_time.slice(0, 5));
+        setNewActivityEndTime(location.default_end_time.slice(0, 5));
+        return;
+      }
     }
-    const sessionShift = refData.shifts.find(s => s.session === session && s.active !== false && !/on.?call/i.test(s.name || ''));
-    if (sessionShift) {
-      setNewActivityStartTime(sessionShift.start_time?.slice(0, 5) || '');
-      setNewActivityEndTime(sessionShift.end_time?.slice(0, 5) || '');
+    const defaults = SESSION_DEFAULT_TIMES[session];
+    if (defaults) {
+      setNewActivityStartTime(defaults.start);
+      setNewActivityEndTime(defaults.end);
     }
   };
 
