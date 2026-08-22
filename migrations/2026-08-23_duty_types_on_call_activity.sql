@@ -62,7 +62,7 @@ WHERE dt.activity_type_id IS NULL
   );
 
 UPDATE duty_types dt
-SET activity_type_id = at.activity_type_id
+SET activity_type_id = at.activity_id
 FROM activity_types at
 WHERE at.department_id = dt.department_id
   AND at.name = dt.label
