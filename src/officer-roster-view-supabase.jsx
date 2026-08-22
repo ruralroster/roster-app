@@ -1866,8 +1866,26 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
         <div className="p-4">
           <div className="max-w-3xl mx-auto">
             <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
-              <h1 className="text-2xl font-bold text-gray-900">{formatDate(selectedDate)}</h1>
-              <p className="text-sm text-gray-500">Large Rural Hospital — Rostering Officer</p>
+              <div className="flex items-start justify-between gap-4 flex-wrap">
+                <div>
+                  <h1 className="text-2xl font-bold text-gray-900">{formatDate(selectedDate)}</h1>
+                  <p className="text-sm text-gray-500">Large Rural Hospital — Rostering Officer</p>
+                </div>
+                <div className="flex gap-2 flex-wrap">
+                  <button
+                    onClick={handleCopyLastWeek}
+                    className="px-4 py-2 bg-green-500 hover:bg-green-600 text-white font-medium rounded-lg transition text-sm"
+                  >
+                    Copy Last Week's Activities
+                  </button>
+                  <button
+                    onClick={() => setShowAddActivity(true)}
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition text-sm"
+                  >
+                    + Add Activity
+                  </button>
+                </div>
+              </div>
               {error && (
                 <div className="mt-4 p-3 bg-red-50 border border-red-300 rounded-lg flex gap-2 items-start">
                   <AlertCircle size={18} className="text-red-600 flex-shrink-0 mt-0.5" />
@@ -1909,22 +1927,6 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                   ))}
                 </div>
               )}
-            </div>
-
-            {/* Copy Last Week / Add Activity Buttons */}
-            <div className="mb-6 flex gap-3">
-              <button
-                onClick={handleCopyLastWeek}
-                className="px-4 py-2 bg-green-500 hover:bg-green-600 text-white font-medium rounded-lg transition"
-              >
-                Copy Last Week's Activities
-              </button>
-              <button
-                onClick={() => setShowAddActivity(true)}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition"
-              >
-                + Add Activity
-              </button>
             </div>
 
             {/* Theatre Assignments — grouped into Morning/Afternoon/Night so a
