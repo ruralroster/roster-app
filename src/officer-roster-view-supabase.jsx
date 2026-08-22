@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import StaffProfilesTab from './StaffProfilesTab';
 import StaffAccountsTab from './StaffAccountsTab';
 import StaffAvailabilityTab from './StaffAvailabilityTab';
@@ -79,8 +80,17 @@ function startOfWeek(date) {
 }
 
 // eslint-disable-next-line no-unused-vars -- staffId (the signed-in officer's own staff_id, now known via App.js) is threaded through for upcoming self-service/audit features; not consumed internally yet.
-export default function OfficerRosterView({ departmentId: departmentIdProp, staffId } = {}) {
+export default function OfficerRosterView({ departmentId: departmentIdProp, staffId, topBarActionsRef } = {}) {
   const departmentId = departmentIdProp || process.env.REACT_APP_DEPARTMENT_ID;
+
+  // Copy Last Week's Activities / + Add Activity portal into App.js's fixed
+  // top bar (see topBarActionsRef prop) — a ref's .current isn't populated
+  // until after App.js's own commit, so this state exists purely to force a
+  // re-render once it is, letting the portal actually mount.
+  const [topBarActionsNode, setTopBarActionsNode] = useState(null);
+  useEffect(() => {
+    setTopBarActionsNode(topBarActionsRef?.current || null);
+  }, [topBarActionsRef]);
 
   // UI State
   const [activeTab, setActiveTab] = useState('calendar');
@@ -1865,27 +1875,32 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
       return (
         <div className="p-4">
           <div className="max-w-3xl mx-auto">
+            {/* Copy Last Week's Activities / + Add Activity live in the
+                fixed top bar (portaled via topBarActionsNode — see
+                App.js), not here, so they stay reachable while scrolled
+                down looking at a lower section instead of only next to the
+                date. */}
+            {topBarActionsNode && createPortal(
+              <>
+                <button
+                  onClick={handleCopyLastWeek}
+                  className="px-3 py-2 bg-green-500 hover:bg-green-600 text-white font-medium rounded text-sm transition"
+                >
+                  Copy Last Week's Activities
+                </button>
+                <button
+                  onClick={() => setShowAddActivity(true)}
+                  className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded text-sm transition"
+                >
+                  + Add Activity
+                </button>
+              </>,
+              topBarActionsNode
+            )}
+
             <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
-              <div className="flex items-start justify-between gap-4 flex-wrap">
-                <div>
-                  <h1 className="text-2xl font-bold text-gray-900">{formatDate(selectedDate)}</h1>
-                  <p className="text-sm text-gray-500">Large Rural Hospital — Rostering Officer</p>
-                </div>
-                <div className="flex gap-2 flex-wrap">
-                  <button
-                    onClick={handleCopyLastWeek}
-                    className="px-4 py-2 bg-green-500 hover:bg-green-600 text-white font-medium rounded-lg transition text-sm"
-                  >
-                    Copy Last Week's Activities
-                  </button>
-                  <button
-                    onClick={() => setShowAddActivity(true)}
-                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition text-sm"
-                  >
-                    + Add Activity
-                  </button>
-                </div>
-              </div>
+              <h1 className="text-2xl font-bold text-gray-900">{formatDate(selectedDate)}</h1>
+              <p className="text-sm text-gray-500">Large Rural Hospital — Rostering Officer</p>
               {error && (
                 <div className="mt-4 p-3 bg-red-50 border border-red-300 rounded-lg flex gap-2 items-start">
                   <AlertCircle size={18} className="text-red-600 flex-shrink-0 mt-0.5" />

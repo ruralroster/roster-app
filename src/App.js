@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Loader, Plus, X, AlertCircle } from 'lucide-react';
 import OfficerRosterView from './officer-roster-view-supabase';
 import StaffApp from './StaffApp';
@@ -33,6 +33,10 @@ function App() {
   const [needsPasswordSetup, setNeedsPasswordSetup] = useState(needsPasswordSetupFromUrl);
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const [showAddDepartment, setShowAddDepartment] = useState(false);
+  // Lets OfficerRosterView portal its Day-tab action buttons (Copy Last
+  // Week / Add Activity) into this top bar, so they stay visible while
+  // scrolled down the page instead of only living next to the date header.
+  const topBarActionsRef = useRef(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session: s } }) => setSession(s));
@@ -130,43 +134,46 @@ function App() {
 
   return (
     <div>
-      <div className="fixed top-0 left-0 right-0 z-40 bg-white border-b border-gray-200 shadow-sm px-4 py-3 flex gap-2 flex-wrap">
-        {showSwitcher && (
+      <div className="fixed top-0 left-0 right-0 z-40 bg-white border-b border-gray-200 shadow-sm px-4 py-3 flex items-center justify-between gap-2 flex-wrap">
+        <div ref={topBarActionsRef} className="flex gap-2 flex-wrap" />
+        <div className="flex gap-2 flex-wrap">
+          {showSwitcher && (
+            <button
+              onClick={handleSwitchDepartment}
+              className="px-3 py-2 bg-gray-600 hover:bg-gray-700 text-white font-medium rounded text-sm transition"
+            >
+              Switch Department
+            </button>
+          )}
+          {role === 'officer' && (
+            <button
+              onClick={handleToggleView}
+              className="px-3 py-2 bg-gray-600 hover:bg-gray-700 text-white font-medium rounded text-sm transition"
+            >
+              View: {effectiveView === 'officer' ? 'Officer' : 'Staff'}
+            </button>
+          )}
+          {isSuperAdmin && (
+            <button
+              onClick={() => setShowAddDepartment(true)}
+              className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded text-sm transition flex items-center gap-1"
+            >
+              <Plus size={16} />
+              Add Department
+            </button>
+          )}
           <button
-            onClick={handleSwitchDepartment}
-            className="px-3 py-2 bg-gray-600 hover:bg-gray-700 text-white font-medium rounded text-sm transition"
+            onClick={() => signOut()}
+            className="px-3 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 font-medium rounded text-sm transition"
           >
-            Switch Department
+            Sign Out
           </button>
-        )}
-        {role === 'officer' && (
-          <button
-            onClick={handleToggleView}
-            className="px-3 py-2 bg-gray-600 hover:bg-gray-700 text-white font-medium rounded text-sm transition"
-          >
-            View: {effectiveView === 'officer' ? 'Officer' : 'Staff'}
-          </button>
-        )}
-        {isSuperAdmin && (
-          <button
-            onClick={() => setShowAddDepartment(true)}
-            className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded text-sm transition flex items-center gap-1"
-          >
-            <Plus size={16} />
-            Add Department
-          </button>
-        )}
-        <button
-          onClick={() => signOut()}
-          className="px-3 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 font-medium rounded text-sm transition"
-        >
-          Sign Out
-        </button>
+        </div>
       </div>
 
       <div className="pt-16">
         {effectiveView === 'officer' ? (
-          <OfficerRosterView departmentId={departmentId} staffId={staffId} />
+          <OfficerRosterView departmentId={departmentId} staffId={staffId} topBarActionsRef={topBarActionsRef} />
         ) : (
           <StaffApp departmentId={departmentId} staffId={staffId} />
         )}
