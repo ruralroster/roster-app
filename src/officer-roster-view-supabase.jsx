@@ -1689,8 +1689,17 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
               const renderActivityCard = (ta, groupKey) => {
                 const entries = getDraftEntries(ta.theatre_activity_id, ta.location_id);
                 const hasDraft = !!drafts[ta.theatre_activity_id];
-                const consultantEntries = entries.filter(e => e.role === 'consultant');
-                const registrarEntries = entries.filter(e => e.role === 'registrar');
+                // The card itself can span more than one session group (e.g.
+                // a Whole Day activity covers both Morning and Afternoon),
+                // but any one person's own shift might only cover part of
+                // that span — an AM-only person on an otherwise Whole Day
+                // activity shouldn't show under its Afternoon rendering too.
+                // So each of this card's renderings (one per group it spans)
+                // only lists the people whose own shift actually covers
+                // *this* groupKey, not everyone on the activity.
+                const entryCoversGroup = (entry) => getSessionGroups(refData.shifts.find(s => s.shift_id === entry.shiftId)).includes(groupKey);
+                const consultantEntries = entries.filter(e => e.role === 'consultant' && entryCoversGroup(e));
+                const registrarEntries = entries.filter(e => e.role === 'registrar' && entryCoversGroup(e));
                 const consultantPending = pendingAssignment?.theatreActivityId === ta.theatre_activity_id && pendingAssignment.role === 'consultant';
                 const registrarPending = pendingAssignment?.theatreActivityId === ta.theatre_activity_id && pendingAssignment.role === 'registrar';
                 const consultantOverride = overridePrompt?.theatreActivityId === ta.theatre_activity_id && overridePrompt.role === 'consultant';
