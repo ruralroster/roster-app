@@ -8,7 +8,7 @@
 //   supabase secrets set SUPABASE_SERVICE_ROLE_KEY=<service role key>
 // SUPABASE_URL is provided automatically to every Edge Function.
 //
-// Request body: { departmentId, name, email, rank, role }
+// Request body: { departmentId, name, email, rank, role, redirectTo }
 // Response:     { data: { staffId, invited } } | { error }
 
 import { createClient } from 'jsr:@supabase/supabase-js@2';
@@ -34,14 +34,14 @@ Deno.serve(async (req) => {
     return json({ error: 'Missing Authorization header' }, 401);
   }
 
-  let body: { departmentId?: string; name?: string; email?: string; rank?: string; role?: string };
+  let body: { departmentId?: string; name?: string; email?: string; rank?: string; role?: string; redirectTo?: string };
   try {
     body = await req.json();
   } catch {
     return json({ error: 'Invalid JSON body' }, 400);
   }
 
-  const { departmentId, name, email, rank, role } = body;
+  const { departmentId, name, email, rank, role, redirectTo } = body;
   if (!departmentId || !name || !email || !rank || !role) {
     return json({ error: 'departmentId, name, email, rank, and role are all required' }, 400);
   }
@@ -88,7 +88,10 @@ Deno.serve(async (req) => {
     // Same person, another department — link without sending a second invite.
     targetUserId = existingProfile.user_id;
   } else {
-    const { data: inviteData, error: inviteError } = await adminClient.auth.admin.inviteUserByEmail(email);
+    const { data: inviteData, error: inviteError } = await adminClient.auth.admin.inviteUserByEmail(
+      email,
+      redirectTo ? { redirectTo } : undefined,
+    );
     if (inviteError) {
       return json({ error: `Invite failed: ${inviteError.message}` }, 500);
     }

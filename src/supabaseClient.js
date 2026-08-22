@@ -2295,6 +2295,7 @@ export async function getMyMemberships() {
         department_id: d.department_id,
         department_name: d.name,
         role: 'officer',
+        preferredView: 'officer',
       }));
 
       console.log('Memberships (super admin):', memberships.length);
@@ -2303,7 +2304,7 @@ export async function getMyMemberships() {
 
     const { data, error } = await supabase
       .from('staff')
-      .select('staff_id, department_id, name, rank, role, departments(name)')
+      .select('staff_id, department_id, name, rank, role, preferred_view, departments(name)')
       .eq('user_id', user.id)
       .eq('active', true)
       .order('name');
@@ -2315,6 +2316,7 @@ export async function getMyMemberships() {
       department_id: s.department_id,
       department_name: s.departments?.name,
       role: s.role,
+      preferredView: s.preferred_view,
     }));
 
     console.log('Memberships:', memberships.length);
@@ -2378,6 +2380,23 @@ export async function updateMyActivityRestrictions(staffId, activityNames) {
   }
 }
 
+// Persists which view (officer or staff) an officer wants to land on next
+// time they log into this department — see
+// migrations/2026-08-22_officer_preferred_view.sql. A no-op for super
+// admins (staff_id is null there; the RPC's WHERE clause simply matches no
+// row), which is fine — the toggle in App.js still works for the rest of
+// their session, it just doesn't persist across logins.
+export async function updateMyPreferredView(staffId, view) {
+  console.log('updateMyPreferredView called', staffId, view);
+  try {
+    const { error } = await supabase.rpc('update_my_preferred_view', { p_staff_id: staffId, p_view: view });
+    return { error };
+  } catch (err) {
+    console.error('updateMyPreferredView error:', err);
+    return { error: err };
+  }
+}
+
 // Invites a new staff login via the invite-staff Edge Function (creating an
 // auth user requires the service_role key, which must never reach the
 // browser — see supabase/functions/invite-staff/index.ts). The function
@@ -2388,7 +2407,18 @@ export async function inviteStaff(departmentId, name, email, rank, role) {
 
   try {
     const { data, error } = await supabase.functions.invoke('invite-staff', {
-      body: { departmentId, name, email, rank, role },
+      body: {
+        departmentId,
+        name,
+        email,
+        rank,
+        role,
+        // Same redirect the "Forgot password" flow uses (Login.jsx) — without
+        // it, Supabase falls back to the project's default Site URL, which
+        // may not point at this deployment, and the invite link never lands
+        // on the SetPassword screen.
+        redirectTo: window.location.origin + window.location.pathname,
+      },
     });
 
     if (error) throw error;
