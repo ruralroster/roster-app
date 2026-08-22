@@ -2063,7 +2063,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                               </button>
                             );
                           })}
-                          {getRankedStaffOptions(ta.activity_id, s => s.rank.includes('trainee') && !volunteerIds.has(s.staff_id) && !registrarEntries.some(re => re.staffId === s.staff_id)).map(s => {
+                          {getRankedStaffOptions(ta.activity_id, s => (s.rank.includes('trainee') || s.rank === 'intern') && !volunteerIds.has(s.staff_id) && !registrarEntries.some(re => re.staffId === s.staff_id)).map(s => {
                             const { blocked, overridable, blockType, label, fatigueRisk } = getAssignabilityInfo(s.staff_id);
                             const hardBlocked = blocked && !overridable;
                             const restricted = isActivityRestricted(s.staff_id, ta.activity_id);

@@ -43,6 +43,7 @@ export const RANK_OPTIONS = [
   { value: 'fellow', label: 'Fellow' },
   { value: 'advanced_trainee', label: 'Advanced Trainee' },
   { value: 'basic_trainee', label: 'Basic Trainee' },
+  { value: 'intern', label: 'Intern' },
 ];
 
 const toDateStr = toLocalDateStr;

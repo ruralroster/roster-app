@@ -836,7 +836,7 @@ export async function populateNextWeekRandom(departmentId) {
 
     // Filter by rank
     const consultants = staffList.filter(s => s.rank === 'consultant');
-    const registrars = staffList.filter(s => s.rank.includes('trainee'));
+    const registrars = staffList.filter(s => s.rank.includes('trainee') || s.rank === 'intern');
 
     if (consultants.length === 0 || registrars.length === 0) {
       throw new Error('Not enough staff to populate');
@@ -1624,8 +1624,8 @@ export async function getAllocationStatusForRange(departmentId, startDate, endDa
 const VOLUNTEER_LOOKAHEAD_DAYS = 30;
 
 // Theatre activities in the next 30 days where the role matching this staff
-// member's rank (consultant -> consultant, *trainee* -> registrar; any other
-// rank has nothing to volunteer for) is still unfilled, they're not
+// member's rank (consultant -> consultant, *trainee*/intern -> registrar;
+// any other rank has nothing to volunteer for) is still unfilled, they're not
 // activity-restricted from it, and they've explicitly marked themselves
 // available that date (an unconfirmed day doesn't count, same rule as
 // officer-side assignment).
@@ -1676,7 +1676,7 @@ export async function getAvailableShiftsForStaff(staffId, departmentId) {
     if (volunteerRes.error) throw volunteerRes.error;
 
     const rank = staffRes.data?.rank || '';
-    const roleForRank = rank === 'consultant' ? 'consultant' : rank.includes('trainee') ? 'registrar' : null;
+    const roleForRank = rank === 'consultant' ? 'consultant' : (rank.includes('trainee') || rank === 'intern') ? 'registrar' : null;
     if (!roleForRank) return { data: [], error: null };
 
     const restrictions = staffRes.data?.activity_restrictions || [];
