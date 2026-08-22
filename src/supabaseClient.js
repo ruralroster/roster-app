@@ -120,6 +120,22 @@ export async function updateTheatreActivity(theatreActivityId, activityId) {
   }
 }
 
+// Separate from updateTheatreActivity (which only changes what activity is
+// running) since this is the authority for which Morning/Afternoon/Night
+// section(s) the card groups under (see getSessionGroups) — editable
+// independently of the activity type or its linked shift template.
+export async function updateTheatreActivityTimes(theatreActivityId, startTime, endTime) {
+  try {
+    const { data, error } = await supabase
+      .from('theatre_activities')
+      .update({ start_time: startTime, end_time: endTime })
+      .eq('theatre_activity_id', theatreActivityId);
+    return { data, error };
+  } catch (err) {
+    return { data: null, error: err };
+  }
+}
+
 // ============================================================
 // STAFF ASSIGNMENTS
 // ============================================================
@@ -286,7 +302,7 @@ export async function createShift(departmentId, name, dayType, startTime, endTim
   }
 }
 
-// Same past-changes-too caveat as updateLocationName/updateActivityTypeName
+// Same past-changes-too caveat as updateLocation/updateActivityTypeName
 // — every staff_assignment/theatre_activity referencing this shift_id joins
 // the live row, so renaming it rewrites how already-past dates display it.
 export async function updateShift(shiftId, name, dayType, startTime, endTime, session) {
@@ -357,11 +373,14 @@ export async function getLocations(departmentId) {
   }
 }
 
-export async function createLocation(departmentId, name) {
+// defaultStartTime/defaultEndTime are optional (null = "always open", e.g.
+// an Emergency Department) — just a convenience pre-fill offered when
+// creating a new activity at this location, not an enforced constraint.
+export async function createLocation(departmentId, name, defaultStartTime = null, defaultEndTime = null) {
   try {
     const { data, error } = await supabase
       .from('locations')
-      .insert([{ department_id: departmentId, name }])
+      .insert([{ department_id: departmentId, name, default_start_time: defaultStartTime, default_end_time: defaultEndTime }])
       .select()
       .single();
 
@@ -371,16 +390,17 @@ export async function createLocation(departmentId, name) {
   }
 }
 
-// Renames a location in place. Every theatre_activity/staff_assignment that
-// references this location_id joins the live `locations` row for display,
-// so this changes what past dates show too — correct for fixing a mislabel,
-// but not the right tool for "this location has a new name going forward":
-// deactivate the old one and create a new one for that instead.
-export async function updateLocationName(locationId, name) {
+// Renames a location and/or updates its default hours in place. Every
+// theatre_activity/staff_assignment that references this location_id joins
+// the live `locations` row for display, so a rename changes what past dates
+// show too — correct for fixing a mislabel, but not the right tool for
+// "this location has a new name going forward": deactivate the old one and
+// create a new one for that instead.
+export async function updateLocation(locationId, name, defaultStartTime = null, defaultEndTime = null) {
   try {
     const { data, error } = await supabase
       .from('locations')
-      .update({ name })
+      .update({ name, default_start_time: defaultStartTime, default_end_time: defaultEndTime })
       .eq('location_id', locationId)
       .select()
       .single();
@@ -458,7 +478,7 @@ export async function createActivityType(departmentId, name) {
 }
 
 // Renames an activity type in place — same past-changes-too caveat as
-// updateLocationName: every theatre_activity referencing this activity_id
+// updateLocation: every theatre_activity referencing this activity_id
 // joins the live row, so this rewrites how already-past dates display it.
 export async function updateActivityTypeName(activityId, name) {
   try {
@@ -929,8 +949,8 @@ export async function getStaffActivityMatrix(departmentId) {
   }
 }
 
-export async function createTheatreActivity(departmentId, date, locationId, shiftId, activityId) {
-  console.log('createTheatreActivity called', { departmentId, date, locationId, shiftId, activityId });
+export async function createTheatreActivity(departmentId, date, locationId, shiftId, activityId, startTime, endTime) {
+  console.log('createTheatreActivity called', { departmentId, date, locationId, shiftId, activityId, startTime, endTime });
 
   try {
     const dateStr = toLocalDateStr(date);
@@ -942,6 +962,8 @@ export async function createTheatreActivity(departmentId, date, locationId, shif
         location_id: locationId,
         shift_id: shiftId,
         activity_id: activityId,
+        start_time: startTime,
+        end_time: endTime,
       }])
       .select();
 

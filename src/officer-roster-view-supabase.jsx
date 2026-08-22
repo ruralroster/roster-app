@@ -19,13 +19,14 @@ import { createTheatreActivity,
   deleteStaffAssignment,
   updateDutyAssignment,
   updateTheatreActivity,
+  updateTheatreActivityTimes,
   copyLastWeekActivities,
   createShift,
   updateShift,
   deactivateShift,
   reactivateShift,
   createLocation,
-  updateLocationName,
+  updateLocation,
   deactivateLocation,
   reactivateLocation,
   createActivityType,
@@ -118,6 +119,13 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   const [newActivityLocation, setNewActivityLocation] = useState('');
   const [newActivityType, setNewActivityType] = useState('');
   const [newActivitySession, setNewActivitySession] = useState('full');
+  // The actual authority for which Morning/Afternoon/Night section(s) this
+  // activity groups under (see getSessionGroups) — pre-filled from the
+  // location's default hours, or from the picked Session's matching shift,
+  // but directly editable so e.g. Endoscopy can be narrowed to 08:00-12:00
+  // even at a location whose default runs 08:00-18:00.
+  const [newActivityStartTime, setNewActivityStartTime] = useState('');
+  const [newActivityEndTime, setNewActivityEndTime] = useState('');
   const [pendingAssignment, setPendingAssignment] = useState(null); // { theatreActivityId, locationId, role, staffId, staffName, overrideReason }
   const [overridePrompt, setOverridePrompt] = useState(null); // { theatreActivityId, locationId, role, staffId, staffName, blockType, shiftId, reason }
   const [patternRuleAlert, setPatternRuleAlert] = useState(null); // { theatreActivityId, locationId, role, staffId, staffName, shiftId, action: 'BLOCK'|'WARN', description }
@@ -149,10 +157,16 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   const [editShiftEndTime, setEditShiftEndTime] = useState('');
   const [editShiftSession, setEditShiftSession] = useState('full');
 
-  // Location Management State
+  // Location Management State. Default hours are optional (blank = "always
+  // open", e.g. an Emergency Department) — just a pre-fill offered when
+  // creating a new activity at this location, not an enforced constraint.
   const [newLocationInput, setNewLocationInput] = useState('');
+  const [newLocationDefaultStart, setNewLocationDefaultStart] = useState('');
+  const [newLocationDefaultEnd, setNewLocationDefaultEnd] = useState('');
   const [editingLocationId, setEditingLocationId] = useState(null);
   const [editLocationName, setEditLocationName] = useState('');
+  const [editLocationDefaultStart, setEditLocationDefaultStart] = useState('');
+  const [editLocationDefaultEnd, setEditLocationDefaultEnd] = useState('');
 
   // Activity Management State
   const [newActivityInput, setNewActivityInput] = useState('');
@@ -533,6 +547,24 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     }
   };
 
+  // Directly editable from the card itself — the authority for which
+  // Morning/Afternoon/Night section(s) this activity groups under (see
+  // getSessionGroups), independent of whatever shift it's also linked to.
+  const handleActivityTimesChange = async (ta, startTime, endTime) => {
+    if (!startTime || !endTime) return;
+
+    try {
+      const { error } = await updateTheatreActivityTimes(ta.theatre_activity_id, startTime, endTime);
+      if (error) throw error;
+
+      setTheatreActivities(prev => prev.map(a =>
+        a.theatre_activity_id === ta.theatre_activity_id ? { ...a, start_time: startTime, end_time: endTime } : a
+      ));
+    } catch (err) {
+      setError(`Failed to update activity times: ${err.message}`);
+    }
+  };
+
   const handleDutyChange = async (dutyType, staffId) => {
     if (!selectedDate || !departmentId) return;
 
@@ -595,17 +627,41 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     }
   };
 
-  // Called as soon as an activity is picked (location must already be set) —
-  // the modal closes immediately rather than waiting on a separate submit
-  // step. The chosen session (Whole Day / Morning / Afternoon / Night)
-  // decides the activity's nominal shift_id, which in turn decides which of
-  // the Morning/Afternoon/Night Allocations sections it's grouped under —
-  // individual staff still pick their own shift independently when assigned
-  // below, but this is what makes a Night-only activity show up under Night
-  // instead of defaulting to Whole Day every time.
+  // Pre-fills the Add Activity time fields: the picked location's default
+  // hours take priority (e.g. Ward defaults to 08:00-18:00), falling back
+  // to the picked Session's matching shift when the location has no default
+  // (e.g. an always-open ED). Either way the officer can still hand-edit
+  // the result before submitting.
+  const prefillActivityTimes = (locationId, session) => {
+    const location = refData.locations.find(l => l.location_id === locationId);
+    if (location?.default_start_time && location?.default_end_time) {
+      setNewActivityStartTime(location.default_start_time.slice(0, 5));
+      setNewActivityEndTime(location.default_end_time.slice(0, 5));
+      return;
+    }
+    const sessionShift = refData.shifts.find(s => s.session === session && s.active !== false && !/on.?call/i.test(s.name || ''));
+    if (sessionShift) {
+      setNewActivityStartTime(sessionShift.start_time?.slice(0, 5) || '');
+      setNewActivityEndTime(sessionShift.end_time?.slice(0, 5) || '');
+    }
+  };
+
+  // Called as soon as an activity is picked (location, times must already be
+  // set) — the modal closes immediately rather than waiting on a separate
+  // submit step. newActivityStartTime/EndTime (pre-filled from the
+  // location's default hours or the picked Session, but directly editable —
+  // see prefillActivityTimes) are what actually decide which of the
+  // Morning/Afternoon/Night Allocations sections this groups under; the
+  // Session-matched shift is only still used for the activity's shift_id
+  // (naming, pattern rules, volunteer listing) — individual staff pick
+  // their own shift independently when assigned below.
   const handleAddActivity = async (activityId) => {
     if (!newActivityLocation || !activityId || !selectedDate || !departmentId) {
       setError('Please select a location and an activity');
+      return;
+    }
+    if (!newActivityStartTime || !newActivityEndTime) {
+      setError('Please set a start and end time for this activity');
       return;
     }
 
@@ -615,10 +671,6 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
       setError('No shifts configured — add a shift in Settings first');
       return;
     }
-    if (!sessionShift) {
-      setError(`No active shift configured for that session — add one in Settings, or pick a different session.`);
-      return;
-    }
 
     try {
       const { error: addError } = await createTheatreActivity(
@@ -626,7 +678,9 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
         selectedDate,
         newActivityLocation,
         defaultShift.shift_id,
-        activityId
+        activityId,
+        newActivityStartTime,
+        newActivityEndTime
       );
       if (addError) throw addError;
 
@@ -640,6 +694,8 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
       setNewActivityLocation('');
       setNewActivityType('');
       setNewActivitySession('full');
+      setNewActivityStartTime('');
+      setNewActivityEndTime('');
       setError(null);
     } catch (err) {
       setError(`Failed to add activity: ${err.message}`);
@@ -759,11 +815,13 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     if (!newLocationInput.trim() || !departmentId) return;
 
     try {
-      const { data, error } = await createLocation(departmentId, newLocationInput);
+      const { data, error } = await createLocation(departmentId, newLocationInput, newLocationDefaultStart || null, newLocationDefaultEnd || null);
       if (error) throw error;
 
       setRefData(prev => ({ ...prev, locations: [...prev.locations, data] }));
       setNewLocationInput('');
+      setNewLocationDefaultStart('');
+      setNewLocationDefaultEnd('');
       setError(null);
     } catch (err) {
       setError(`Failed to create location: ${err.message}`);
@@ -801,18 +859,22 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   const handleStartEditLocation = (location) => {
     setEditingLocationId(location.location_id);
     setEditLocationName(location.name);
+    setEditLocationDefaultStart(location.default_start_time?.slice(0, 5) || '');
+    setEditLocationDefaultEnd(location.default_end_time?.slice(0, 5) || '');
   };
 
   const handleUpdateLocation = async () => {
     if (!editingLocationId || !editLocationName.trim()) return;
 
     try {
-      const { data, error } = await updateLocationName(editingLocationId, editLocationName.trim());
+      const { data, error } = await updateLocation(editingLocationId, editLocationName.trim(), editLocationDefaultStart || null, editLocationDefaultEnd || null);
       if (error) throw error;
 
       setRefData(prev => ({ ...prev, locations: prev.locations.map(l => l.location_id === editingLocationId ? data : l) }));
       setEditingLocationId(null);
       setEditLocationName('');
+      setEditLocationDefaultStart('');
+      setEditLocationDefaultEnd('');
       setError(null);
     } catch (err) {
       setError(`Failed to rename location: ${err.message}`);
@@ -1683,7 +1745,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
             {(() => {
               const groupedActivities = { morning: [], afternoon: [], night: [] };
               theatreActivities.forEach(ta => {
-                getSessionGroups(ta.shifts).forEach(group => groupedActivities[group].push(ta));
+                getSessionGroups({ start_time: ta.start_time, end_time: ta.end_time }).forEach(group => groupedActivities[group].push(ta));
               });
 
               const renderActivityCard = (ta, groupKey) => {
@@ -1859,15 +1921,28 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                     </button>
                   </div>
 
-                  <div className="flex items-center gap-2 mb-4">
+                  <div className="flex items-center gap-2 mb-4 flex-wrap">
                     <h3 className="text-lg font-bold text-gray-900">
                       {ta.locations.name}
-                      {ta.shifts && (
-                        <span className="ml-2 text-sm font-normal text-gray-500">
-                          ({ta.shifts.name}{ta.shifts.start_time && ta.shifts.end_time ? ` ${ta.shifts.start_time.slice(0, 5)}–${ta.shifts.end_time.slice(0, 5)}` : ''})
-                        </span>
-                      )}
+                      {ta.shifts?.name && <span className="ml-2 text-sm font-normal text-gray-500">({ta.shifts.name})</span>}
                     </h3>
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="time"
+                        value={ta.start_time?.slice(0, 5) || ''}
+                        onChange={(e) => handleActivityTimesChange(ta, e.target.value, ta.end_time?.slice(0, 5))}
+                        title="When this activity actually runs — decides which Allocations section(s) it groups under"
+                        className="px-2 py-1 border border-gray-300 rounded text-xs"
+                      />
+                      <span className="text-gray-400 text-xs">–</span>
+                      <input
+                        type="time"
+                        value={ta.end_time?.slice(0, 5) || ''}
+                        onChange={(e) => handleActivityTimesChange(ta, ta.start_time?.slice(0, 5), e.target.value)}
+                        title="When this activity actually runs — decides which Allocations section(s) it groups under"
+                        className="px-2 py-1 border border-gray-300 rounded text-xs"
+                      />
+                    </div>
                     {getTotalVolunteerCount(ta.theatre_activity_id) > 0 && (
                       <span className="px-2 py-0.5 bg-purple-100 text-purple-900 text-xs font-semibold rounded-full">
                         🙋 {getTotalVolunteerCount(ta.theatre_activity_id)} volunteer{getTotalVolunteerCount(ta.theatre_activity_id) === 1 ? '' : 's'} waiting
@@ -2359,32 +2434,61 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
 
             {/* Locations Section */}
             <CollapsibleSection title="Locations">
-              <div className="flex gap-2 mb-4">
+              <div className="mb-4 p-3 border border-gray-200 rounded-lg space-y-2">
                 <input
                   type="text"
                   placeholder="Location name (e.g., 'Theatre 1')"
                   value={newLocationInput}
                   onChange={(e) => setNewLocationInput(e.target.value)}
-                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
                 />
-                <button
-                  onClick={handleCreateLocation}
-                  className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition text-sm"
-                >
-                  Add
-                </button>
+                <div className="flex gap-2 items-center">
+                  <label className="text-xs text-gray-600">Default hours (optional — blank means always open):</label>
+                  <input
+                    type="time"
+                    value={newLocationDefaultStart}
+                    onChange={(e) => setNewLocationDefaultStart(e.target.value)}
+                    className="px-2 py-1 border border-gray-300 rounded text-sm"
+                  />
+                  <span className="text-gray-400">–</span>
+                  <input
+                    type="time"
+                    value={newLocationDefaultEnd}
+                    onChange={(e) => setNewLocationDefaultEnd(e.target.value)}
+                    className="px-2 py-1 border border-gray-300 rounded text-sm"
+                  />
+                  <button
+                    onClick={handleCreateLocation}
+                    className="ml-auto px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition text-sm"
+                  >
+                    Add
+                  </button>
+                </div>
               </div>
 
               <div className="space-y-2">
                 {refData.locations.map(loc => (
                   <div key={loc.location_id} className={`p-3 border rounded-lg flex items-center justify-between gap-2 ${loc.active === false ? 'border-gray-200 bg-gray-50 opacity-60' : 'border-gray-200'}`}>
                     {editingLocationId === loc.location_id ? (
-                      <div className="flex gap-2 items-center flex-1">
+                      <div className="flex flex-wrap gap-2 items-center flex-1">
                         <input
                           type="text"
                           value={editLocationName}
                           onChange={(e) => setEditLocationName(e.target.value)}
-                          className="flex-1 px-2 py-1 border border-gray-300 rounded text-sm"
+                          className="flex-1 min-w-[8rem] px-2 py-1 border border-gray-300 rounded text-sm"
+                        />
+                        <input
+                          type="time"
+                          value={editLocationDefaultStart}
+                          onChange={(e) => setEditLocationDefaultStart(e.target.value)}
+                          className="px-2 py-1 border border-gray-300 rounded text-sm"
+                        />
+                        <span className="text-gray-400">–</span>
+                        <input
+                          type="time"
+                          value={editLocationDefaultEnd}
+                          onChange={(e) => setEditLocationDefaultEnd(e.target.value)}
+                          className="px-2 py-1 border border-gray-300 rounded text-sm"
                         />
                         <button
                           onClick={handleUpdateLocation}
@@ -2403,6 +2507,11 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                       <>
                         <p className="font-semibold text-sm text-gray-900">
                           {loc.name}{loc.active === false && <span className="ml-2 text-xs font-normal text-gray-500">(inactive)</span>}
+                          <span className="ml-2 text-xs font-normal text-gray-500">
+                            {loc.default_start_time && loc.default_end_time
+                              ? `(default ${loc.default_start_time.slice(0, 5)}–${loc.default_end_time.slice(0, 5)})`
+                              : '(always open)'}
+                          </span>
                         </p>
                         <div className="flex gap-2">
                           <button
@@ -2669,7 +2778,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                 <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Location</label>
                 <select
                   value={newActivityLocation}
-                  onChange={(e) => setNewActivityLocation(e.target.value)}
+                  onChange={(e) => { setNewActivityLocation(e.target.value); prefillActivityTimes(e.target.value, newActivitySession); }}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
                   <option value="">Select location…</option>
@@ -2683,7 +2792,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                 <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Session</label>
                 <select
                   value={newActivitySession}
-                  onChange={(e) => setNewActivitySession(e.target.value)}
+                  onChange={(e) => { setNewActivitySession(e.target.value); prefillActivityTimes(newActivityLocation, e.target.value); }}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
                   <option value="full">Whole Day</option>
@@ -2691,7 +2800,27 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                   <option value="PM">Afternoon</option>
                   <option value="night">Night</option>
                 </select>
-                <p className="text-xs text-gray-500 mt-2">Which part of the day this activity covers — controls whether it groups under Morning, Afternoon or Night Allocations.</p>
+                <p className="text-xs text-gray-500 mt-2">A starting point for the times below — pick whichever's closest, then adjust.</p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Start / End time</label>
+                <div className="flex gap-2 items-center">
+                  <input
+                    type="time"
+                    value={newActivityStartTime}
+                    onChange={(e) => setNewActivityStartTime(e.target.value)}
+                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  <span className="text-gray-400">–</span>
+                  <input
+                    type="time"
+                    value={newActivityEndTime}
+                    onChange={(e) => setNewActivityEndTime(e.target.value)}
+                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <p className="text-xs text-gray-500 mt-2">When this activity actually runs — this is what decides whether it groups under Morning, Afternoon or Night Allocations.</p>
               </div>
 
               <div>
@@ -2699,10 +2828,10 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                 <select
                   value={newActivityType}
                   onChange={(e) => handleAddActivity(e.target.value)}
-                  disabled={!newActivityLocation}
+                  disabled={!newActivityLocation || !newActivityStartTime || !newActivityEndTime}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-400"
                 >
-                  <option value="">{newActivityLocation ? 'Select activity…' : 'Select a location first'}</option>
+                  <option value="">{!newActivityLocation ? 'Select a location first' : (!newActivityStartTime || !newActivityEndTime) ? 'Set a start and end time first' : 'Select activity…'}</option>
                   {refData.activities.map(act => (
                     <option key={act.activity_id} value={act.activity_id}>{act.name}</option>
                   ))}
@@ -2713,7 +2842,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
 
             <div className="flex gap-2">
               <button
-                onClick={() => { setShowAddActivity(false); setNewActivityLocation(''); setNewActivityType(''); setNewActivitySession('full'); }}
+                onClick={() => { setShowAddActivity(false); setNewActivityLocation(''); setNewActivityType(''); setNewActivitySession('full'); setNewActivityStartTime(''); setNewActivityEndTime(''); }}
                 className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-900 font-medium py-2 rounded-lg transition"
               >
                 Cancel
