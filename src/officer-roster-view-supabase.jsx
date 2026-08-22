@@ -29,6 +29,7 @@ import { createTheatreActivity,
   updateDutyType,
   deactivateDutyType,
   reactivateDutyType,
+  syncDutyOnCallActivity,
   createLocation,
   updateLocation,
   deactivateLocation,
@@ -166,10 +167,14 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   // the single source of truth also used by the Duty Assignments panel)
   const [newDutyTypeLabel, setNewDutyTypeLabel] = useState('');
   const [newDutyTypeCountsAsOnCall, setNewDutyTypeCountsAsOnCall] = useState(true);
+  const [newDutyTypeStartTime, setNewDutyTypeStartTime] = useState('');
+  const [newDutyTypeEndTime, setNewDutyTypeEndTime] = useState('');
   const [editingDutyTypeId, setEditingDutyTypeId] = useState(null);
   const [editDutyTypeLabel, setEditDutyTypeLabel] = useState('');
   const [editDutyTypeCountsAsOnCall, setEditDutyTypeCountsAsOnCall] = useState(true);
   const [editDutyTypeSortOrder, setEditDutyTypeSortOrder] = useState(0);
+  const [editDutyTypeStartTime, setEditDutyTypeStartTime] = useState('');
+  const [editDutyTypeEndTime, setEditDutyTypeEndTime] = useState('');
 
   // Location Management State. Default hours are optional (blank = "always
   // open", e.g. an Emergency Department) — just a pre-fill offered when
@@ -532,6 +537,8 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
         leaveCode: null,
       });
 
+      cascadeAssignmentAcrossSections(theatreActivityId, locationId, shiftId, staffId, staff.name, role);
+
       setOpenDropdown(null);
       setPendingAssignment(null);
       setOverridePrompt(null);
@@ -579,17 +586,35 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     }
   };
 
-  const handleDutyChange = async (dutyType, staffId) => {
+  const handleDutyChange = async (dutyTypeKey, staffId) => {
     if (!selectedDate || !departmentId) return;
 
     try {
-      const { error } = await updateDutyAssignment(departmentId, selectedDate, dutyType, staffId);
+      const { error } = await updateDutyAssignment(departmentId, selectedDate, dutyTypeKey, staffId);
       if (error) throw error;
 
       setDutyAssignments(prev => ({
         ...prev,
-        [dutyType]: staffId,
+        [dutyTypeKey]: staffId,
       }));
+
+      // Project this onto a card in the right section(s), if the duty type
+      // has start/end times configured (see syncDutyOnCallActivity).
+      const dutyType = refData.dutyTypes.find(d => d.key === dutyTypeKey);
+      if (dutyType) {
+        const { error: syncError } = await syncDutyOnCallActivity(departmentId, selectedDate, dutyType, staffId || null);
+        if (syncError) throw syncError;
+
+        const { data: theatreData, error: theatreError } = await getTheatreActivitiesForDate(departmentId, selectedDate);
+        if (theatreError) throw theatreError;
+        setTheatreActivities(theatreData);
+
+        const { data: assignData, error: assignError } = await getStaffAssignmentsForDate(departmentId, selectedDate);
+        if (assignError) throw assignError;
+        setStaffAssignments(assignData);
+      }
+
+      setError(null);
     } catch (err) {
       setError(`Failed to update duty: ${err.message}`);
     }
@@ -835,12 +860,22 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
 
     try {
       const nextSortOrder = refData.dutyTypes.reduce((max, d) => Math.max(max, d.sort_order), -1) + 1;
-      const { data, error } = await createDutyType(departmentId, newDutyTypeLabel, newDutyTypeCountsAsOnCall, nextSortOrder);
+      const { data, activityType, shift, error } = await createDutyType(
+        departmentId, newDutyTypeLabel, newDutyTypeCountsAsOnCall, nextSortOrder,
+        newDutyTypeStartTime || null, newDutyTypeEndTime || null
+      );
       if (error) throw error;
 
-      setRefData(prev => ({ ...prev, dutyTypes: [...prev.dutyTypes, data] }));
+      setRefData(prev => ({
+        ...prev,
+        dutyTypes: [...prev.dutyTypes, data],
+        activities: activityType ? [...prev.activities, activityType] : prev.activities,
+        shifts: shift ? [...prev.shifts, shift] : prev.shifts,
+      }));
       setNewDutyTypeLabel('');
       setNewDutyTypeCountsAsOnCall(true);
+      setNewDutyTypeStartTime('');
+      setNewDutyTypeEndTime('');
       setError(null);
     } catch (err) {
       setError(`Failed to create duty type: ${err.message}`);
@@ -851,14 +886,29 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     if (!editingDutyTypeId || !editDutyTypeLabel.trim()) return;
 
     try {
-      const { data, error } = await updateDutyType(editingDutyTypeId, editDutyTypeLabel.trim(), editDutyTypeCountsAsOnCall, editDutyTypeSortOrder);
+      const editingDutyType = refData.dutyTypes.find(d => d.duty_type_id === editingDutyTypeId);
+      const { data, activityType, shift, error } = await updateDutyType(
+        departmentId, editingDutyTypeId, editDutyTypeLabel.trim(), editDutyTypeCountsAsOnCall, editDutyTypeSortOrder,
+        editDutyTypeStartTime || null, editDutyTypeEndTime || null, editingDutyType?.activity_type_id, editingDutyType?.shift_id
+      );
       if (error) throw error;
 
-      setRefData(prev => ({ ...prev, dutyTypes: prev.dutyTypes.map(d => d.duty_type_id === editingDutyTypeId ? data : d) }));
+      setRefData(prev => ({
+        ...prev,
+        dutyTypes: prev.dutyTypes.map(d => d.duty_type_id === editingDutyTypeId ? data : d),
+        activities: activityType ? prev.activities.map(a => a.activity_id === activityType.activity_id ? activityType : a) : prev.activities,
+        shifts: shift
+          ? (prev.shifts.some(s => s.shift_id === shift.shift_id)
+            ? prev.shifts.map(s => s.shift_id === shift.shift_id ? shift : s)
+            : [...prev.shifts, shift])
+          : prev.shifts,
+      }));
       setEditingDutyTypeId(null);
       setEditDutyTypeLabel('');
       setEditDutyTypeCountsAsOnCall(true);
       setEditDutyTypeSortOrder(0);
+      setEditDutyTypeStartTime('');
+      setEditDutyTypeEndTime('');
       setError(null);
     } catch (err) {
       setError(`Failed to update duty type: ${err.message}`);
@@ -898,6 +948,8 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     setEditDutyTypeLabel(dutyType.label);
     setEditDutyTypeCountsAsOnCall(dutyType.counts_as_on_call);
     setEditDutyTypeSortOrder(dutyType.sort_order);
+    setEditDutyTypeStartTime(dutyType.start_time?.slice(0, 5) || '');
+    setEditDutyTypeEndTime(dutyType.end_time?.slice(0, 5) || '');
   };
 
   // Location Management Handlers
@@ -1219,6 +1271,45 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
       ...prev,
       [theatreActivityId]: [...(prev[theatreActivityId] || getAssignmentsForActivity(theatreActivityId, locationId).map(toDraftEntry)), entry],
     }));
+  };
+
+  // A shift long enough to span more than one of Morning/Afternoon/Night
+  // (e.g. 10:30-22:00) shouldn't need adding by hand to every other card at
+  // the same location that falls inside it — that's the same person, same
+  // shift, same location, just a different card because each session's
+  // slice of the day is its own theatre_activities row. So once the
+  // person's shift is known to cover >1 group (getSessionGroups on the
+  // shift itself), auto-stage the same staffId/role/shiftId onto every
+  // sibling card at this location+date whose own time window overlaps one
+  // of those groups too — skipping any where they're already an entry.
+  // Each card's own Complete Allocation still has to be run to commit and
+  // to re-check consultant cover, same as any other draft change.
+  const cascadeAssignmentAcrossSections = (theatreActivityId, locationId, shiftId, staffId, staffName, role) => {
+    const shift = refData.shifts.find(s => s.shift_id === shiftId);
+    const shiftGroups = getSessionGroups(shift);
+    if (shiftGroups.length <= 1) return;
+
+    theatreActivities
+      .filter(sibling => sibling.location_id === locationId && sibling.theatre_activity_id !== theatreActivityId)
+      .forEach(sibling => {
+        const siblingGroups = getSessionGroups({ start_time: sibling.start_time, end_time: sibling.end_time });
+        if (!siblingGroups.some(g => shiftGroups.includes(g))) return;
+
+        const siblingEntries = getDraftEntries(sibling.theatre_activity_id, sibling.location_id);
+        if (siblingEntries.some(e => e.staffId === staffId && e.role === role)) return;
+
+        addEntryToDraft(sibling.theatre_activity_id, sibling.location_id, {
+          localId: crypto.randomUUID(),
+          assignmentId: null,
+          staffId,
+          staffName,
+          role,
+          shiftId,
+          onCall: false,
+          fatigueOverrideReason: null,
+          leaveCode: null,
+        });
+      });
   };
 
   const removeEntryFromDraft = (theatreActivityId, locationId, localId) => {
@@ -2555,6 +2646,22 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                     />
                     Counts as on call (Fairness Report + next-day fatigue risk)
                   </label>
+                  <div className="flex gap-2 items-center col-span-2">
+                    <label className="text-xs text-gray-600">On-call card hours (optional — blank means top panel only, no section card):</label>
+                    <input
+                      type="time"
+                      value={newDutyTypeStartTime}
+                      onChange={(e) => setNewDutyTypeStartTime(e.target.value)}
+                      className="px-2 py-1 border border-gray-300 rounded text-sm"
+                    />
+                    <span className="text-gray-400">–</span>
+                    <input
+                      type="time"
+                      value={newDutyTypeEndTime}
+                      onChange={(e) => setNewDutyTypeEndTime(e.target.value)}
+                      className="px-2 py-1 border border-gray-300 rounded text-sm"
+                    />
+                  </div>
                 </div>
                 <button
                   onClick={handleCreateDutyType}
@@ -2594,6 +2701,22 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                             />
                             Counts as on call (Fairness Report + next-day fatigue risk)
                           </label>
+                          <div className="flex gap-2 items-center col-span-2">
+                            <label className="text-xs text-gray-600">On-call card hours (optional — blank means top panel only, no section card):</label>
+                            <input
+                              type="time"
+                              value={editDutyTypeStartTime}
+                              onChange={(e) => setEditDutyTypeStartTime(e.target.value)}
+                              className="px-2 py-1 border border-gray-300 rounded text-sm"
+                            />
+                            <span className="text-gray-400">–</span>
+                            <input
+                              type="time"
+                              value={editDutyTypeEndTime}
+                              onChange={(e) => setEditDutyTypeEndTime(e.target.value)}
+                              className="px-2 py-1 border border-gray-300 rounded text-sm"
+                            />
+                          </div>
                         </div>
                         <div className="flex gap-2">
                           <button
@@ -2618,6 +2741,9 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                           </p>
                           <p className="text-xs text-gray-600">
                             {dutyType.counts_as_on_call ? 'Counts as on call' : 'Not counted as on call'} • order {dutyType.sort_order}
+                            {dutyType.start_time && dutyType.end_time
+                              ? ` • ${dutyType.start_time.slice(0, 5)}–${dutyType.end_time.slice(0, 5)} card at On Call`
+                              : ' • no card (top panel only)'}
                           </p>
                         </div>
                         <div className="flex gap-2">
