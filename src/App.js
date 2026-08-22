@@ -130,7 +130,7 @@ function App() {
 
   return (
     <div>
-      <div className="fixed top-4 left-4 z-40 flex gap-2">
+      <div className="fixed top-0 left-0 right-0 z-40 bg-white border-b border-gray-200 shadow-sm px-4 py-3 flex gap-2 flex-wrap">
         {showSwitcher && (
           <button
             onClick={handleSwitchDepartment}
@@ -164,11 +164,13 @@ function App() {
         </button>
       </div>
 
-      {effectiveView === 'officer' ? (
-        <OfficerRosterView departmentId={departmentId} staffId={staffId} />
-      ) : (
-        <StaffApp departmentId={departmentId} staffId={staffId} />
-      )}
+      <div className="pt-16">
+        {effectiveView === 'officer' ? (
+          <OfficerRosterView departmentId={departmentId} staffId={staffId} />
+        ) : (
+          <StaffApp departmentId={departmentId} staffId={staffId} />
+        )}
+      </div>
 
       {showAddDepartment && (
         <AddDepartmentModal onClose={() => setShowAddDepartment(false)} onCreated={handleDepartmentAdded} />
