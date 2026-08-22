@@ -7,6 +7,7 @@ import {
   getStaffAssignmentsForWeek,
   getAllOnCallAssignmentsForWeek,
   getDutyAssignmentsForDate,
+  getDutyTypes,
   searchStaff,
   getStaffAvailability,
   toggleStaffAvailability,
@@ -58,6 +59,11 @@ export default function StaffRosterView({ departmentId, staffId }) {
   const [staffMember, setStaffMember] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  // This department's configured on-call/duty slots (see
+  // migrations/2026-08-22_duty_types.sql) — drives the On-Call widget on the
+  // Day tab and the on-call tab's weekly grouping, replacing what used to be
+  // a fixed first/second-on-call + AM/PM coordinator list for every department.
+  const [dutyTypes, setDutyTypes] = useState([]);
 
   // Day tab state
   const [todayAssignments, setTodayAssignments] = useState([]); // this staff member's own assignments
@@ -118,9 +124,14 @@ export default function StaffRosterView({ departmentId, staffId }) {
       }
 
       try {
-        const { data, error: staffError } = await getStaffById(staffId);
+        const [{ data, error: staffError }, { data: dutyTypesData, error: dutyTypesError }] = await Promise.all([
+          getStaffById(staffId),
+          getDutyTypes(departmentId),
+        ]);
         if (staffError) throw staffError;
+        if (dutyTypesError) throw dutyTypesError;
         setStaffMember(data);
+        setDutyTypes(dutyTypesData);
         setError(null);
       } catch (err) {
         setError(`Failed to load staff: ${err.message}`);
@@ -524,14 +535,6 @@ export default function StaffRosterView({ departmentId, staffId }) {
 
   const renderContent = () => {
     if (activeTab === 'day') {
-      const DUTY_LABELS = {
-        first_on_call: 'First On-Call',
-        second_on_call: 'Second On-Call',
-        am_coordinator: 'AM Coordinator',
-        pm_coordinator: 'PM Coordinator',
-      };
-      const DUTY_ORDER = ['first_on_call', 'second_on_call', 'am_coordinator', 'pm_coordinator'];
-
       // Morning/Afternoon/Night group the WHOLE department's assignments (not
       // just this staff member's own) so staff can look up who's rostered
       // where — "Allocations" above is the personal-only view.
@@ -584,12 +587,12 @@ export default function StaffRosterView({ departmentId, staffId }) {
                     <p className="text-sm text-gray-500">No on-call roster set for this date.</p>
                   ) : (
                     <div className="grid grid-cols-2 gap-3">
-                      {DUTY_ORDER.map(dutyType => {
-                        const duty = todayOnCall.find(d => d.duty_type === dutyType);
+                      {dutyTypes.map(dutyType => {
+                        const duty = todayOnCall.find(d => d.duty_type === dutyType.key);
                         const isYou = duty?.staff_id === staffId;
                         return (
-                          <div key={dutyType} className={`p-3 rounded-lg border ${isYou ? 'bg-blue-50 border-blue-300' : 'border-gray-200'}`}>
-                            <p className="text-xs font-semibold text-gray-600 uppercase mb-1">{DUTY_LABELS[dutyType]}</p>
+                          <div key={dutyType.duty_type_id} className={`p-3 rounded-lg border ${isYou ? 'bg-blue-50 border-blue-300' : 'border-gray-200'}`}>
+                            <p className="text-xs font-semibold text-gray-600 uppercase mb-1">{dutyType.label}</p>
                             <p className="text-sm font-medium text-gray-900 flex items-center gap-2">
                               {duty?.staff?.name ? (
                                 <button onClick={() => handleViewStaffDetail(duty.staff_id)} className="hover:underline hover:text-blue-700">
@@ -769,8 +772,6 @@ export default function StaffRosterView({ departmentId, staffId }) {
         groupedByDuty[assignment.duty_type].push(assignment);
       });
 
-      const dutyOrder = ['first_on_call', 'second_on_call', 'am_coordinator', 'pm_coordinator'];
-
       return (
         <div className="p-4 pb-24">
           <div className="max-w-3xl mx-auto">
@@ -802,14 +803,14 @@ export default function StaffRosterView({ departmentId, staffId }) {
               </div>
             ) : (
               <div className="space-y-6">
-                {dutyOrder.map((dutyType) =>
-                  groupedByDuty[dutyType] ? (
-                    <div key={dutyType} className="bg-white rounded-lg shadow-sm p-6">
-                      <h2 className="text-lg font-bold text-gray-900 mb-4 capitalize">
-                        {dutyType.replace(/_/g, ' ')}
+                {dutyTypes.map((dutyType) =>
+                  groupedByDuty[dutyType.key] ? (
+                    <div key={dutyType.duty_type_id} className="bg-white rounded-lg shadow-sm p-6">
+                      <h2 className="text-lg font-bold text-gray-900 mb-4">
+                        {dutyType.label}
                       </h2>
                       <div className="space-y-3">
-                        {groupedByDuty[dutyType].map((assignment) => (
+                        {groupedByDuty[dutyType.key].map((assignment) => (
                           <div
                             key={assignment.duty_id}
                             className={`p-4 border-l-4 rounded ${

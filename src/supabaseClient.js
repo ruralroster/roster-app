@@ -30,7 +30,7 @@ export async function initializeDepartment(departmentId) {
   console.log('initializeDepartment called with departmentId:', departmentId);
   
   try {
-    const [locRes, activitiesRes, shiftsRes, staffRes, leaveTypesRes, departmentRes] = await Promise.all([
+    const [locRes, activitiesRes, shiftsRes, staffRes, leaveTypesRes, departmentRes, dutyTypesRes] = await Promise.all([
       supabase
         .from('locations')
         .select('*')
@@ -61,6 +61,11 @@ export async function initializeDepartment(departmentId) {
         .select('*')
         .eq('department_id', departmentId)
         .maybeSingle(),
+      supabase
+        .from('duty_types')
+        .select('*')
+        .eq('department_id', departmentId)
+        .order('sort_order'),
     ]);
 
     console.log('Locations:', locRes.data?.length || 0, locRes.error);
@@ -69,6 +74,7 @@ export async function initializeDepartment(departmentId) {
     console.log('Staff:', staffRes.data?.length || 0, staffRes.error);
     console.log('Leave types:', leaveTypesRes.data?.length || 0, leaveTypesRes.error);
     console.log('Department:', departmentRes.data, departmentRes.error);
+    console.log('Duty types:', dutyTypesRes.data?.length || 0, dutyTypesRes.error);
 
     return {
       locations: locRes.data || [],
@@ -77,7 +83,8 @@ export async function initializeDepartment(departmentId) {
       staff: staffRes.data || [],
       leaveTypes: leaveTypesRes.data || [],
       department: departmentRes.data || null,
-      errors: [locRes.error, activitiesRes.error, shiftsRes.error, staffRes.error, leaveTypesRes.error, departmentRes.error].filter(Boolean),
+      dutyTypes: dutyTypesRes.data || [],
+      errors: [locRes.error, activitiesRes.error, shiftsRes.error, staffRes.error, leaveTypesRes.error, departmentRes.error, dutyTypesRes.error].filter(Boolean),
     };
   } catch (err) {
     console.error('initializeDepartment error:', err);
@@ -263,6 +270,106 @@ export async function updateDutyAssignment(departmentId, date, dutyType, staffId
     return { data, error };
   } catch (err) {
     return { data: null, error: err };
+  }
+}
+
+// ============================================================
+// DUTY TYPES — per-department configuration of which named slots appear in
+// the Duty Assignments panel (see migrations/2026-08-22_duty_types.sql).
+// The officer view's refData already gets the full list from
+// initializeDepartment; getDutyTypes below is for the staff-facing view,
+// which doesn't otherwise load department reference data.
+// ============================================================
+
+export async function getDutyTypes(departmentId) {
+  try {
+    const { data, error } = await supabase
+      .from('duty_types')
+      .select('*')
+      .eq('department_id', departmentId)
+      .eq('active', true)
+      .order('sort_order');
+
+    return { data: data || [], error };
+  } catch (err) {
+    console.error('getDutyTypes error:', err);
+    return { data: [], error: err };
+  }
+}
+
+// Stable, URL/key-safe slug derived from the label at creation time. Kept
+// as duty_types.key forever after — duty_assignments.duty_type rows join
+// against it by value, so changing it later would orphan existing
+// assignments (same reason shift_id / activity_id are UUIDs, not names).
+function slugifyDutyTypeKey(label) {
+  return label
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+export async function createDutyType(departmentId, label, countsAsOnCall, sortOrder) {
+  try {
+    const key = slugifyDutyTypeKey(label);
+    if (!key) throw new Error('Duty type name must contain at least one letter or number');
+
+    const { data, error } = await supabase
+      .from('duty_types')
+      .insert([{ department_id: departmentId, key, label: label.trim(), counts_as_on_call: countsAsOnCall, sort_order: sortOrder }])
+      .select()
+      .single();
+
+    return { data, error };
+  } catch (err) {
+    return { data: null, error: err };
+  }
+}
+
+// Label/sort_order/counts_as_on_call only — key is immutable after creation (see slugifyDutyTypeKey).
+export async function updateDutyType(dutyTypeId, label, countsAsOnCall, sortOrder) {
+  try {
+    const { data, error } = await supabase
+      .from('duty_types')
+      .update({ label: label.trim(), counts_as_on_call: countsAsOnCall, sort_order: sortOrder })
+      .eq('duty_type_id', dutyTypeId)
+      .select()
+      .single();
+
+    return { data, error };
+  } catch (err) {
+    return { data: null, error: err };
+  }
+}
+
+// Duty types are never hard-deleted — a duty_assignments history row keyed
+// to this type shouldn't lose its label. "Delete" instead sets active =
+// false: it drops out of the Duty Assignments panel while past history
+// (and its counts_as_on_call contribution to the Fairness Report) is
+// unaffected — same pattern as deactivateShift.
+export async function deactivateDutyType(dutyTypeId) {
+  try {
+    const { error } = await supabase
+      .from('duty_types')
+      .update({ active: false })
+      .eq('duty_type_id', dutyTypeId);
+
+    return { error };
+  } catch (err) {
+    return { error: err };
+  }
+}
+
+export async function reactivateDutyType(dutyTypeId) {
+  try {
+    const { error } = await supabase
+      .from('duty_types')
+      .update({ active: true })
+      .eq('duty_type_id', dutyTypeId);
+
+    return { error };
+  } catch (err) {
+    return { error: err };
   }
 }
 
@@ -855,7 +962,7 @@ export async function populateNextWeekRandom(departmentId) {
     if (staffError) throw staffError;
 
     // Filter by rank
-    const consultants = staffList.filter(s => s.rank === 'consultant');
+    const consultants = staffList.filter(s => s.rank === 'consultant' || s.rank === 'fellow');
     const registrars = staffList.filter(s => s.rank.includes('trainee') || s.rank === 'intern');
 
     if (consultants.length === 0 || registrars.length === 0) {
@@ -1416,7 +1523,7 @@ export async function getFairnessReport(departmentId) {
     startDate.setFullYear(startDate.getFullYear() - 1);
     const startStr = toLocalDateStr(startDate);
 
-    const [staffRes, assignmentsRes, dutyRes] = await Promise.all([
+    const [staffRes, assignmentsRes, dutyRes, dutyTypesRes] = await Promise.all([
       supabase
         .from('staff')
         .select('staff_id, name, fte')
@@ -1435,16 +1542,24 @@ export async function getFairnessReport(departmentId) {
         .eq('department_id', departmentId)
         .gte('date', startStr)
         .lte('date', endStr),
+      supabase
+        .from('duty_types')
+        .select('key')
+        .eq('department_id', departmentId)
+        .eq('counts_as_on_call', true),
     ]);
 
     if (staffRes.error) throw staffRes.error;
     if (assignmentsRes.error) throw assignmentsRes.error;
     if (dutyRes.error) throw dutyRes.error;
+    if (dutyTypesRes.error) throw dutyTypesRes.error;
 
     const staffList = staffRes.data || [];
-    const onCallDuties = (dutyRes.data || []).filter(
-      d => d.duty_type === 'first_on_call' || d.duty_type === 'second_on_call'
-    );
+    // Which duty types count as "on call" is department-configurable (see
+    // migrations/2026-08-22_duty_types.sql) rather than the fixed
+    // first_on_call/second_on_call pair this used to hardcode.
+    const onCallKeys = new Set((dutyTypesRes.data || []).map(d => d.key));
+    const onCallDuties = (dutyRes.data || []).filter(d => onCallKeys.has(d.duty_type));
 
     const totalShiftsByStaff = new Map();
     const weekendShiftsByStaff = new Map();
@@ -1503,8 +1618,9 @@ const NIGHT_LOOKBACK_DAYS = 7; // far enough back to find the last night shift b
 //  - nightCooldownStaffIds: two days out from their last night shift — the
 //    mandatory rest day has passed, but they still can't go back onto a Day
 //    shift for one more day (Night shifts are unaffected).
-//  - fatigueRiskStaffIds: was on first/second on-call overnight the day
-//    before — not blocked, just flagged as a fatigue risk when assigned.
+//  - fatigueRiskStaffIds: was on a duty type marked counts_as_on_call
+//    overnight the day before — not blocked, just flagged as a fatigue
+//    risk when assigned.
 export async function getStaffFatigueStatus(departmentId, date) {
   console.log('getStaffFatigueStatus called', departmentId, date);
 
@@ -1519,7 +1635,7 @@ export async function getStaffFatigueStatus(departmentId, date) {
     yesterday.setDate(yesterday.getDate() - 1);
     const yesterdayStr = toLocalDateStr(yesterday);
 
-    const [assignmentsRes, dutyRes] = await Promise.all([
+    const [assignmentsRes, dutyRes, dutyTypesRes] = await Promise.all([
       supabase
         .from('staff_assignments')
         .select('staff_id, date, shifts(session)')
@@ -1531,10 +1647,16 @@ export async function getStaffFatigueStatus(departmentId, date) {
         .select('staff_id, duty_type')
         .eq('department_id', departmentId)
         .eq('date', yesterdayStr),
+      supabase
+        .from('duty_types')
+        .select('key')
+        .eq('department_id', departmentId)
+        .eq('counts_as_on_call', true),
     ]);
 
     if (assignmentsRes.error) throw assignmentsRes.error;
     if (dutyRes.error) throw dutyRes.error;
+    if (dutyTypesRes.error) throw dutyTypesRes.error;
 
     const lastNightDateByStaff = new Map();
     (assignmentsRes.data || []).forEach(a => {
@@ -1553,9 +1675,10 @@ export async function getStaffFatigueStatus(departmentId, date) {
       else if (daysSince === 2) nightCooldownStaffIds.add(staffId);
     });
 
+    const onCallKeys = new Set((dutyTypesRes.data || []).map(d => d.key));
     const fatigueRiskStaffIds = new Set(
       (dutyRes.data || [])
-        .filter(d => d.duty_type === 'first_on_call' || d.duty_type === 'second_on_call')
+        .filter(d => onCallKeys.has(d.duty_type))
         .map(d => d.staff_id)
     );
 
@@ -1703,7 +1826,7 @@ export async function getAvailableShiftsForStaff(staffId, departmentId) {
     if (volunteerRes.error) throw volunteerRes.error;
 
     const rank = staffRes.data?.rank || '';
-    const roleForRank = rank === 'consultant' ? 'consultant' : (rank.includes('trainee') || rank === 'intern') ? 'registrar' : null;
+    const roleForRank = (rank === 'consultant' || rank === 'fellow') ? 'consultant' : (rank.includes('trainee') || rank === 'intern') ? 'registrar' : null;
     if (!roleForRank) return { data: [], error: null };
 
     const restrictions = staffRes.data?.activity_restrictions || [];

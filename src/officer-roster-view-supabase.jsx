@@ -25,6 +25,10 @@ import { createTheatreActivity,
   updateShift,
   deactivateShift,
   reactivateShift,
+  createDutyType,
+  updateDutyType,
+  deactivateDutyType,
+  reactivateDutyType,
   createLocation,
   updateLocation,
   deactivateLocation,
@@ -100,6 +104,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     staff: [],
     leaveTypes: [],
     department: null,
+    dutyTypes: [],
   });
   // Bumped whenever staff are added/removed, so components that fetch their
   // own staff-derived data independently (Case Mix, Fairness, Staff Profiles,
@@ -156,6 +161,15 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   const [editShiftStartTime, setEditShiftStartTime] = useState('');
   const [editShiftEndTime, setEditShiftEndTime] = useState('');
   const [editShiftSession, setEditShiftSession] = useState('full');
+
+  // Duty Type Management State (list itself lives in refData.dutyTypes —
+  // the single source of truth also used by the Duty Assignments panel)
+  const [newDutyTypeLabel, setNewDutyTypeLabel] = useState('');
+  const [newDutyTypeCountsAsOnCall, setNewDutyTypeCountsAsOnCall] = useState(true);
+  const [editingDutyTypeId, setEditingDutyTypeId] = useState(null);
+  const [editDutyTypeLabel, setEditDutyTypeLabel] = useState('');
+  const [editDutyTypeCountsAsOnCall, setEditDutyTypeCountsAsOnCall] = useState(true);
+  const [editDutyTypeSortOrder, setEditDutyTypeSortOrder] = useState(0);
 
   // Location Management State. Default hours are optional (blank = "always
   // open", e.g. an Emergency Department) — just a pre-fill offered when
@@ -814,6 +828,76 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     setEditShiftStartTime(shift.start_time);
     setEditShiftEndTime(shift.end_time);
     setEditShiftSession(shift.session);
+  };
+
+  const handleCreateDutyType = async () => {
+    if (!newDutyTypeLabel.trim() || !departmentId) return;
+
+    try {
+      const nextSortOrder = refData.dutyTypes.reduce((max, d) => Math.max(max, d.sort_order), -1) + 1;
+      const { data, error } = await createDutyType(departmentId, newDutyTypeLabel, newDutyTypeCountsAsOnCall, nextSortOrder);
+      if (error) throw error;
+
+      setRefData(prev => ({ ...prev, dutyTypes: [...prev.dutyTypes, data] }));
+      setNewDutyTypeLabel('');
+      setNewDutyTypeCountsAsOnCall(true);
+      setError(null);
+    } catch (err) {
+      setError(`Failed to create duty type: ${err.message}`);
+    }
+  };
+
+  const handleUpdateDutyType = async () => {
+    if (!editingDutyTypeId || !editDutyTypeLabel.trim()) return;
+
+    try {
+      const { data, error } = await updateDutyType(editingDutyTypeId, editDutyTypeLabel.trim(), editDutyTypeCountsAsOnCall, editDutyTypeSortOrder);
+      if (error) throw error;
+
+      setRefData(prev => ({ ...prev, dutyTypes: prev.dutyTypes.map(d => d.duty_type_id === editingDutyTypeId ? data : d) }));
+      setEditingDutyTypeId(null);
+      setEditDutyTypeLabel('');
+      setEditDutyTypeCountsAsOnCall(true);
+      setEditDutyTypeSortOrder(0);
+      setError(null);
+    } catch (err) {
+      setError(`Failed to update duty type: ${err.message}`);
+    }
+  };
+
+  const handleDeactivateDutyType = async (dutyTypeId) => {
+    if (!window.confirm("Deactivate this duty type? It won't be offered in the Duty Assignments panel, but past history using it is unaffected.")) {
+      return;
+    }
+
+    try {
+      const { error } = await deactivateDutyType(dutyTypeId);
+      if (error) throw error;
+
+      setRefData(prev => ({ ...prev, dutyTypes: prev.dutyTypes.map(d => d.duty_type_id === dutyTypeId ? { ...d, active: false } : d) }));
+      setError(null);
+    } catch (err) {
+      setError(`Failed to deactivate duty type: ${err.message}`);
+    }
+  };
+
+  const handleReactivateDutyType = async (dutyTypeId) => {
+    try {
+      const { error } = await reactivateDutyType(dutyTypeId);
+      if (error) throw error;
+
+      setRefData(prev => ({ ...prev, dutyTypes: prev.dutyTypes.map(d => d.duty_type_id === dutyTypeId ? { ...d, active: true } : d) }));
+      setError(null);
+    } catch (err) {
+      setError(`Failed to reactivate duty type: ${err.message}`);
+    }
+  };
+
+  const handleStartEditDutyType = (dutyType) => {
+    setEditingDutyTypeId(dutyType.duty_type_id);
+    setEditDutyTypeLabel(dutyType.label);
+    setEditDutyTypeCountsAsOnCall(dutyType.counts_as_on_call);
+    setEditDutyTypeSortOrder(dutyType.sort_order);
   };
 
   // Location Management Handlers
@@ -1701,31 +1785,39 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
               )}
             </div>
 
-            {/* Duty Assignments */}
+            {/* Duty Assignments — one dropdown per duty_types row configured
+                for this department in Settings (e.g. a rural roster covering
+                ED/Obstetrics/Anaesthetics on call gets a duty type per
+                specialty; the same person can be picked in more than one to
+                represent them covering a combination). */}
             <div className="bg-white rounded-lg shadow-sm p-6 mb-6 border-l-4 border-orange-500">
               <h2 className="text-lg font-bold text-gray-900 mb-4">Duty Assignments</h2>
-              <div className="grid grid-cols-2 gap-4">
-                {['am_coordinator', 'pm_coordinator', 'first_on_call', 'second_on_call'].map(dutyType => (
-                  <div key={dutyType}>
-                    <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">
-                      {dutyType.replace(/_/g, ' ')}
-                    </label>
-                    <select
-                      value={dutyAssignments[dutyType] || ''}
-                      onChange={(e) => handleDutyChange(dutyType, e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    >
-                      <option value="" style={{ color: '#dc2626', fontStyle: 'italic' }}>— Clear Assignment —</option>
-                      {getDutyStaffOptions(dutyType).map(s => (
-                        <option key={s.staff_id} value={s.staff_id}>{s.name}{s.unavailable ? ' (unavailable)' : ''}</option>
-                      ))}
-                    </select>
-                    {!getDutyStaffName(dutyType) && (
-                      <p className="text-xs text-red-500 italic mt-1">Unassigned</p>
-                    )}
-                  </div>
-                ))}
-              </div>
+              {refData.dutyTypes.filter(d => d.active !== false).length === 0 ? (
+                <p className="text-sm text-gray-500">No duty types configured — add one in Settings → Duty Types.</p>
+              ) : (
+                <div className="grid grid-cols-2 gap-4">
+                  {refData.dutyTypes.filter(d => d.active !== false).map(dutyType => (
+                    <div key={dutyType.duty_type_id}>
+                      <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">
+                        {dutyType.label}
+                      </label>
+                      <select
+                        value={dutyAssignments[dutyType.key] || ''}
+                        onChange={(e) => handleDutyChange(dutyType.key, e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      >
+                        <option value="" style={{ color: '#dc2626', fontStyle: 'italic' }}>— Clear Assignment —</option>
+                        {getDutyStaffOptions(dutyType.key).map(s => (
+                          <option key={s.staff_id} value={s.staff_id}>{s.name}{s.unavailable ? ' (unavailable)' : ''}</option>
+                        ))}
+                      </select>
+                      {!getDutyStaffName(dutyType.key) && (
+                        <p className="text-xs text-red-500 italic mt-1">Unassigned</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Copy Last Week / Add Activity Buttons */}
@@ -2046,7 +2138,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                               </button>
                             );
                           })}
-                          {getRankedStaffOptions(ta.activity_id, s => s.rank === 'consultant' && !volunteerIds.has(s.staff_id) && !consultantEntries.some(ce => ce.staffId === s.staff_id)).map(s => {
+                          {getRankedStaffOptions(ta.activity_id, s => (s.rank === 'consultant' || s.rank === 'fellow') && !volunteerIds.has(s.staff_id) && !consultantEntries.some(ce => ce.staffId === s.staff_id)).map(s => {
                             const { blocked, overridable, blockType, label, fatigueRisk } = getAssignabilityInfo(s.staff_id);
                             const hardBlocked = blocked && !overridable;
                             const restricted = isActivityRestricted(s.staff_id, ta.activity_id);
@@ -2436,6 +2528,126 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
             {/* Shift Pattern Rules Section */}
             <CollapsibleSection title="Shift Pattern Rules">
               <ShiftPatternRulesUI departmentId={departmentId} shifts={refData.shifts} />
+            </CollapsibleSection>
+
+            {/* Duty Types Section — configures the dropdowns shown in the Day
+                view's Duty Assignments panel. A single-specialty department
+                just needs one "On Call"; a rural roster wants one per
+                specialty it covers overnight (ED / Obstetrics /
+                Anaesthetics — the same person can be picked for more than
+                one to represent covering a combination); a full ED wants
+                First/Second On Call plus separate Tox and Paeds slots. */}
+            <CollapsibleSection title="Duty Types">
+              <div className="mb-6 p-4 bg-orange-50 rounded-lg">
+                <div className="grid grid-cols-2 gap-3 mb-3">
+                  <input
+                    type="text"
+                    placeholder="Duty type name (e.g., 'Tox On Call')"
+                    value={newDutyTypeLabel}
+                    onChange={(e) => setNewDutyTypeLabel(e.target.value)}
+                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  />
+                  <label className="flex items-center gap-2 text-sm text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={newDutyTypeCountsAsOnCall}
+                      onChange={(e) => setNewDutyTypeCountsAsOnCall(e.target.checked)}
+                    />
+                    Counts as on call (Fairness Report + next-day fatigue risk)
+                  </label>
+                </div>
+                <button
+                  onClick={handleCreateDutyType}
+                  className="w-full px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white font-medium rounded-lg transition text-sm"
+                >
+                  Add Duty Type
+                </button>
+              </div>
+
+              <div className="space-y-2">
+                {refData.dutyTypes.length === 0 && (
+                  <p className="text-sm text-gray-500">No duty types yet — add one above.</p>
+                )}
+                {refData.dutyTypes.map(dutyType => (
+                  <div key={dutyType.duty_type_id} className={`p-3 border rounded-lg flex items-center justify-between ${dutyType.active === false ? 'border-gray-200 bg-gray-50 opacity-60' : 'border-gray-200'}`}>
+                    {editingDutyTypeId === dutyType.duty_type_id ? (
+                      <div className="flex-1">
+                        <div className="grid grid-cols-2 gap-2 mb-2">
+                          <input
+                            type="text"
+                            value={editDutyTypeLabel}
+                            onChange={(e) => setEditDutyTypeLabel(e.target.value)}
+                            className="px-2 py-1 border border-gray-300 rounded text-sm"
+                          />
+                          <input
+                            type="number"
+                            value={editDutyTypeSortOrder}
+                            onChange={(e) => setEditDutyTypeSortOrder(parseInt(e.target.value, 10) || 0)}
+                            title="Display order in the Duty Assignments panel — lower first"
+                            className="px-2 py-1 border border-gray-300 rounded text-sm"
+                          />
+                          <label className="flex items-center gap-2 text-sm text-gray-700 col-span-2">
+                            <input
+                              type="checkbox"
+                              checked={editDutyTypeCountsAsOnCall}
+                              onChange={(e) => setEditDutyTypeCountsAsOnCall(e.target.checked)}
+                            />
+                            Counts as on call (Fairness Report + next-day fatigue risk)
+                          </label>
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={handleUpdateDutyType}
+                            className="px-3 py-1 bg-green-600 hover:bg-green-700 text-white font-medium rounded text-xs transition"
+                          >
+                            Save
+                          </button>
+                          <button
+                            onClick={() => setEditingDutyTypeId(null)}
+                            className="px-3 py-1 bg-gray-400 hover:bg-gray-500 text-white font-medium rounded text-xs transition"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="flex-1">
+                          <p className="font-semibold text-sm text-gray-900">
+                            {dutyType.label}{dutyType.active === false && <span className="ml-2 text-xs font-normal text-gray-500">(inactive)</span>}
+                          </p>
+                          <p className="text-xs text-gray-600">
+                            {dutyType.counts_as_on_call ? 'Counts as on call' : 'Not counted as on call'} • order {dutyType.sort_order}
+                          </p>
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleStartEditDutyType(dutyType)}
+                            className="px-3 py-1 bg-blue-100 hover:bg-blue-200 text-blue-900 font-medium rounded text-xs transition"
+                          >
+                            Edit
+                          </button>
+                          {dutyType.active === false ? (
+                            <button
+                              onClick={() => handleReactivateDutyType(dutyType.duty_type_id)}
+                              className="px-3 py-1 bg-green-100 hover:bg-green-200 text-green-900 font-medium rounded text-xs transition"
+                            >
+                              Reactivate
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => handleDeactivateDutyType(dutyType.duty_type_id)}
+                              className="px-3 py-1 bg-red-100 hover:bg-red-200 text-red-900 font-medium rounded text-xs transition"
+                            >
+                              Deactivate
+                            </button>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
             </CollapsibleSection>
 
             {/* Locations Section */}
