@@ -2274,7 +2274,7 @@ export async function getMyMemberships() {
   try {
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError) throw userError;
-    if (!user) return { data: [], error: null };
+    if (!user) return { data: [], isSuperAdmin: false, error: null };
 
     const { data: profile, error: profileError } = await supabase
       .from('profiles')
@@ -2299,7 +2299,7 @@ export async function getMyMemberships() {
       }));
 
       console.log('Memberships (super admin):', memberships.length);
-      return { data: memberships, error: null };
+      return { data: memberships, isSuperAdmin: true, error: null };
     }
 
     const { data, error } = await supabase
@@ -2320,10 +2320,10 @@ export async function getMyMemberships() {
     }));
 
     console.log('Memberships:', memberships.length);
-    return { data: memberships, error: null };
+    return { data: memberships, isSuperAdmin: false, error: null };
   } catch (err) {
     console.error('getMyMemberships error:', err);
-    return { data: [], error: err };
+    return { data: [], isSuperAdmin: false, error: err };
   }
 }
 
@@ -2394,6 +2394,28 @@ export async function updateMyPreferredView(staffId, view) {
   } catch (err) {
     console.error('updateMyPreferredView error:', err);
     return { error: err };
+  }
+}
+
+// Creates a brand-new, empty department — nothing else references its
+// department_id yet, so staff/roster/etc. are naturally blank until
+// populated. Gated by the departments_insert_super_admin RLS policy (see
+// migrations/2026-08-22_departments_insert_policy.sql), which only a super
+// admin can satisfy; a non-super-admin's insert is rejected by Postgres
+// itself, surfacing here as `error`.
+export async function createDepartment(name) {
+  console.log('createDepartment called', name);
+  try {
+    const { data, error } = await supabase
+      .from('departments')
+      .insert({ department_id: crypto.randomUUID(), name })
+      .select('department_id, name')
+      .single();
+
+    return { data, error };
+  } catch (err) {
+    console.error('createDepartment error:', err);
+    return { data: null, error: err };
   }
 }
 

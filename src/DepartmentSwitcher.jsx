@@ -1,11 +1,12 @@
 import React from 'react';
+import { Plus } from 'lucide-react';
 import { signOut } from './supabaseClient';
 
 // Shown only when the signed-in person has more than one active staff
 // membership (App.js skips straight past this for the common single-
 // membership case). Built entirely from the user's own memberships — never
 // a hardcoded department list.
-export default function DepartmentSwitcher({ memberships, onSelect }) {
+export default function DepartmentSwitcher({ memberships, onSelect, isSuperAdmin, onAddDepartment }) {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
@@ -25,6 +26,16 @@ export default function DepartmentSwitcher({ memberships, onSelect }) {
               </button>
             ))}
           </div>
+
+          {isSuperAdmin && (
+            <button
+              onClick={onAddDepartment}
+              className="w-full mt-4 px-4 py-2 border-2 border-dashed border-gray-300 hover:border-blue-500 hover:bg-blue-50 rounded-lg text-sm text-gray-600 hover:text-blue-700 transition flex items-center justify-center gap-1"
+            >
+              <Plus size={16} />
+              Add Department
+            </button>
+          )}
 
           <button
             onClick={() => signOut()}
