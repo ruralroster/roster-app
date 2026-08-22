@@ -246,9 +246,25 @@ export async function getDutyAssignmentsForDate(departmentId, date) {
 
 export async function updateDutyAssignment(departmentId, date, dutyType, staffId) {
   const dateStr = toLocalDateStr(date);
-  const normalizedStaffId = staffId ? staffId : null;
 
   try {
+    // "Clear Assignment" deletes the row rather than upserting a null
+    // staff_id — duty_assignments.staff_id is NOT NULL at the DB level, and
+    // "unassigned" is already how an absent row reads everywhere this is
+    // consumed (getDutyStaffName / dutyAssignments map), same pattern as a
+    // Day Off being the absence of a staff_assignments row elsewhere in
+    // this schema.
+    if (!staffId) {
+      const { error } = await supabase
+        .from('duty_assignments')
+        .delete()
+        .eq('department_id', departmentId)
+        .eq('date', dateStr)
+        .eq('duty_type', dutyType);
+
+      return { data: null, error };
+    }
+
     // onConflict must target the table's actual unique constraint
     // (date, duty_type) — without it, upsert() defaults to the primary key
     // (duty_id, always a fresh UUID), so it attempts a plain INSERT and
@@ -261,7 +277,7 @@ export async function updateDutyAssignment(departmentId, date, dutyType, staffId
             department_id: departmentId,
             date: dateStr,
             duty_type: dutyType,
-            staff_id: normalizedStaffId,
+            staff_id: staffId,
           },
         ],
         { onConflict: 'date,duty_type' }
