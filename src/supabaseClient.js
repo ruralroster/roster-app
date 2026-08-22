@@ -143,7 +143,7 @@ export async function getStaffAssignmentsForDate(departmentId, date) {
   }
 }
 
-export async function createStaffAssignment(departmentId, date, locationId, staffId, shiftId, role, fatigueOverrideReason = null, theatreActivityId = null) {
+export async function createStaffAssignment(departmentId, date, locationId, staffId, shiftId, role, fatigueOverrideReason = null, theatreActivityId = null, onCall = false) {
   const dateStr = toLocalDateStr(date);
 
   try {
@@ -159,6 +159,7 @@ export async function createStaffAssignment(departmentId, date, locationId, staf
           role,
           fatigue_override_reason: fatigueOverrideReason,
           theatre_activity_id: theatreActivityId,
+          on_call: onCall,
         },
       ])
       .select();
@@ -169,11 +170,11 @@ export async function createStaffAssignment(departmentId, date, locationId, staf
   }
 }
 
-export async function updateStaffAssignment(assignmentId, staffId, role, shiftId, fatigueOverrideReason = null, theatreActivityId = null) {
+export async function updateStaffAssignment(assignmentId, staffId, role, shiftId, fatigueOverrideReason = null, theatreActivityId = null, onCall = false) {
   try {
     const { data, error } = await supabase
       .from('staff_assignments')
-      .update({ staff_id: staffId, role, shift_id: shiftId, fatigue_override_reason: fatigueOverrideReason, theatre_activity_id: theatreActivityId })
+      .update({ staff_id: staffId, role, shift_id: shiftId, fatigue_override_reason: fatigueOverrideReason, theatre_activity_id: theatreActivityId, on_call: onCall })
       .eq('assignment_id', assignmentId)
       .select();
 

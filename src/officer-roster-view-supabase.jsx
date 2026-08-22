@@ -20,7 +20,6 @@ import { createTheatreActivity,
   updateDutyAssignment,
   updateTheatreActivity,
   copyLastWeekActivities,
-  validateSupervision,
   createShift,
   updateShift,
   deactivateShift,
@@ -122,6 +121,13 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   const [pendingAssignment, setPendingAssignment] = useState(null); // { theatreActivityId, locationId, role, staffId, staffName, overrideReason }
   const [overridePrompt, setOverridePrompt] = useState(null); // { theatreActivityId, locationId, role, staffId, staffName, blockType, shiftId, reason }
   const [patternRuleAlert, setPatternRuleAlert] = useState(null); // { theatreActivityId, locationId, role, staffId, staffName, shiftId, action: 'BLOCK'|'WARN', description }
+  // Staged, per-activity staffing edits — theatre_activity_id -> array of
+  // draft entries. Nothing here touches the DB; entries are seeded from
+  // staffAssignments the first time a card is edited (see getDraftEntries)
+  // and only committed on "Complete Allocation" (handleCompleteAllocation).
+  // A card with no key here is showing straight DB state, untouched.
+  const [drafts, setDrafts] = useState({});
+  const [noConsultantConfirm, setNoConsultantConfirm] = useState(null); // { theatreActivityId } | null — "are you sure" step when Complete Allocation finds no consultant
 
   // Management UI State
   const [newActivityName, setNewActivityName] = useState('');
@@ -446,30 +452,21 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   // Handlers for staff assignment. skipPatternCheck is set when re-calling
   // this after an officer has already seen and accepted a WARN-level shift
   // pattern rule via the Override button.
+  // Adds one person to a card's staged draft (see getDraftEntries/
+  // addEntryToDraft above) — nothing is written to the DB here. The old
+  // per-add validateSupervision() hard-block is gone: with multiple people
+  // now addable in any order, "is there a consultant yet" can no longer be
+  // judged one add at a time. That check now happens once, at Complete
+  // Allocation (handleCompleteAllocation), as a warning rather than a
+  // block. The fatigue-pattern check below is unrelated (it's about this
+  // one person's own shift history, not the location's staffing) and still
+  // fires per-add, same as before.
   const handleAssignStaff = async (theatreActivityId, locationId, shiftId, staffId, role, overrideReason = null, skipPatternCheck = false) => {
     if (!selectedDate || !departmentId) return;
 
     try {
-      // Get staff rank for validation
       const staff = refData.staff.find(s => s.staff_id === staffId);
       if (!staff) throw new Error('Staff not found');
-
-      // For non-consultant roles, validate supervision
-      if (role !== 'consultant') {
-        const validation = await validateSupervision(
-          departmentId,
-          selectedDate,
-          locationId,
-          shiftId,
-          staffId,
-          staff.rank
-        );
-
-        if (!validation.is_valid) {
-          setError(`Cannot assign: ${validation.reason}`);
-          return;
-        }
-      }
 
       if (!skipPatternCheck) {
         // validateShiftAssignment() fails open (returns a valid:true ALLOW
@@ -495,36 +492,17 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
         }
       }
 
-      // Check if this activity/role already has someone — scoped to this
-      // specific theatre_activity, not just the location, so a Day activity
-      // and a Night activity at the same location can carry different
-      // people. Older rows from before theatre_activity_id existed fall
-      // back to the previous location+role match so they don't vanish from
-      // view; touching them here "heals" them onto the new key.
-      const existing = staffAssignments.find(a => a.theatre_activity_id === theatreActivityId && a.role === role)
-        || staffAssignments.find(a => !a.theatre_activity_id && a.location_id === locationId && a.role === role);
-
-      if (existing) {
-        // Update
-        const { error } = await updateStaffAssignment(existing.assignment_id, staffId, role, shiftId, overrideReason, theatreActivityId);
-        if (error) throw error;
-      } else {
-        // Create
-        const { error } = await createStaffAssignment(departmentId, selectedDate, locationId, staffId, shiftId, role, overrideReason, theatreActivityId);
-        if (error) throw error;
-      }
-
-      // Refresh assignments
-      const { data, error: fetchError } = await getStaffAssignmentsForDate(departmentId, selectedDate);
-      if (fetchError) throw fetchError;
-      setStaffAssignments(data);
-
-      // This role is now filled — any other pending volunteer requests for it
-      // (not just the one who got picked) are moot, so clear them all.
-      if (theatreActivityId) {
-        await clearVolunteerRequestsForRole(theatreActivityId, role);
-        await refreshVolunteerRequests();
-      }
+      addEntryToDraft(theatreActivityId, locationId, {
+        localId: crypto.randomUUID(),
+        assignmentId: null,
+        staffId,
+        staffName: staff.name,
+        role,
+        shiftId,
+        onCall: false,
+        fatigueOverrideReason: overrideReason,
+        leaveCode: null,
+      });
 
       setOpenDropdown(null);
       setPendingAssignment(null);
@@ -539,27 +517,6 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   const handleConfirmPatternOverride = () => {
     if (!patternRuleAlert) return;
     handleAssignStaff(patternRuleAlert.theatreActivityId, patternRuleAlert.locationId, patternRuleAlert.shiftId, patternRuleAlert.staffId, patternRuleAlert.role, patternRuleAlert.description, true);
-  };
-
-  const handleRemoveStaff = async (theatreActivityId, locationId, role) => {
-    if (!selectedDate) return;
-
-    try {
-      const assignment = staffAssignments.find(a => a.theatre_activity_id === theatreActivityId && a.role === role)
-        || staffAssignments.find(a => !a.theatre_activity_id && a.location_id === locationId && a.role === role);
-
-      if (!assignment) return;
-
-      const { error } = await deleteStaffAssignment(assignment.assignment_id);
-      if (error) throw error;
-
-      // Refresh
-      const { data, error: fetchError } = await getStaffAssignmentsForDate(departmentId, selectedDate);
-      if (fetchError) throw fetchError;
-      setStaffAssignments(data);
-    } catch (err) {
-      setError(`Failed to remove staff: ${err.message}`);
-    }
   };
 
   const handleActivityChange = async (theatreActivityId, newActivityId) => {
@@ -1079,9 +1036,129 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   // consultant/registrar) — falls back to the old location-only match for
   // rows created before theatre_activity_id existed, so they don't just
   // disappear from the roster.
-  const getStaffForRole = (theatreActivityId, locationId, role) => {
-    return staffAssignments.find(a => a.theatre_activity_id === theatreActivityId && a.role === role)
-      || staffAssignments.find(a => !a.theatre_activity_id && a.location_id === locationId && a.role === role);
+  const getAssignmentsForActivity = (theatreActivityId, locationId) => {
+    const scoped = staffAssignments.filter(a => a.theatre_activity_id === theatreActivityId);
+    if (scoped.length > 0) return scoped;
+    return staffAssignments.filter(a => !a.theatre_activity_id && a.location_id === locationId);
+  };
+
+  const toDraftEntry = (a) => ({
+    localId: a.assignment_id,
+    assignmentId: a.assignment_id,
+    staffId: a.staff_id,
+    staffName: a.staff?.name,
+    role: a.role,
+    shiftId: a.shift_id,
+    onCall: !!a.on_call,
+    fatigueOverrideReason: a.fatigue_override_reason,
+    leaveCode: a.leave_code,
+  });
+
+  // The staffing list a card actually renders: its staged draft if one's in
+  // progress, otherwise straight off staffAssignments. Any mutator below
+  // (add/remove/toggle) materializes a draft the first time it's called for
+  // a given activity, seeded from this same DB-derived list.
+  const getDraftEntries = (theatreActivityId, locationId) => {
+    return drafts[theatreActivityId] || getAssignmentsForActivity(theatreActivityId, locationId).map(toDraftEntry);
+  };
+
+  const addEntryToDraft = (theatreActivityId, locationId, entry) => {
+    setDrafts(prev => ({
+      ...prev,
+      [theatreActivityId]: [...(prev[theatreActivityId] || getAssignmentsForActivity(theatreActivityId, locationId).map(toDraftEntry)), entry],
+    }));
+  };
+
+  const removeEntryFromDraft = (theatreActivityId, locationId, localId) => {
+    setDrafts(prev => ({
+      ...prev,
+      [theatreActivityId]: (prev[theatreActivityId] || getAssignmentsForActivity(theatreActivityId, locationId).map(toDraftEntry)).filter(e => e.localId !== localId),
+    }));
+  };
+
+  const toggleOnCallInDraft = (theatreActivityId, locationId, localId) => {
+    setDrafts(prev => ({
+      ...prev,
+      [theatreActivityId]: (prev[theatreActivityId] || getAssignmentsForActivity(theatreActivityId, locationId).map(toDraftEntry))
+        .map(e => (e.localId === localId ? { ...e, onCall: !e.onCall } : e)),
+    }));
+  };
+
+  // Commits a card's staged draft: diffs it against what's actually in the
+  // DB (by assignment_id) and issues exactly the inserts/updates/deletes
+  // needed, rather than blowing away and recreating everything. Warns
+  // (non-blocking, needs a second click) if the result has no consultant —
+  // present or on-call both count, only zero consultants trips it.
+  const handleCompleteAllocation = async (ta, confirmNoConsultant = false) => {
+    const entries = getDraftEntries(ta.theatre_activity_id, ta.location_id);
+
+    if (!entries.some(e => e.role === 'consultant') && !confirmNoConsultant) {
+      setNoConsultantConfirm({ theatreActivityId: ta.theatre_activity_id });
+      return;
+    }
+    setNoConsultantConfirm(null);
+
+    try {
+      const original = getAssignmentsForActivity(ta.theatre_activity_id, ta.location_id);
+      const originalIds = new Set(original.map(a => a.assignment_id));
+      const keptIds = new Set(entries.filter(e => e.assignmentId).map(e => e.assignmentId));
+      const filledRoles = new Set();
+
+      for (const id of originalIds) {
+        if (!keptIds.has(id)) {
+          const { error } = await deleteStaffAssignment(id);
+          if (error) throw error;
+        }
+      }
+
+      for (const entry of entries) {
+        filledRoles.add(entry.role);
+        if (!entry.assignmentId) {
+          const { error } = await createStaffAssignment(
+            departmentId, selectedDate, ta.location_id, entry.staffId, entry.shiftId,
+            entry.role, entry.fatigueOverrideReason, ta.theatre_activity_id, entry.onCall
+          );
+          if (error) throw error;
+        } else {
+          const originalEntry = original.find(a => a.assignment_id === entry.assignmentId);
+          const changed = originalEntry && (originalEntry.on_call !== entry.onCall || originalEntry.shift_id !== entry.shiftId);
+          if (changed) {
+            const { error } = await updateStaffAssignment(
+              entry.assignmentId, entry.staffId, entry.role, entry.shiftId,
+              entry.fatigueOverrideReason, ta.theatre_activity_id, entry.onCall
+            );
+            if (error) throw error;
+          }
+        }
+      }
+
+      const { data, error: fetchError } = await getStaffAssignmentsForDate(departmentId, selectedDate);
+      if (fetchError) throw fetchError;
+      setStaffAssignments(data);
+
+      setDrafts(prev => {
+        const next = { ...prev };
+        delete next[ta.theatre_activity_id];
+        return next;
+      });
+
+      for (const role of filledRoles) {
+        await clearVolunteerRequestsForRole(ta.theatre_activity_id, role);
+      }
+      await refreshVolunteerRequests();
+      setError(null);
+    } catch (err) {
+      setError(`Failed to complete allocation: ${err.message}`);
+    }
+  };
+
+  const handleDiscardDraft = (theatreActivityId) => {
+    setDrafts(prev => {
+      const next = { ...prev };
+      delete next[theatreActivityId];
+      return next;
+    });
+    setNoConsultantConfirm(prev => (prev?.theatreActivityId === theatreActivityId ? null : prev));
   };
 
   const getConsultantAllocationCount = (staffId) => {
@@ -1610,8 +1687,10 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
               });
 
               const renderActivityCard = (ta, groupKey) => {
-                const consultantAssignment = getStaffForRole(ta.theatre_activity_id, ta.location_id, 'consultant');
-                const registrarAssignment = getStaffForRole(ta.theatre_activity_id, ta.location_id, 'registrar');
+                const entries = getDraftEntries(ta.theatre_activity_id, ta.location_id);
+                const hasDraft = !!drafts[ta.theatre_activity_id];
+                const consultantEntries = entries.filter(e => e.role === 'consultant');
+                const registrarEntries = entries.filter(e => e.role === 'registrar');
                 const consultantPending = pendingAssignment?.theatreActivityId === ta.theatre_activity_id && pendingAssignment.role === 'consultant';
                 const registrarPending = pendingAssignment?.theatreActivityId === ta.theatre_activity_id && pendingAssignment.role === 'registrar';
                 const consultantOverride = overridePrompt?.theatreActivityId === ta.theatre_activity_id && overridePrompt.role === 'consultant';
@@ -1787,34 +1866,51 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                     )}
                   </div>
 
-                  {/* Consultant */}
+                  {/* Consultant(s) */}
                   <div className="mb-4">
                     <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Consultant</label>
-                    {consultantAssignment ? (
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <StaffBadge name={consultantAssignment.staff.name} />
-                        <span className="text-xs text-gray-500">({getConsultantAllocationCount(consultantAssignment.staff_id)}/2)</span>
-                        {consultantAssignment.shifts && (
-                          <span className="text-xs text-gray-500">
-                            {consultantAssignment.shifts.name} ({consultantAssignment.shifts.start_time?.slice(0, 5)}–{consultantAssignment.shifts.end_time?.slice(0, 5)})
-                          </span>
-                        )}
-                        {fatigueStatus.fatigueRiskStaffIds.has(consultantAssignment.staff_id) && <FatigueRiskBadge />}
-                        {isActivityRestricted(consultantAssignment.staff_id, ta.activity_id) && <ActivityRestrictionBadge />}
-                        {consultantAssignment.fatigue_override_reason && (
-                          <span
-                            title={`Fatigue override: ${consultantAssignment.fatigue_override_reason}`}
-                            className="px-2 py-0.5 bg-orange-600 text-white text-xs font-semibold rounded"
-                          >
-                            ⚠ Override
-                          </span>
-                        )}
-                        <LeaveCodeControl assignment={consultantAssignment} />
-                        <button onClick={() => handleRemoveStaff(ta.theatre_activity_id, ta.location_id, 'consultant')} className="text-red-600 hover:text-red-700 text-xs font-semibold">
-                          Remove
-                        </button>
-                      </div>
-                    ) : consultantPending ? (
+                    {consultantEntries.length === 0 && (
+                      <p className="text-xs text-gray-400 italic mb-2">Nobody allocated yet.</p>
+                    )}
+                    <div className="space-y-2 mb-2">
+                      {consultantEntries.map(entry => {
+                        const shift = refData.shifts.find(s => s.shift_id === entry.shiftId);
+                        return (
+                          <div key={entry.localId} className="flex items-center gap-2 flex-wrap p-2 bg-gray-50 rounded-lg border border-gray-200">
+                            <StaffBadge name={entry.staffName} />
+                            <span className="text-xs text-gray-500">({getConsultantAllocationCount(entry.staffId)}/2)</span>
+                            {shift && (
+                              <span className="text-xs text-gray-500">
+                                {shift.name} ({shift.start_time?.slice(0, 5)}–{shift.end_time?.slice(0, 5)})
+                              </span>
+                            )}
+                            <label className="flex items-center gap-1 text-xs text-gray-600 cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                checked={entry.onCall}
+                                onChange={() => toggleOnCallInDraft(ta.theatre_activity_id, ta.location_id, entry.localId)}
+                              />
+                              On call
+                            </label>
+                            {fatigueStatus.fatigueRiskStaffIds.has(entry.staffId) && <FatigueRiskBadge />}
+                            {isActivityRestricted(entry.staffId, ta.activity_id) && <ActivityRestrictionBadge />}
+                            {entry.fatigueOverrideReason && (
+                              <span
+                                title={`Fatigue override: ${entry.fatigueOverrideReason}`}
+                                className="px-2 py-0.5 bg-orange-600 text-white text-xs font-semibold rounded"
+                              >
+                                ⚠ Override
+                              </span>
+                            )}
+                            {entry.assignmentId && <LeaveCodeControl assignment={{ assignment_id: entry.assignmentId, leave_code: entry.leaveCode }} />}
+                            <button onClick={() => removeEntryFromDraft(ta.theatre_activity_id, ta.location_id, entry.localId)} className="text-red-600 hover:text-red-700 text-xs font-semibold">
+                              Remove
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {consultantPending ? (
                       <ShiftTypePicker role="consultant" />
                     ) : consultantOverride ? (
                       <OverridePanel />
@@ -1825,10 +1921,10 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                         onClick={() => setOpenDropdown(openDropdown === `${ta.theatre_activity_id}-consultant` ? null : `${ta.theatre_activity_id}-consultant`)}
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-left bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
                       >
-                        Select Consultant
+                        + Add Consultant
                       </button>
                     )}
-                    {!consultantAssignment && !consultantPending && !consultantOverride && !consultantPatternAlert && openDropdown === `${ta.theatre_activity_id}-consultant` && (() => {
+                    {!consultantPending && !consultantOverride && !consultantPatternAlert && openDropdown === `${ta.theatre_activity_id}-consultant` && (() => {
                       const selectStaff = (s, blocked, overridable, blockType, label) => {
                         if (blocked && !overridable) return;
                         if (blocked && overridable) {
@@ -1860,7 +1956,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                               </button>
                             );
                           })}
-                          {getRankedStaffOptions(ta.activity_id, s => s.rank === 'consultant' && !volunteerIds.has(s.staff_id)).map(s => {
+                          {getRankedStaffOptions(ta.activity_id, s => s.rank === 'consultant' && !volunteerIds.has(s.staff_id) && !consultantEntries.some(ce => ce.staffId === s.staff_id)).map(s => {
                             const { blocked, overridable, blockType, label, fatigueRisk } = getAssignabilityInfo(s.staff_id);
                             const hardBlocked = blocked && !overridable;
                             const restricted = isActivityRestricted(s.staff_id, ta.activity_id);
@@ -1889,30 +1985,39 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                   {/* Registrar */}
                   <div>
                     <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Registrar</label>
-                    {registrarAssignment ? (
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <StaffBadge name={registrarAssignment.staff.name} />
-                        {registrarAssignment.shifts && (
-                          <span className="text-xs text-gray-500">
-                            {registrarAssignment.shifts.name} ({registrarAssignment.shifts.start_time?.slice(0, 5)}–{registrarAssignment.shifts.end_time?.slice(0, 5)})
-                          </span>
-                        )}
-                        {fatigueStatus.fatigueRiskStaffIds.has(registrarAssignment.staff_id) && <FatigueRiskBadge />}
-                        {isActivityRestricted(registrarAssignment.staff_id, ta.activity_id) && <ActivityRestrictionBadge />}
-                        {registrarAssignment.fatigue_override_reason && (
-                          <span
-                            title={`Fatigue override: ${registrarAssignment.fatigue_override_reason}`}
-                            className="px-2 py-0.5 bg-orange-600 text-white text-xs font-semibold rounded"
-                          >
-                            ⚠ Override
-                          </span>
-                        )}
-                        <LeaveCodeControl assignment={registrarAssignment} />
-                        <button onClick={() => handleRemoveStaff(ta.theatre_activity_id, ta.location_id, 'registrar')} className="text-red-600 hover:text-red-700 text-xs font-semibold">
-                          Remove
-                        </button>
-                      </div>
-                    ) : registrarPending ? (
+                    {registrarEntries.length === 0 && (
+                      <p className="text-xs text-gray-400 italic mb-2">Nobody allocated yet.</p>
+                    )}
+                    <div className="space-y-2 mb-2">
+                      {registrarEntries.map(entry => {
+                        const shift = refData.shifts.find(s => s.shift_id === entry.shiftId);
+                        return (
+                          <div key={entry.localId} className="flex items-center gap-2 flex-wrap p-2 bg-gray-50 rounded-lg border border-gray-200">
+                            <StaffBadge name={entry.staffName} />
+                            {shift && (
+                              <span className="text-xs text-gray-500">
+                                {shift.name} ({shift.start_time?.slice(0, 5)}–{shift.end_time?.slice(0, 5)})
+                              </span>
+                            )}
+                            {fatigueStatus.fatigueRiskStaffIds.has(entry.staffId) && <FatigueRiskBadge />}
+                            {isActivityRestricted(entry.staffId, ta.activity_id) && <ActivityRestrictionBadge />}
+                            {entry.fatigueOverrideReason && (
+                              <span
+                                title={`Fatigue override: ${entry.fatigueOverrideReason}`}
+                                className="px-2 py-0.5 bg-orange-600 text-white text-xs font-semibold rounded"
+                              >
+                                ⚠ Override
+                              </span>
+                            )}
+                            {entry.assignmentId && <LeaveCodeControl assignment={{ assignment_id: entry.assignmentId, leave_code: entry.leaveCode }} />}
+                            <button onClick={() => removeEntryFromDraft(ta.theatre_activity_id, ta.location_id, entry.localId)} className="text-red-600 hover:text-red-700 text-xs font-semibold">
+                              Remove
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {registrarPending ? (
                       <ShiftTypePicker role="registrar" />
                     ) : registrarOverride ? (
                       <OverridePanel />
@@ -1923,10 +2028,10 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                         onClick={() => setOpenDropdown(openDropdown === `${ta.theatre_activity_id}-registrar` ? null : `${ta.theatre_activity_id}-registrar`)}
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-left bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
                       >
-                        Select Registrar
+                        + Add Registrar
                       </button>
                     )}
-                    {!registrarAssignment && !registrarPending && !registrarOverride && !registrarPatternAlert && openDropdown === `${ta.theatre_activity_id}-registrar` && (() => {
+                    {!registrarPending && !registrarOverride && !registrarPatternAlert && openDropdown === `${ta.theatre_activity_id}-registrar` && (() => {
                       const selectStaff = (s, blocked, overridable, blockType, label) => {
                         if (blocked && !overridable) return;
                         if (blocked && overridable) {
@@ -1958,7 +2063,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                               </button>
                             );
                           })}
-                          {getRankedStaffOptions(ta.activity_id, s => s.rank.includes('trainee') && !volunteerIds.has(s.staff_id)).map(s => {
+                          {getRankedStaffOptions(ta.activity_id, s => s.rank.includes('trainee') && !volunteerIds.has(s.staff_id) && !registrarEntries.some(re => re.staffId === s.staff_id)).map(s => {
                             const { blocked, overridable, blockType, label, fatigueRisk } = getAssignabilityInfo(s.staff_id);
                             const hardBlocked = blocked && !overridable;
                             const restricted = isActivityRestricted(s.staff_id, ta.activity_id);
@@ -1983,6 +2088,51 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                       );
                     })()}
                   </div>
+
+                  {/* Complete Allocation — commits this card's staged
+                      add/remove/on-call edits (see getDraftEntries /
+                      handleCompleteAllocation). Nothing above this point has
+                      touched the DB yet. */}
+                  <div className="mt-4 pt-4 border-t border-gray-200 flex items-center gap-3 flex-wrap">
+                    <button
+                      onClick={() => handleCompleteAllocation(ta)}
+                      className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-semibold rounded-lg transition"
+                    >
+                      Complete Allocation
+                    </button>
+                    {hasDraft ? (
+                      <button
+                        onClick={() => handleDiscardDraft(ta.theatre_activity_id)}
+                        className="text-xs text-gray-500 hover:text-gray-700"
+                      >
+                        Discard unsaved changes
+                      </button>
+                    ) : (
+                      <span className="text-xs text-gray-400">No unsaved changes</span>
+                    )}
+                  </div>
+
+                  {noConsultantConfirm?.theatreActivityId === ta.theatre_activity_id && (
+                    <div className="mt-2 p-3 bg-orange-50 border border-orange-300 rounded-lg">
+                      <p className="text-xs font-semibold text-orange-800 mb-2">
+                        ⚠ No supervising consultant allocated (present or on call). Save anyway?
+                      </p>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => setNoConsultantConfirm(null)}
+                          className="flex-1 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold rounded-lg transition"
+                        >
+                          Go Back
+                        </button>
+                        <button
+                          onClick={() => handleCompleteAllocation(ta, true)}
+                          className="flex-1 px-3 py-1.5 bg-orange-600 hover:bg-orange-700 text-white text-xs font-semibold rounded-lg transition"
+                        >
+                          Save Anyway
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
                 );
               };
