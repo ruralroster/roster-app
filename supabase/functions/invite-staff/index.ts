@@ -45,8 +45,8 @@ Deno.serve(async (req) => {
   if (!departmentId || !name || !email || !rank || !role) {
     return json({ error: 'departmentId, name, email, rank, and role are all required' }, 400);
   }
-  if (role !== 'staff' && role !== 'officer') {
-    return json({ error: "role must be 'staff' or 'officer'" }, 400);
+  if (role !== 'staff' && role !== 'officer' && role !== 'intern') {
+    return json({ error: "role must be 'staff', 'officer', or 'intern'" }, 400);
   }
 
   // User-scoped client: identifies the caller from their own JWT, and lets

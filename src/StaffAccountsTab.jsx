@@ -6,6 +6,7 @@ import { RANK_OPTIONS } from './StaffAvailabilityTab';
 const ROLE_OPTIONS = [
   { value: 'staff', label: 'Staff' },
   { value: 'officer', label: 'Officer' },
+  { value: 'intern', label: 'Intern' },
 ];
 
 // Officer-facing tool for creating logins. Deliberately separate from
