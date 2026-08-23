@@ -104,9 +104,17 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   const [fortnightModalDate, setFortnightModalDate] = useState(null); // Date | null — which day cell's picker is open
   // Fortnight assignment wizard step within that modal — see
   // handleOpenFortnightModal/handleFortnightPickShift/PickLocation/PickActivity.
-  const [fortnightWizardStep, setFortnightWizardStep] = useState('shift'); // 'shift' | 'location' | 'activity'
+  const [fortnightWizardStep, setFortnightWizardStep] = useState('shift'); // 'shift' | 'oncall' | 'location' | 'activity'
   const [fortnightWizardShiftId, setFortnightWizardShiftId] = useState(null);
   const [fortnightWizardLocationId, setFortnightWizardLocationId] = useState(null);
+  // Junior (non-consultant/fellow) staff need a supervising consultant —
+  // either physically on the shift already (see consultantCoveredCards) or,
+  // failing that, on call. This tracks that the officer has confirmed
+  // on-call cover exists, which unlocks the normal free location/activity
+  // pick for the rest of this wizard run — see handleFortnightPickShift and
+  // handleFortnightConfirmOnCall.
+  const [fortnightWizardOnCallConfirmed, setFortnightWizardOnCallConfirmed] = useState(false);
+  const [fortnightWizardOnCallStaffName, setFortnightWizardOnCallStaffName] = useState(null);
   const [selectedDate, setSelectedDate] = useState(null);
   const [selectedStaff, setSelectedStaff] = useState(null);
   const [openDropdown, setOpenDropdown] = useState(null);
@@ -641,6 +649,8 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     setFortnightWizardStep('shift');
     setFortnightWizardShiftId(null);
     setFortnightWizardLocationId(null);
+    setFortnightWizardOnCallConfirmed(false);
+    setFortnightWizardOnCallStaffName(null);
   };
 
   const handleCloseFortnightModal = () => {
@@ -648,10 +658,46 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     setFortnightWizardStep('shift');
     setFortnightWizardShiftId(null);
     setFortnightWizardLocationId(null);
+    setFortnightWizardOnCallConfirmed(false);
+    setFortnightWizardOnCallStaffName(null);
   };
 
+  // For a junior (non-consultant/fellow) staff member, a shift pick doesn't
+  // go straight to "choose a location" — it first checks whether there's
+  // already a supervising consultant to attach to: physically on a card
+  // for this exact shift (routes to the consultant-covered-cards list, see
+  // the wizard's 'location' step), or failing that, on call that day
+  // (routes to a confirmation step, see handleFortnightConfirmOnCall). Only
+  // if neither exists does it land on 'location' and show the "no
+  // consultant" message.
   const handleFortnightPickShift = (shiftId) => {
     setFortnightWizardShiftId(shiftId);
+    setFortnightWizardOnCallConfirmed(false);
+    setFortnightWizardOnCallStaffName(null);
+
+    const staff = refData.staff.find(s => s.staff_id === fortnightSelectedStaffId);
+    const isJunior = !!staff && staff.rank !== 'consultant' && staff.rank !== 'fellow';
+    if (isJunior) {
+      const dateStr = fortnightModalDate ? toLocalDateStr(fortnightModalDate) : null;
+      const hasConsultantCard = fortnightAllocations.some(a => a.date === dateStr && a.shift_id === shiftId && a.role === 'consultant');
+      if (!hasConsultantCard) {
+        const hasOnCall = fortnightDutyAssignments.some(d => d.date === dateStr && d.staff_id);
+        if (hasOnCall) {
+          setFortnightWizardStep('oncall');
+          return;
+        }
+      }
+    }
+    setFortnightWizardStep('location');
+  };
+
+  // The officer picks which on-call person is covering this junior's
+  // shift — purely a confirmation gate (nothing is written for it), which
+  // unlocks the normal free location/activity pick below, same as a
+  // consultant/fellow staff member gets.
+  const handleFortnightConfirmOnCall = (staffName) => {
+    setFortnightWizardOnCallConfirmed(true);
+    setFortnightWizardOnCallStaffName(staffName || null);
     setFortnightWizardStep('location');
   };
 
@@ -2102,7 +2148,26 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                       </>
                     )}
 
-                    {fortnightWizardStep === 'location' && isJuniorSelectedStaff && (
+                    {fortnightWizardStep === 'oncall' && (
+                      <>
+                        <p className="text-xs font-semibold text-gray-600 uppercase mb-2">2. Confirm on-call supervision</p>
+                        <p className="text-xs text-gray-500 mb-2">No consultant is physically on this shift yet. Confirm who's on call, then choose where to place {selectedStaff.name}.</p>
+                        <div className="space-y-2">
+                          {modalDateDutyAssignments.filter(d => d.staff_id).map(d => (
+                            <button
+                              key={`${d.date}-${d.duty_type}`}
+                              onClick={() => handleFortnightConfirmOnCall(d.staff?.name)}
+                              className="w-full text-left px-3 py-2 rounded-lg text-sm border bg-white border-gray-300 hover:bg-blue-50 hover:border-blue-400 transition"
+                            >
+                              <span className="block font-medium">{d.staff?.name}</span>
+                              <span className="block text-xs text-gray-500">{dutyTypeByKey.get(d.duty_type)?.label || d.duty_type}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    )}
+
+                    {fortnightWizardStep === 'location' && isJuniorSelectedStaff && !fortnightWizardOnCallConfirmed && (
                       <>
                         <p className="text-xs font-semibold text-gray-600 uppercase mb-2">2. Choose an activity with a consultant</p>
                         {consultantCoveredCards.length === 0 ? (
@@ -2124,9 +2189,12 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                       </>
                     )}
 
-                    {fortnightWizardStep === 'location' && !isJuniorSelectedStaff && (
+                    {fortnightWizardStep === 'location' && (!isJuniorSelectedStaff || fortnightWizardOnCallConfirmed) && (
                       <>
                         <p className="text-xs font-semibold text-gray-600 uppercase mb-2">2. Choose a location</p>
+                        {fortnightWizardOnCallConfirmed && (
+                          <p className="text-xs text-gray-500 mb-2">On call: {fortnightWizardOnCallStaffName}</p>
+                        )}
                         {activeLocations.length === 0 ? (
                           <p className="text-sm text-gray-500">No locations configured — add some in Settings.</p>
                         ) : (
