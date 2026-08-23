@@ -338,13 +338,12 @@ function sessionForDutyTimes(startTime, endTime) {
   return 'full';
 }
 
-// Every duty type gets its own activity_types row with a matching name, so
-// its on-call card (see syncDutyOnCallActivity) can be titled "Anaesthetics
-// On-Call" etc. via the same Activity picker every other card uses, rather
-// than every duty type sharing the "On Call" location's own name. It also
-// gets its own shift, only once start/end times are set — see
-// sessionForDutyTimes' comment and syncDutyOnCallActivity for why a
-// generic "any active shift" isn't good enough here.
+// Every duty type gets its own activity_types row with a matching name, and
+// (once start/end times are set) its own shift — vestigial now that duty
+// types no longer project themselves onto Day-view cards (that projection
+// was reverted; see the Duty Assignments panel's own on-call summary in
+// officer-roster-view-supabase.jsx instead), but harmless to keep and
+// still shown in Settings in case that's wanted again later.
 export async function createDutyType(departmentId, label, countsAsOnCall, sortOrder, startTime = null, endTime = null) {
   try {
     const key = slugifyDutyTypeKey(label);
@@ -468,112 +467,6 @@ export async function reactivateDutyType(dutyTypeId) {
 
     return { error };
   } catch (err) {
-    return { error: err };
-  }
-}
-
-// Mirrors a Duty Assignments panel change onto a real theatre_activities
-// card at the shared "On Call" location, so the person shows up under
-// whichever Morning/Afternoon/Night section(s) the duty type's own
-// start_time/end_time span — same rendering, same multi-section cascade
-// (see cascadeAssignmentAcrossSections in officer-roster-view-supabase.jsx)
-// as any other card. One-directional: the top panel is the source of
-// truth, this just projects it onto a card; editing the card itself
-// (adding/removing people directly on it) does not write back to
-// duty_assignments.
-//
-// No-ops if the duty type hasn't been given start/end times yet in
-// Settings — it stays a top-panel-only entry until it has (createDutyType/
-// updateDutyType only ever set shift_id once times are set, so shift_id
-// being present is equivalent to times being present).
-export async function syncDutyOnCallActivity(departmentId, date, dutyType, staffId) {
-  if (!dutyType.start_time || !dutyType.end_time || !dutyType.activity_type_id || !dutyType.shift_id) {
-    return { error: null };
-  }
-
-  try {
-    const dateStr = toLocalDateStr(date);
-
-    const { data: onCallLocation, error: locError } = await supabase
-      .from('locations')
-      .select('location_id')
-      .eq('department_id', departmentId)
-      .eq('name', 'On Call')
-      .maybeSingle();
-    if (locError) throw locError;
-
-    let onCallLocationId = onCallLocation?.location_id;
-    if (!onCallLocationId) {
-      const { data: newLoc, error: createLocError } = await supabase
-        .from('locations')
-        .insert([{ department_id: departmentId, name: 'On Call' }])
-        .select('location_id')
-        .single();
-      if (createLocError) throw createLocError;
-      onCallLocationId = newLoc.location_id;
-    }
-
-    const { data: existing, error: findError } = await supabase
-      .from('theatre_activities')
-      .select('theatre_activity_id')
-      .eq('department_id', departmentId)
-      .eq('date', dateStr)
-      .eq('location_id', onCallLocationId)
-      .eq('activity_id', dutyType.activity_type_id)
-      .maybeSingle();
-    if (findError) throw findError;
-
-    if (!staffId) {
-      if (existing) {
-        const { error } = await deleteTheatreActivity(existing.theatre_activity_id);
-        if (error) throw error;
-      }
-      return { error: null };
-    }
-
-    const { data: staffRow, error: staffError } = await supabase.from('staff').select('rank').eq('staff_id', staffId).single();
-    if (staffError) throw staffError;
-
-    const role = (staffRow.rank === 'consultant' || staffRow.rank === 'fellow') ? 'consultant' : 'registrar';
-
-    let theatreActivityId = existing?.theatre_activity_id;
-    if (!theatreActivityId) {
-      const { data: newTa, error: createError } = await supabase
-        .from('theatre_activities')
-        .insert([{
-          department_id: departmentId,
-          date: dateStr,
-          location_id: onCallLocationId,
-          shift_id: dutyType.shift_id,
-          activity_id: dutyType.activity_type_id,
-          start_time: dutyType.start_time,
-          end_time: dutyType.end_time,
-        }])
-        .select('theatre_activity_id')
-        .single();
-      if (createError) throw createError;
-      theatreActivityId = newTa.theatre_activity_id;
-    } else {
-      // Times/shift may have changed in Settings since this card was first created.
-      const { error } = await supabase
-        .from('theatre_activities')
-        .update({ start_time: dutyType.start_time, end_time: dutyType.end_time, shift_id: dutyType.shift_id })
-        .eq('theatre_activity_id', theatreActivityId);
-      if (error) throw error;
-    }
-
-    // This card mirrors exactly one duty-type slot — replace whoever's there.
-    const { error: clearError } = await supabase.from('staff_assignments').delete().eq('theatre_activity_id', theatreActivityId);
-    if (clearError) throw clearError;
-
-    const { error: assignError } = await createStaffAssignment(
-      departmentId, dateStr, onCallLocationId, staffId, dutyType.shift_id, role, null, theatreActivityId, true
-    );
-    if (assignError) throw assignError;
-
-    return { error: null };
-  } catch (err) {
-    console.error('syncDutyOnCallActivity error:', err);
     return { error: err };
   }
 }

@@ -30,7 +30,6 @@ import { createTheatreActivity,
   updateDutyType,
   deactivateDutyType,
   reactivateDutyType,
-  syncDutyOnCallActivity,
   createLocation,
   updateLocation,
   updateLocationAllowedActivities,
@@ -615,22 +614,6 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
         ...prev,
         [dutyTypeKey]: staffId,
       }));
-
-      // Project this onto a card in the right section(s), if the duty type
-      // has start/end times configured (see syncDutyOnCallActivity).
-      const dutyType = refData.dutyTypes.find(d => d.key === dutyTypeKey);
-      if (dutyType) {
-        const { error: syncError } = await syncDutyOnCallActivity(departmentId, selectedDate, dutyType, staffId || null);
-        if (syncError) throw syncError;
-
-        const { data: theatreData, error: theatreError } = await getTheatreActivitiesForDate(departmentId, selectedDate);
-        if (theatreError) throw theatreError;
-        setTheatreActivities(theatreData);
-
-        const { data: assignData, error: assignError } = await getStaffAssignmentsForDate(departmentId, selectedDate);
-        if (assignError) throw assignError;
-        setStaffAssignments(assignData);
-      }
 
       setError(null);
     } catch (err) {
@@ -1383,11 +1366,9 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   // where they're already an entry.
   //
   // Deliberately scoped to the same activity_id, not just the same
-  // location: the shared "On Call" location (see syncDutyOnCallActivity)
-  // can host several genuinely distinct, simultaneous duty types — e.g.
-  // ED On-Call and Anaesthetics On-Call both overnight — and matching on
-  // location alone wrongly copied someone assigned to one duty type's card
-  // onto every other duty type's card there too.
+  // location: a location hosting several genuinely distinct, simultaneous
+  // activities at once would otherwise wrongly copy someone assigned to
+  // one onto every other activity's card there too.
   //
   // Each card's own Complete Allocation still has to be run to commit and
   // to re-check consultant cover, same as any other draft change.
@@ -2196,6 +2177,38 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                 represent them covering a combination). */}
             <div className="bg-white rounded-lg shadow-sm p-6 mb-6 border-l-4 border-orange-500">
               <h2 className="text-lg font-bold text-gray-900 mb-4">Duty Assignments</h2>
+
+              {/* One line per person actually on duty today, with every
+                  duty type they cover after their name (e.g. someone
+                  covering both ED and Anaesthetics on call reads as one
+                  line, not two) — a quick-glance summary of the dropdowns
+                  below, distinctly coloured from the rest of this panel. */}
+              {(() => {
+                const dutyByStaff = new Map();
+                refData.dutyTypes.filter(d => d.active !== false).forEach(dutyType => {
+                  const staffId = dutyAssignments[dutyType.key];
+                  if (!staffId) return;
+                  if (!dutyByStaff.has(staffId)) {
+                    const staffMember = refData.staff.find(s => s.staff_id === staffId);
+                    dutyByStaff.set(staffId, { staffId, name: staffMember?.name || '?', labels: [] });
+                  }
+                  dutyByStaff.get(staffId).labels.push(dutyType.label);
+                });
+
+                if (dutyByStaff.size === 0) return null;
+
+                return (
+                  <div className="mb-4 p-3 bg-indigo-50 border border-indigo-200 rounded-lg space-y-1">
+                    {Array.from(dutyByStaff.values()).map(person => (
+                      <p key={person.staffId} className="text-sm">
+                        <span className="font-semibold text-gray-900">{person.name}</span>
+                        <span className="text-indigo-700"> ({person.labels.join(', ')})</span>
+                      </p>
+                    ))}
+                  </div>
+                );
+              })()}
+
               {refData.dutyTypes.filter(d => d.active !== false).length === 0 ? (
                 <p className="text-sm text-gray-500">No duty types configured — add one in Settings → Duty Types.</p>
               ) : (
