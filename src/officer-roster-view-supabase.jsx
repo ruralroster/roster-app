@@ -3506,6 +3506,13 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                 </button>
               </div>
 
+              {error && (
+                <div className="mb-4 p-3 bg-red-50 border border-red-300 rounded-lg flex gap-2 items-start">
+                  <AlertCircle size={18} className="text-red-600 flex-shrink-0 mt-0.5" />
+                  <p className="text-sm text-red-700">{error}</p>
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <p className="text-xs font-semibold text-gray-600 uppercase mb-2">All Activities</p>
