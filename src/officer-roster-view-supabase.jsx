@@ -660,12 +660,16 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     setFortnightWizardStep('activity');
   };
 
-  const handleFortnightPickActivity = async (activityId) => {
-    if (!departmentId || !fortnightModalDate || !fortnightSelectedStaffId || !fortnightWizardShiftId || !fortnightWizardLocationId) return;
+  // locationIdOverride lets a junior-staff pick land straight on a specific
+  // existing card without going through the normal location step — see the
+  // "activity with a consultant" branch of the wizard's location step.
+  const handleFortnightPickActivity = async (activityId, locationIdOverride) => {
+    const locationId = locationIdOverride ?? fortnightWizardLocationId;
+    if (!departmentId || !fortnightModalDate || !fortnightSelectedStaffId || !fortnightWizardShiftId || !locationId) return;
 
     try {
       const { error } = await assignStaffFortnight(
-        departmentId, fortnightModalDate, fortnightSelectedStaffId, fortnightWizardShiftId, fortnightWizardLocationId, activityId
+        departmentId, fortnightModalDate, fortnightSelectedStaffId, fortnightWizardShiftId, locationId, activityId
       );
       if (error) throw error;
 
@@ -1852,6 +1856,40 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
       const wizardShift = refData.shifts.find(s => s.shift_id === fortnightWizardShiftId);
       const wizardLocation = refData.locations.find(l => l.location_id === fortnightWizardLocationId);
 
+      // A junior doctor (not consultant/fellow) needs a supervising
+      // consultant already on the card — the same requirement the Day
+      // view's registrar dropdown enforces per-activity. Rather than
+      // freely picking any location/activity (which would create a brand
+      // new, unsupervised card), the wizard's location step instead lists
+      // existing cards for the chosen shift that already have a
+      // consultant, and picking one joins that exact card as a registrar
+      // — see handleFortnightPickActivity's locationIdOverride.
+      const isJuniorSelectedStaff = !!selectedStaff && selectedStaff.rank !== 'consultant' && selectedStaff.rank !== 'fellow';
+      const consultantCoveredCards = fortnightWizardShiftId
+        ? (() => {
+            const byCard = new Map();
+            modalDateAllocations
+              .filter(a => a.shift_id === fortnightWizardShiftId && a.role === 'consultant' && a.theatre_activity_id)
+              .forEach(a => {
+                if (!byCard.has(a.theatre_activity_id)) {
+                  const activityId = a.theatre_activities?.activity_id;
+                  const activity = refData.activities.find(act => act.activity_id === activityId);
+                  const location = refData.locations.find(l => l.location_id === a.location_id);
+                  byCard.set(a.theatre_activity_id, {
+                    theatreActivityId: a.theatre_activity_id,
+                    locationId: a.location_id,
+                    locationName: location?.name || 'Unknown location',
+                    activityId,
+                    activityName: activity ? (activity.abbreviation ? `${activity.name} (${activity.abbreviation})` : activity.name) : 'Unknown activity',
+                    consultantNames: [],
+                  });
+                }
+                byCard.get(a.theatre_activity_id).consultantNames.push(a.staff?.name);
+              });
+            return Array.from(byCard.values());
+          })()
+        : [];
+
       return (
         <div className="p-4 pb-24">
           <div className="max-w-3xl mx-auto">
@@ -2064,7 +2102,29 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                       </>
                     )}
 
-                    {fortnightWizardStep === 'location' && (
+                    {fortnightWizardStep === 'location' && isJuniorSelectedStaff && (
+                      <>
+                        <p className="text-xs font-semibold text-gray-600 uppercase mb-2">2. Choose an activity with a consultant</p>
+                        {consultantCoveredCards.length === 0 ? (
+                          <p className="text-sm text-gray-500">No consultant is assigned to this shift yet — assign a consultant first, then add {selectedStaff.name} to the same activity.</p>
+                        ) : (
+                          <div className="space-y-2">
+                            {consultantCoveredCards.map(card => (
+                              <button
+                                key={card.theatreActivityId}
+                                onClick={() => handleFortnightPickActivity(card.activityId, card.locationId)}
+                                className="w-full text-left px-3 py-2 rounded-lg text-sm border bg-white border-gray-300 hover:bg-blue-50 hover:border-blue-400 transition"
+                              >
+                                <span className="block font-medium">{card.locationName} — {card.activityName}</span>
+                                <span className="block text-xs text-gray-500">with {card.consultantNames.filter(Boolean).join(', ')}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    )}
+
+                    {fortnightWizardStep === 'location' && !isJuniorSelectedStaff && (
                       <>
                         <p className="text-xs font-semibold text-gray-600 uppercase mb-2">2. Choose a location</p>
                         {activeLocations.length === 0 ? (
