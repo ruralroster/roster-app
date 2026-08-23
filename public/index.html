@@ -2,12 +2,26 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#000000" />
+    <meta name="theme-color" content="#2563eb" />
     <meta
       name="description"
       content="Cairns Hospital Anaesthetics Roster"
     />
+    <link rel="apple-touch-icon" href="%PUBLIC_URL%/logo192.png" />
+    <!-- manifest.json and service-worker.js (registered in src/index.js)
+         already existed, but nothing in this file ever linked the
+         manifest, so no browser ever discovered it — the app worked
+         offline via the service worker, but never showed an install/"Add
+         to Home Screen" prompt or used its own icon. This is the actual
+         fix for that; iOS Safari additionally needs the two
+         apple-mobile-web-app-* tags below since it doesn't treat the
+         manifest alone as enough to enable standalone/home-screen mode. -->
+    <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Roster" />
     <title>Roster App</title>
     <script src="https://cdn.tailwindcss.com"></script>
   </head>
