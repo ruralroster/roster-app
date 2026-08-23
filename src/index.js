@@ -5,6 +5,11 @@ import App from './App';
 import UpdateBanner from './UpdateBanner';
 import reportWebVitals from './reportWebVitals';
 import * as serviceWorkerRegistration from './serviceWorkerRegistration';
+// Imported purely for its side effect: registers the beforeinstallprompt
+// listener as early as possible, so InstallAppButton (rendered on the
+// Login screen) can trigger the browser's real install dialog on demand
+// even if the event fired before that component ever mounted.
+import './installPrompt';
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(

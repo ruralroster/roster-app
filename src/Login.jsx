@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Loader, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { signIn, supabase } from './supabaseClient';
+import InstallAppButton from './InstallAppButton';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -116,6 +117,8 @@ export default function Login() {
           >
             Forgot password?
           </button>
+
+          <InstallAppButton />
 
           <p className="text-xs text-gray-500 text-center mt-6">
             Don't have an account? Ask your department officer to invite you.
