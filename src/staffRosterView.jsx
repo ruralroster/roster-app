@@ -585,7 +585,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
               <>
                 {/* On-Call */}
                 <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
-                  <h2 className="text-xs font-semibold text-gray-600 uppercase mb-3" style={{ fontFamily: "'Bradley Hand', cursive" }}>On-Call</h2>
+                  <h2 className="text-2xl font-bold mb-3" style={{ fontFamily: "'Comic Sans MS', 'Comic Sans', cursive", color: '#ec4899' }}>On-Call</h2>
                   {todayOnCall.length === 0 ? (
                     <p className="text-sm text-gray-500">No on-call roster set for this date.</p>
                   ) : (
@@ -618,7 +618,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
                     that same session (looked up from groupedAssignments,
                     the same department-wide data the sections below use). */}
                 <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
-                  <h2 className="text-xs font-semibold text-gray-600 uppercase mb-3" style={{ fontFamily: "'Bradley Hand', cursive" }}>My allocations for today</h2>
+                  <h2 className="text-2xl font-bold mb-3" style={{ fontFamily: "'Comic Sans MS', 'Comic Sans', cursive", color: '#ec4899' }}>My allocations for today</h2>
                   {todayAssignments.length === 0 ? (
                     <p className="text-sm text-gray-500">No assignments for this date.</p>
                   ) : (
@@ -780,24 +780,39 @@ export default function StaffRosterView({ departmentId, staffId }) {
               </div>
             ) : (
               <div className="space-y-4">
-                {weekAssignments.map((assignment) => (
-                  <div key={assignment.assignment_id} className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-green-500">
-                    <div className="flex items-start justify-between mb-3">
-                      <div>
-                        <p className="text-xs font-semibold text-gray-600 uppercase">Date</p>
-                        <p className="text-sm font-medium text-gray-900">{new Date(assignment.date).toLocaleDateString('en-AU', { weekday: 'short', month: 'short', day: 'numeric' })}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs font-semibold text-gray-600 uppercase">Role</p>
-                        <p className="text-sm font-medium text-gray-900">{assignment.role}</p>
+                {/* One card per date (Date/Day shown once), not one per
+                    assignment row — someone in a Morning and an Afternoon
+                    activity the same day reads as one card with both
+                    listed underneath, an expanded version of the same
+                    one-line-per-day idea as the officer Fortnight view. */}
+                {(() => {
+                  const byDate = new Map();
+                  weekAssignments.forEach((assignment) => {
+                    if (!byDate.has(assignment.date)) byDate.set(assignment.date, []);
+                    byDate.get(assignment.date).push(assignment);
+                  });
+
+                  return Array.from(byDate.entries()).map(([date, assignments]) => (
+                    <div key={date} className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-green-500">
+                      <p className="text-xs font-semibold text-gray-600 uppercase mb-3">
+                        {new Date(date).toLocaleDateString('en-AU', { weekday: 'long', month: 'short', day: 'numeric' })}
+                      </p>
+                      <div className="space-y-3">
+                        {assignments.map((assignment, i) => (
+                          <div key={assignment.assignment_id} className={i > 0 ? 'pt-3 border-t border-gray-100' : ''}>
+                            <div className="flex items-start justify-between gap-2">
+                              <h3 className="text-base font-bold text-gray-900">{assignment.locations?.name}</h3>
+                              <p className="text-xs font-medium text-gray-600 capitalize flex-shrink-0">{assignment.role}</p>
+                            </div>
+                            <p className="text-sm text-gray-600">
+                              {assignment.shifts?.name} ({assignment.shifts?.start_time?.slice(0, 5)} - {assignment.shifts?.end_time?.slice(0, 5)})
+                            </p>
+                          </div>
+                        ))}
                       </div>
                     </div>
-                    <h3 className="text-lg font-bold text-gray-900 mb-2">{assignment.locations?.name}</h3>
-                    <p className="text-sm text-gray-600">
-                      {assignment.shifts?.name} ({assignment.shifts?.start_time} - {assignment.shifts?.end_time})
-                    </p>
-                  </div>
-                ))}
+                  ));
+                })()}
               </div>
             )}
           </div>
@@ -851,10 +866,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
               <div className="space-y-6">
                 {dutyTypes.map((dutyType) =>
                   groupedByDuty[dutyType.key] ? (
-                    <div key={dutyType.duty_type_id} className="bg-white rounded-lg shadow-sm p-6">
-                      <h2 className="text-lg font-bold text-gray-900 mb-4">
-                        {dutyType.label}
-                      </h2>
+                    <CollapsibleSection key={dutyType.duty_type_id} title={dutyType.label}>
                       <div className="space-y-3">
                         {groupedByDuty[dutyType.key].map((assignment) => (
                           <div
@@ -884,7 +896,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
                           </div>
                         ))}
                       </div>
-                    </div>
+                    </CollapsibleSection>
                   ) : null
                 )}
               </div>
