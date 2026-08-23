@@ -614,9 +614,13 @@ export default function StaffRosterView({ departmentId, staffId }) {
                 {/* My allocations for today — a flat, ungrouped summary of
                     every assignment this staff member has on this date,
                     shown above the Morning/Afternoon/Night breakdown for a
-                    quick glance. Click one to see who else is rostered on
-                    that same session (looked up from groupedAssignments,
-                    the same department-wide data the sections below use). */}
+                    quick glance. The shift itself isn't shown — its
+                    Morning/Afternoon/Night session(s) on the right already
+                    say when it is. Click one to see who else is rostered
+                    at that SAME location for that session (looked up from
+                    groupedAssignments, the same department-wide data the
+                    sections below use, narrowed to this assignment's own
+                    location_id). */}
                 <div className="bg-white rounded-lg shadow-xl p-6 mb-6">
                   <h2 className="font-bold mb-3" style={{ fontFamily: "'Comic Sans MS', 'Comic Sans', cursive", color: '#f97316', fontSize: '1.75rem' }}>My allocations for today</h2>
                   {todayAssignments.length === 0 ? (
@@ -625,12 +629,13 @@ export default function StaffRosterView({ departmentId, staffId }) {
                     <div className="space-y-3">
                       {todayAssignments.map(assignment => {
                         const isExpanded = expandedAllocationId === assignment.assignment_id;
+                        const sessions = getSessionGroups(assignment.shifts);
                         const colleagues = isExpanded
                           ? Array.from(
                               new Map(
-                                getSessionGroups(assignment.shifts)
+                                sessions
                                   .flatMap(g => groupedAssignments[g])
-                                  .filter(a => a.staff_id !== staffId)
+                                  .filter(a => a.staff_id !== staffId && a.location_id === assignment.location_id)
                                   .map(a => [a.staff_id, a])
                               ).values()
                             )
@@ -644,20 +649,24 @@ export default function StaffRosterView({ departmentId, staffId }) {
                             >
                               <div>
                                 <p className="text-sm font-bold text-gray-900">{assignment.locations?.name}</p>
-                                <p className="text-xs text-gray-600">
-                                  {assignment.shifts?.name} ({assignment.shifts?.start_time?.slice(0, 5)} - {assignment.shifts?.end_time?.slice(0, 5)})
-                                </p>
+                                <p className="text-xs text-gray-600 capitalize">{assignment.role}</p>
                               </div>
                               <div className="flex items-center gap-2 flex-shrink-0">
-                                <p className="text-xs font-medium text-gray-700 capitalize">{assignment.role}</p>
+                                <div className="flex gap-1">
+                                  {sessions.map(g => (
+                                    <span key={g} className="px-2 py-0.5 bg-orange-100 text-orange-800 text-xs font-semibold rounded-full">
+                                      {SESSION_GROUP_LABELS[g].replace(' Allocations', '')}
+                                    </span>
+                                  ))}
+                                </div>
                                 {isExpanded ? <ChevronDown size={16} className="text-gray-400" /> : <ChevronRight size={16} className="text-gray-400" />}
                               </div>
                             </button>
                             {isExpanded && (
                               <div className="px-3 pb-3 pt-2 border-t border-gray-100 bg-gray-50">
-                                <p className="text-xs font-semibold text-gray-600 uppercase mb-2">Also on this session</p>
+                                <p className="text-xs font-semibold text-gray-600 uppercase mb-2">Also at this location this session</p>
                                 {colleagues.length === 0 ? (
-                                  <p className="text-xs text-gray-500">Nobody else rostered this session.</p>
+                                  <p className="text-xs text-gray-500">Nobody else rostered here this session.</p>
                                 ) : (
                                   <div className="space-y-1">
                                     {colleagues.map(c => (
@@ -665,7 +674,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
                                         <button onClick={() => handleViewStaffDetail(c.staff_id)} className="text-sm font-medium text-gray-800 hover:underline hover:text-blue-700">
                                           {c.staff?.name}
                                         </button>
-                                        <span className="text-xs text-gray-500">{c.locations?.name}</span>
+                                        <span className="text-xs text-gray-500 capitalize">{c.role}</span>
                                       </div>
                                     ))}
                                   </div>
