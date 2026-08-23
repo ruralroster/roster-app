@@ -4,6 +4,7 @@ import {
   getStaffAvailability,
   toggleStaffAvailability,
   updateStaffFTE,
+  updateStaffRank,
   bulkSetStaffAvailability,
   clearStaffUnavailabilityRange,
   createStaff,
@@ -75,6 +76,8 @@ export default function StaffAvailabilityTab({ departmentId, staffList = [], lea
   const [savingDate, setSavingDate] = useState(null);
   const [fteOverrides, setFteOverrides] = useState({});
   const [savingFte, setSavingFte] = useState(false);
+  const [rankOverrides, setRankOverrides] = useState({});
+  const [savingRank, setSavingRank] = useState(false);
   const [nameOverrides, setNameOverrides] = useState({});
   const [savingName, setSavingName] = useState(false);
   const [payrollNumberOverrides, setPayrollNumberOverrides] = useState({});
@@ -243,6 +246,24 @@ export default function StaffAvailabilityTab({ departmentId, staffList = [], lea
       setError(`Failed to update FTE: ${err.message}`);
     } finally {
       setSavingFte(false);
+    }
+  };
+
+  const handleRankChange = async (newRank) => {
+    if (!selectedStaffId) return;
+
+    setSavingRank(true);
+    try {
+      const { error: rankError } = await updateStaffRank(selectedStaffId, newRank);
+      if (rankError) throw rankError;
+
+      setRankOverrides(prev => ({ ...prev, [selectedStaffId]: newRank }));
+      if (onStaffChanged) await onStaffChanged();
+      setError(null);
+    } catch (err) {
+      setError(`Failed to update rank: ${err.message}`);
+    } finally {
+      setSavingRank(false);
     }
   };
 
@@ -570,6 +591,7 @@ export default function StaffAvailabilityTab({ departmentId, staffList = [], lea
 
   const selectedStaff = staffList.find(s => s.staff_id === selectedStaffId);
   const currentFte = fteOverrides[selectedStaffId] ?? selectedStaff?.fte ?? DEFAULT_FTE;
+  const currentRank = rankOverrides[selectedStaffId] ?? selectedStaff?.rank ?? '';
   const currentName = nameOverrides[selectedStaffId] ?? selectedStaff?.name ?? '';
   const currentPayrollNumber = payrollNumberOverrides[selectedStaffId] ?? selectedStaff?.payroll_number ?? '';
   const currentPositionId = positionIdOverrides[selectedStaffId] ?? selectedStaff?.position_id ?? '';
@@ -689,6 +711,20 @@ export default function StaffAvailabilityTab({ departmentId, staffList = [], lea
                 {savingName ? 'Saving...' : 'Save'}
               </button>
             </div>
+          </div>
+
+          <div className="mb-4">
+            <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Rank</label>
+            <select
+              value={currentRank}
+              onChange={(e) => handleRankChange(e.target.value)}
+              disabled={savingRank}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+            >
+              {RANK_OPTIONS.map(r => (
+                <option key={r.value} value={r.value}>{r.label}</option>
+              ))}
+            </select>
           </div>
 
           <div className="mb-4">

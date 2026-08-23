@@ -1515,6 +1515,28 @@ export async function updateStaffFTE(staffId, fte) {
   }
 }
 
+// Rank (consultant/fellow/advanced_trainee/basic_trainee/intern — see
+// migrations/2026-08-22_staff_rank_intern.sql) was previously only ever
+// set once, at invite time. This lets an officer correct it afterwards —
+// it drives consultant/registrar-role derivation and the ranked-options
+// dropdowns everywhere a staff member gets assigned, so a wrong rank
+// (e.g. an Intern showing as a Registrar) had no fix short of the database.
+export async function updateStaffRank(staffId, rank) {
+  console.log('updateStaffRank called', staffId, rank);
+
+  try {
+    const { data, error } = await supabase
+      .from('staff')
+      .update({ rank })
+      .eq('staff_id', staffId)
+      .select();
+
+    return { data, error };
+  } catch (err) {
+    return { data: null, error: err };
+  }
+}
+
 // ============================================================
 // CASE MIX / ACTIVITY EXPOSURE
 // ============================================================

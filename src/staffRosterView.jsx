@@ -22,6 +22,7 @@ import {
   signOut,
 } from './supabaseClient';
 import CollapsibleSection from './CollapsibleSection';
+import { RANK_OPTIONS } from './StaffAvailabilityTab';
 import CoffeePicker from './CoffeePicker';
 import EditableCell from './EditableCell';
 import { getSessionGroups, SESSION_GROUP_ORDER, SESSION_GROUP_LABELS } from './shiftSessionUtils';
@@ -43,6 +44,13 @@ const SETTINGS_DAYS_SHOWN = SETTINGS_WEEKS_SHOWN * 7;
 const SETTINGS_DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 const COFFEE_SESSION_LABELS = { morning: 'Morning', afternoon: 'Afternoon', night: 'Night' };
+
+// staff_assignments.role is only ever the coarse consultant/registrar
+// bucket a rank was mapped to at assignment time (see the roleForRank-style
+// logic in supabaseClient.js) — showing it next to a colleague's name read
+// as their rank but wasn't one (an Intern shows role: 'registrar'). This is
+// the real rank, from the joined staff row.
+const RANK_LABEL = Object.fromEntries(RANK_OPTIONS.map(r => [r.value, r.label]));
 
 const toDateStr = toLocalDateStr;
 
@@ -674,7 +682,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
                                         <button onClick={() => handleViewStaffDetail(c.staff_id)} className="text-sm font-medium text-gray-800 hover:underline hover:text-blue-700">
                                           {c.staff?.name}
                                         </button>
-                                        <span className="text-xs text-gray-500 capitalize">{c.role}</span>
+                                        <span className="text-xs text-gray-500">{RANK_LABEL[c.staff?.rank] || c.staff?.rank}</span>
                                       </div>
                                     ))}
                                   </div>
@@ -730,7 +738,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
                                             {assignment.shifts?.name} ({assignment.shifts?.start_time?.slice(0, 5)} - {assignment.shifts?.end_time?.slice(0, 5)})
                                           </p>
                                         </div>
-                                        <p className="text-xs font-medium text-gray-600 capitalize">{assignment.role}</p>
+                                        <p className="text-xs font-medium text-gray-600">{RANK_LABEL[assignment.staff?.rank] || assignment.role}</p>
                                       </div>
                                     );
                                   })}
