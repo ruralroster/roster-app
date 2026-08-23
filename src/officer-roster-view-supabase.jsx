@@ -1706,6 +1706,13 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
         return activity?.abbreviation || activity?.name || null;
       };
 
+      // Session code(s) an assignment's own shift bridges — reuses the same
+      // getSessionGroups logic the Day view groups cards by, rather than
+      // picking just the earliest, so a long shift spanning e.g. AM into
+      // Night shows as "AM/Night" and not a misleadingly narrow "AM".
+      const SESSION_LABEL = { morning: 'AM', afternoon: 'PM', night: 'Night' };
+      const sessionLabelsFor = (a) => getSessionGroups(a.shifts).map(g => SESSION_LABEL[g]);
+
       const selectedStaff = refData.staff.find(s => s.staff_id === fortnightSelectedStaffId);
       const selectedStaffAllocations = fortnightAllocations.filter(a => a.staff_id === fortnightSelectedStaffId);
       // Shifts, not assignment rows: a day where someone covers two
@@ -1805,17 +1812,22 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                     const staffOwnAllocation = dayAllocations.find(a => a.staff_id === fortnightSelectedStaffId);
 
                     // One line per person per day, not per assignment row —
-                    // someone covering two activities that day (e.g. AM
-                    // Endoscopy then PM Anaesthetics) reads as one line with
-                    // both abbreviations, not two separate lines.
+                    // grouped further by activity, so someone covering two
+                    // activities that day (e.g. AM Endoscopy then PM
+                    // Anaesthetics) reads as "John (Endo - AM) (A - PM)",
+                    // each with every session its own shift bridges.
                     const byStaff = new Map();
                     dayAllocations.forEach(a => {
                       if (!byStaff.has(a.staff_id)) {
-                        byStaff.set(a.staff_id, { staffId: a.staff_id, name: a.staff?.name, labels: [] });
+                        byStaff.set(a.staff_id, { staffId: a.staff_id, name: a.staff?.name, activityGroups: new Map() });
                       }
-                      const label = activityLabelFor(a);
-                      const entry = byStaff.get(a.staff_id);
-                      if (label && !entry.labels.includes(label)) entry.labels.push(label);
+                      const person = byStaff.get(a.staff_id);
+                      const activityKey = a.theatre_activities?.activity_id || 'none';
+                      if (!person.activityGroups.has(activityKey)) {
+                        person.activityGroups.set(activityKey, { label: activityLabelFor(a), sessions: new Set() });
+                      }
+                      const group = person.activityGroups.get(activityKey);
+                      sessionLabelsFor(a).forEach(s => group.sessions.add(s));
                     });
 
                     return (
@@ -1841,7 +1853,13 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                                 person.staffId === fortnightSelectedStaffId ? 'bg-blue-600 text-white font-semibold' : 'bg-gray-100 text-gray-700'
                               }`}
                             >
-                              {getFirstName(person.name)}{person.labels.length > 0 ? ` (${person.labels.join(', ')})` : ''}
+                              {getFirstName(person.name)}
+                              {Array.from(person.activityGroups.values()).map((group, i) => {
+                                const sessions = Array.from(group.sessions).join('/');
+                                return (
+                                  <span key={i}> ({group.label ? `${group.label} - ` : ''}{sessions})</span>
+                                );
+                              })}
                             </div>
                           ))}
                         </div>
