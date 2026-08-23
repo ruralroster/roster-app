@@ -36,6 +36,7 @@ import {
 import { buildAssignmentsIcs, getIcsExportFilename, downloadTextFile } from './icsExport';
 import { toLocalDateStr } from './dateUtils';
 import { NO_COFFEE, parseCoffeeOrder } from './coffeeUtils';
+import { getMondayOfWeek } from './payrollExport';
 
 const SETTINGS_WEEKS_SHOWN = 4;
 const SETTINGS_DAYS_SHOWN = SETTINGS_WEEKS_SHOWN * 7;
@@ -181,8 +182,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
     const loadWeek = async () => {
       setLoadingWeek(true);
       try {
-        const weekStart = new Date(currentDate);
-        weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+        const weekStart = getMondayOfWeek(currentDate);
         const { data, error: weekError } = await getStaffAssignmentsForWeek(staffId, weekStart);
         if (weekError) throw weekError;
         setWeekAssignments(data);
@@ -751,8 +751,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
     }
 
     if (activeTab === 'week') {
-      const weekStart = new Date(currentDate);
-      weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+      const weekStart = getMondayOfWeek(currentDate);
 
       return (
         <div className="p-4 pb-24">
