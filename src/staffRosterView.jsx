@@ -585,7 +585,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
               <>
                 {/* On-Call */}
                 <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
-                  <h2 className="text-xs font-semibold text-gray-600 uppercase mb-3">On-Call</h2>
+                  <h2 className="text-xs font-semibold text-gray-600 uppercase mb-3" style={{ fontFamily: "'Bradley Hand', cursive" }}>On-Call</h2>
                   {todayOnCall.length === 0 ? (
                     <p className="text-sm text-gray-500">No on-call roster set for this date.</p>
                   ) : (
@@ -618,7 +618,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
                     that same session (looked up from groupedAssignments,
                     the same department-wide data the sections below use). */}
                 <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
-                  <h2 className="text-xs font-semibold text-gray-600 uppercase mb-3">My allocations for today</h2>
+                  <h2 className="text-xs font-semibold text-gray-600 uppercase mb-3" style={{ fontFamily: "'Bradley Hand', cursive" }}>My allocations for today</h2>
                   {todayAssignments.length === 0 ? (
                     <p className="text-sm text-gray-500">No assignments for this date.</p>
                   ) : (
