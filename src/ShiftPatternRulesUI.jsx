@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Loader, X } from 'lucide-react';
-import { getShiftPatternRules, addShiftPatternRule, updateShiftPatternRule, deleteShiftPatternRule } from './supabaseClient';
+import { getShiftPatternRules, addShiftPatternRule, updateShiftPatternRule, deleteShiftPatternRule, deleteAllShiftPatternRules } from './supabaseClient';
 
 const ACTION_STYLES = {
   ALLOW: 'bg-green-100 text-green-900',
@@ -96,6 +96,18 @@ export default function ShiftPatternRulesUI({ departmentId, shifts }) {
     }
   };
 
+  const handleDeleteAll = async () => {
+    if (!window.confirm(`Delete all ${rules.length} shift pattern rules for this department? This can't be undone — you'll be starting from a blank rule set.`)) return;
+    setError(null);
+    try {
+      const { error: e } = await deleteAllShiftPatternRules(departmentId);
+      if (e) throw e;
+      setRules([]);
+    } catch (err) {
+      setError(`Failed to clear rules: ${err.message}`);
+    }
+  };
+
   if (loading) {
     return (
       <div className="text-center py-4">
@@ -112,12 +124,22 @@ export default function ShiftPatternRulesUI({ departmentId, shifts }) {
         shift being assigned today. Leave a position as "Any Shift" to ignore it.
       </p>
 
-      <button
-        onClick={openAddModal}
-        className="mb-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition text-sm"
-      >
-        Add New Rule
-      </button>
+      <div className="mb-4 flex gap-2">
+        <button
+          onClick={openAddModal}
+          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition text-sm"
+        >
+          Add New Rule
+        </button>
+        {rules.length > 0 && (
+          <button
+            onClick={handleDeleteAll}
+            className="px-4 py-2 bg-red-100 hover:bg-red-200 text-red-900 font-medium rounded-lg transition text-sm"
+          >
+            Clear All Rules
+          </button>
+        )}
+      </div>
 
       {rules.length === 0 ? (
         <p className="text-sm text-gray-500">No shift pattern rules configured.</p>

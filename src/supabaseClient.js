@@ -2565,6 +2565,26 @@ export async function deleteShiftPatternRule(ruleId) {
   }
 }
 
+// Wipes every shift pattern rule for a department in one go — for
+// starting over rather than deleting a demo/test rule set one row at a
+// time. Scoped by department_id so it can never touch another department's
+// rules.
+export async function deleteAllShiftPatternRules(departmentId) {
+  console.log('deleteAllShiftPatternRules called', departmentId);
+
+  try {
+    const { error } = await supabase
+      .from('shift_pattern_rules')
+      .delete()
+      .eq('department_id', departmentId);
+
+    return { error };
+  } catch (err) {
+    console.error('deleteAllShiftPatternRules error:', err);
+    return { error: err };
+  }
+}
+
 // Checks a staff member's 3 previous days plus the shift about to be
 // assigned against the department's shift pattern rules, and returns the
 // most specific (most non-wildcard positions) matching rule's action. A day
