@@ -211,8 +211,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
     const loadOnCall = async () => {
       setLoadingOnCall(true);
       try {
-        const weekStart = new Date(currentDate);
-        weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+        const weekStart = getMondayOfWeek(currentDate);
         const { data, error: onCallError } = await getAllOnCallAssignmentsForWeek(departmentId, weekStart);
         if (onCallError) throw onCallError;
         setAllOnCallAssignments(data);
@@ -837,8 +836,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
     }
 
     if (activeTab === 'oncall') {
-      const weekStart = new Date(currentDate);
-      weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+      const weekStart = getMondayOfWeek(currentDate);
 
       // Group by duty type
       const groupedByDuty = {};
