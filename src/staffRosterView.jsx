@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ChevronLeft, ChevronRight, X, AlertCircle, Loader, Search, Download, Coffee, Copy, Check } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronDown, X, AlertCircle, Loader, Search, Download, Coffee, Copy, Check } from 'lucide-react';
 import {
   getStaffById,
   getStaffAssignmentsForStaffDate,
@@ -69,6 +69,9 @@ export default function StaffRosterView({ departmentId, staffId }) {
   const [todayAssignments, setTodayAssignments] = useState([]); // this staff member's own assignments
   const [todayAllAssignments, setTodayAllAssignments] = useState([]); // whole department's assignments, for the Morning/Afternoon/Night "who is where" lookup
   const [todayOnCall, setTodayOnCall] = useState([]);
+  // Which of "My allocations for today" row is expanded to show who else
+  // is on that same session, if any.
+  const [expandedAllocationId, setExpandedAllocationId] = useState(null);
   const [loadingDay, setLoadingDay] = useState(false);
 
   // Week tab state
@@ -608,27 +611,70 @@ export default function StaffRosterView({ departmentId, staffId }) {
                   )}
                 </div>
 
-                {/* Allocations — a flat, ungrouped summary of every
-                    assignment this staff member has on this date, shown
-                    above the Morning/Afternoon/Night breakdown for a quick
-                    glance. */}
+                {/* My allocations for today — a flat, ungrouped summary of
+                    every assignment this staff member has on this date,
+                    shown above the Morning/Afternoon/Night breakdown for a
+                    quick glance. Click one to see who else is rostered on
+                    that same session (looked up from groupedAssignments,
+                    the same department-wide data the sections below use). */}
                 <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
-                  <h2 className="text-xs font-semibold text-gray-600 uppercase mb-3">Allocations</h2>
+                  <h2 className="text-xs font-semibold text-gray-600 uppercase mb-3">My allocations for today</h2>
                   {todayAssignments.length === 0 ? (
                     <p className="text-sm text-gray-500">No assignments for this date.</p>
                   ) : (
                     <div className="space-y-3">
-                      {todayAssignments.map(assignment => (
-                        <div key={assignment.assignment_id} className="flex items-center justify-between gap-3 p-3 rounded-lg border border-gray-200">
-                          <div>
-                            <p className="text-sm font-bold text-gray-900">{assignment.locations?.name}</p>
-                            <p className="text-xs text-gray-600">
-                              {assignment.shifts?.name} ({assignment.shifts?.start_time?.slice(0, 5)} - {assignment.shifts?.end_time?.slice(0, 5)})
-                            </p>
+                      {todayAssignments.map(assignment => {
+                        const isExpanded = expandedAllocationId === assignment.assignment_id;
+                        const colleagues = isExpanded
+                          ? Array.from(
+                              new Map(
+                                getSessionGroups(assignment.shifts)
+                                  .flatMap(g => groupedAssignments[g])
+                                  .filter(a => a.staff_id !== staffId)
+                                  .map(a => [a.staff_id, a])
+                              ).values()
+                            )
+                          : [];
+
+                        return (
+                          <div key={assignment.assignment_id} className="rounded-lg border border-gray-200 overflow-hidden">
+                            <button
+                              onClick={() => setExpandedAllocationId(isExpanded ? null : assignment.assignment_id)}
+                              className="w-full flex items-center justify-between gap-3 p-3 text-left hover:bg-gray-50 transition"
+                            >
+                              <div>
+                                <p className="text-sm font-bold text-gray-900">{assignment.locations?.name}</p>
+                                <p className="text-xs text-gray-600">
+                                  {assignment.shifts?.name} ({assignment.shifts?.start_time?.slice(0, 5)} - {assignment.shifts?.end_time?.slice(0, 5)})
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-2 flex-shrink-0">
+                                <p className="text-xs font-medium text-gray-700 capitalize">{assignment.role}</p>
+                                {isExpanded ? <ChevronDown size={16} className="text-gray-400" /> : <ChevronRight size={16} className="text-gray-400" />}
+                              </div>
+                            </button>
+                            {isExpanded && (
+                              <div className="px-3 pb-3 pt-2 border-t border-gray-100 bg-gray-50">
+                                <p className="text-xs font-semibold text-gray-600 uppercase mb-2">Also on this session</p>
+                                {colleagues.length === 0 ? (
+                                  <p className="text-xs text-gray-500">Nobody else rostered this session.</p>
+                                ) : (
+                                  <div className="space-y-1">
+                                    {colleagues.map(c => (
+                                      <div key={c.staff_id} className="flex items-center justify-between gap-2">
+                                        <button onClick={() => handleViewStaffDetail(c.staff_id)} className="text-sm font-medium text-gray-800 hover:underline hover:text-blue-700">
+                                          {c.staff?.name}
+                                        </button>
+                                        <span className="text-xs text-gray-500">{c.locations?.name}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            )}
                           </div>
-                          <p className="text-xs font-medium text-gray-700 capitalize">{assignment.role}</p>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -649,7 +695,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
                   });
 
                   return (
-                    <CollapsibleSection key={groupKey} title={SESSION_GROUP_LABELS[groupKey]} defaultOpen={true}>
+                    <CollapsibleSection key={groupKey} title={SESSION_GROUP_LABELS[groupKey]}>
                       {byLocation.length === 0 ? (
                         <p className="text-sm text-gray-500">No assignments.</p>
                       ) : (
