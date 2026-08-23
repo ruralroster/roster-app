@@ -723,6 +723,25 @@ export async function updateLocation(locationId, name, defaultStartTime = null, 
   }
 }
 
+// Narrows which activities can be picked at this location (e.g. a Ward
+// location only ever offering "Ward Cover") — see
+// migrations/2026-08-23_location_allowed_activities.sql. An empty array
+// means no restriction, same as null.
+export async function updateLocationAllowedActivities(locationId, activityIds) {
+  try {
+    const { data, error } = await supabase
+      .from('locations')
+      .update({ allowed_activity_ids: activityIds })
+      .eq('location_id', locationId)
+      .select()
+      .single();
+
+    return { data, error };
+  } catch (err) {
+    return { data: null, error: err };
+  }
+}
+
 // Locations are never hard-deleted, for the same reason as shifts — "delete"
 // sets active=false so it can no longer be picked for a new activity, while
 // existing theatre_activities/staff_assignments there are left completely

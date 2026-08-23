@@ -33,6 +33,7 @@ import { createTheatreActivity,
   syncDutyOnCallActivity,
   createLocation,
   updateLocation,
+  updateLocationAllowedActivities,
   deactivateLocation,
   reactivateLocation,
   createActivityType,
@@ -199,6 +200,8 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   const [editLocationName, setEditLocationName] = useState('');
   const [editLocationDefaultStart, setEditLocationDefaultStart] = useState('');
   const [editLocationDefaultEnd, setEditLocationDefaultEnd] = useState('');
+  // Which location's Allowed Activities modal is open, if any.
+  const [editingLocationActivitiesId, setEditingLocationActivitiesId] = useState(null);
 
   // Activity Management State
   const [newActivityInput, setNewActivityInput] = useState('');
@@ -1071,6 +1074,46 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     } catch (err) {
       setError(`Failed to rename location: ${err.message}`);
     }
+  };
+
+  // Auto-saves as soon as an activity is added/removed from the location's
+  // allowed list — no separate Save step, same as the checkbox-toggle
+  // pattern used for staff activity restrictions in StaffProfilesTab.
+  const handleUpdateLocationAllowedActivities = async (locationId, activityIds) => {
+    try {
+      const { data, error } = await updateLocationAllowedActivities(locationId, activityIds);
+      if (error) throw error;
+
+      setRefData(prev => ({ ...prev, locations: prev.locations.map(l => l.location_id === locationId ? data : l) }));
+      setError(null);
+    } catch (err) {
+      setError(`Failed to update allowed activities: ${err.message}`);
+    }
+  };
+
+  // Every activity picker that starts from a location (the Fortnight
+  // wizard, the Day view's Add Activity dialog, and an existing card's own
+  // Activity dropdown) narrows to this — see
+  // migrations/2026-08-23_location_allowed_activities.sql. Unconfigured
+  // (null/empty) means no restriction, so nothing changes for a location
+  // an officer hasn't set this up for yet.
+  const activitiesAllowedAtLocation = (locationId) => {
+    const location = refData.locations.find(l => l.location_id === locationId);
+    const allowedIds = location?.allowed_activity_ids;
+    if (!allowedIds || allowedIds.length === 0) return refData.activities;
+    return refData.activities.filter(a => allowedIds.includes(a.activity_id));
+  };
+
+  // Same as activitiesAllowedAtLocation, but guarantees a card's own
+  // currently-set activity stays selectable even if it's since fallen
+  // outside the location's allowed list (restriction added/changed after
+  // the fact) — same "keep it, just flag unavailable" precedent as
+  // getDutyStaffOptions.
+  const activityOptionsFor = (locationId, currentActivityId) => {
+    const allowed = activitiesAllowedAtLocation(locationId);
+    if (!currentActivityId || allowed.some(a => a.activity_id === currentActivityId)) return allowed;
+    const current = refData.activities.find(a => a.activity_id === currentActivityId);
+    return current ? [...allowed, current] : allowed;
   };
 
   // Activity Management Handlers
@@ -1996,11 +2039,11 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                 {fortnightWizardStep === 'activity' && (
                   <>
                     <p className="text-xs font-semibold text-gray-600 uppercase mb-2">3. Choose an activity</p>
-                    {refData.activities.length === 0 ? (
+                    {activitiesAllowedAtLocation(fortnightWizardLocationId).length === 0 ? (
                       <p className="text-sm text-gray-500">No activities configured — add some in Settings.</p>
                     ) : (
                       <div className="space-y-2">
-                        {refData.activities.map(activity => (
+                        {activitiesAllowedAtLocation(fortnightWizardLocationId).map(activity => (
                           <button
                             key={activity.activity_id}
                             onClick={() => handleFortnightPickActivity(activity.activity_id)}
@@ -2305,7 +2348,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                         onChange={(e) => handleActivityChange(ta.theatre_activity_id, e.target.value)}
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-semibold text-gray-900"
                       >
-                        {refData.activities.map(act => (
+                        {activityOptionsFor(ta.location_id, ta.activity_id).map(act => (
                           <option key={act.activity_id} value={act.activity_id}>{act.name}</option>
                         ))}
                       </select>
@@ -3065,8 +3108,19 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                               ? `(default ${loc.default_start_time.slice(0, 5)}–${loc.default_end_time.slice(0, 5)})`
                               : '(always open)'}
                           </span>
+                          {loc.allowed_activity_ids?.length > 0 && (
+                            <span className="ml-2 text-xs font-normal text-purple-700">
+                              · {loc.allowed_activity_ids.length} activit{loc.allowed_activity_ids.length === 1 ? 'y' : 'ies'} allowed
+                            </span>
+                          )}
                         </p>
                         <div className="flex gap-2">
+                          <button
+                            onClick={() => setEditingLocationActivitiesId(loc.location_id)}
+                            className="px-3 py-1 bg-purple-100 hover:bg-purple-200 text-purple-900 font-medium rounded text-xs transition"
+                          >
+                            Activities
+                          </button>
                           <button
                             onClick={() => handleStartEditLocation(loc)}
                             className="px-3 py-1 bg-blue-100 hover:bg-blue-200 text-blue-900 font-medium rounded text-xs transition"
@@ -3402,7 +3456,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-400"
                 >
                   <option value="">{!newActivityLocation ? 'Select a location first' : (!newActivityStartTime || !newActivityEndTime) ? 'Set a start and end time first' : 'Select activity…'}</option>
-                  {refData.activities.map(act => (
+                  {activitiesAllowedAtLocation(newActivityLocation).map(act => (
                     <option key={act.activity_id} value={act.activity_id}>{act.name}</option>
                   ))}
                 </select>
@@ -3421,6 +3475,72 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
           </div>
         </div>
       )}
+
+      {/* Allowed Activities Modal — narrows the Activity picker (Fortnight
+          wizard, Add Activity dialog, an existing card's own Activity
+          dropdown) to just these for this location. Empty = no
+          restriction. */}
+      {editingLocationActivitiesId && (() => {
+        const location = refData.locations.find(l => l.location_id === editingLocationActivitiesId);
+        const allowedIds = location?.allowed_activity_ids || [];
+        const allowed = refData.activities.filter(a => allowedIds.includes(a.activity_id));
+        const notAllowed = refData.activities.filter(a => !allowedIds.includes(a.activity_id));
+        return (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-2xl max-h-[85vh] overflow-y-auto">
+              <div className="flex justify-between items-start mb-4">
+                <div>
+                  <h2 className="text-lg font-bold text-gray-900">{location?.name} — Allowed Activities</h2>
+                  <p className="text-sm text-gray-600">Leave empty to allow every activity at this location.</p>
+                </div>
+                <button onClick={() => setEditingLocationActivitiesId(null)} className="p-1 hover:bg-gray-100 rounded-lg">
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <p className="text-xs font-semibold text-gray-600 uppercase mb-2">All Activities</p>
+                  <div className="border border-gray-200 rounded-lg divide-y divide-gray-100 max-h-80 overflow-y-auto">
+                    {notAllowed.length === 0 && (
+                      <p className="p-3 text-sm text-gray-400 italic">Every activity is already allowed</p>
+                    )}
+                    {notAllowed.map(act => (
+                      <button
+                        key={act.activity_id}
+                        onClick={() => handleUpdateLocationAllowedActivities(location.location_id, [...allowedIds, act.activity_id])}
+                        className="w-full text-left px-3 py-2 text-sm hover:bg-blue-50 transition flex items-center justify-between gap-2"
+                      >
+                        {act.name}
+                        <span className="text-blue-600 text-xs font-semibold flex-shrink-0">Add →</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-xs font-semibold text-gray-600 uppercase mb-2">Allowed Here</p>
+                  <div className="border border-gray-200 rounded-lg divide-y divide-gray-100 max-h-80 overflow-y-auto">
+                    {allowed.length === 0 && (
+                      <p className="p-3 text-sm text-gray-400 italic">None selected — every activity is offered</p>
+                    )}
+                    {allowed.map(act => (
+                      <button
+                        key={act.activity_id}
+                        onClick={() => handleUpdateLocationAllowedActivities(location.location_id, allowedIds.filter(id => id !== act.activity_id))}
+                        className="w-full text-left px-3 py-2 text-sm hover:bg-red-50 transition flex items-center justify-between gap-2"
+                      >
+                        <span className="text-red-600 text-xs font-semibold flex-shrink-0">← Remove</span>
+                        {act.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* BOTTOM TAB NAVIGATION */}
       <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-lg">
