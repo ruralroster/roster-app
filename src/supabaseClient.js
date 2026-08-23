@@ -2438,7 +2438,7 @@ export async function assignStaffFortnight(departmentId, date, staffId, shiftId,
 
     const role = (staffRow.rank === 'consultant' || staffRow.rank === 'fellow') ? 'consultant' : 'registrar';
 
-    const { data, error } = await createStaffAssignment(departmentId, dateStr, locationId, staffId, shiftId, role, null, theatreActivityId, false);
+    const { data, error } = await createStaffAssignment(departmentId, date, locationId, staffId, shiftId, role, null, theatreActivityId, false);
     if (error) throw error;
 
     return { data, error: null };
