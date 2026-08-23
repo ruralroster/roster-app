@@ -1533,6 +1533,26 @@ export async function updateStaffName(staffId, name) {
   }
 }
 
+// Staff vs Officer vs Intern (see migrations/2026-08-22_staff_role_intern.sql)
+// — decides whether App.js offers the officer roster view at all. Only
+// ever set at invite time until now; this lets it be changed afterwards
+// too, e.g. promoting someone to officer once they're already linked.
+export async function updateStaffRole(staffId, role) {
+  console.log('updateStaffRole called', staffId, role);
+
+  try {
+    const { data, error } = await supabase
+      .from('staff')
+      .update({ role })
+      .eq('staff_id', staffId)
+      .select();
+
+    return { data, error };
+  } catch (err) {
+    return { data: null, error: err };
+  }
+}
+
 export async function updateStaffEmail(staffId, email) {
   console.log('updateStaffEmail called', staffId, email);
 

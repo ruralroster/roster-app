@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { AlertCircle, Loader, CheckCircle2, CircleDashed } from 'lucide-react';
-import { getStaffList, inviteStaff } from './supabaseClient';
+import { getStaffList, inviteStaff, updateStaffRole } from './supabaseClient';
 import { RANK_OPTIONS } from './StaffAvailabilityTab';
 
 const ROLE_OPTIONS = [
@@ -32,8 +32,14 @@ export default function StaffAccountsTab({ departmentId, refreshKey }) {
   // is open, if any.
   const [linkingStaffId, setLinkingStaffId] = useState(null);
   const [linkEmail, setLinkEmail] = useState('');
+  const [linkRole, setLinkRole] = useState('staff');
   const [linking, setLinking] = useState(false);
   const [linkError, setLinkError] = useState(null);
+
+  // Which row's Role dropdown is currently mid-save, so it can be disabled
+  // and show progress without a full-table loading state.
+  const [savingRoleId, setSavingRoleId] = useState(null);
+  const [roleError, setRoleError] = useState(null);
 
   const loadStaff = async () => {
     setLoading(true);
@@ -81,6 +87,7 @@ export default function StaffAccountsTab({ departmentId, refreshKey }) {
   const handleStartLink = (person) => {
     setLinkingStaffId(person.staff_id);
     setLinkEmail(person.email || '');
+    setLinkRole(person.role || 'staff');
     setLinkError(null);
   };
 
@@ -90,7 +97,7 @@ export default function StaffAccountsTab({ departmentId, refreshKey }) {
     setLinking(true);
     setLinkError(null);
     try {
-      const { error: linkErr } = await inviteStaff(departmentId, person.name, linkEmail.trim(), person.rank, person.role || 'staff', person.staff_id);
+      const { error: linkErr } = await inviteStaff(departmentId, person.name, linkEmail.trim(), person.rank, linkRole, person.staff_id);
       if (linkErr) throw linkErr;
 
       setLinkingStaffId(null);
@@ -103,12 +110,36 @@ export default function StaffAccountsTab({ departmentId, refreshKey }) {
     }
   };
 
+  // Changing a role is separate from linking an account — works for a
+  // linked or not-yet-linked staff member either way, at invite time or
+  // any time after.
+  const handleRoleChange = async (staffId, newRole) => {
+    setSavingRoleId(staffId);
+    setRoleError(null);
+    try {
+      const { error: roleErr } = await updateStaffRole(staffId, newRole);
+      if (roleErr) throw roleErr;
+      loadStaff();
+    } catch (err) {
+      setRoleError(`Failed to update role: ${err.message}`);
+    } finally {
+      setSavingRoleId(null);
+    }
+  };
+
   return (
     <>
       {error && (
         <div className="mb-6 p-3 bg-red-50 border border-red-300 rounded-lg flex gap-2 items-start">
           <AlertCircle size={18} className="text-red-600 flex-shrink-0 mt-0.5" />
           <p className="text-sm text-red-700">{error}</p>
+        </div>
+      )}
+
+      {roleError && (
+        <div className="mb-6 p-3 bg-red-50 border border-red-300 rounded-lg flex gap-2 items-start">
+          <AlertCircle size={18} className="text-red-600 flex-shrink-0 mt-0.5" />
+          <p className="text-sm text-red-700">{roleError}</p>
         </div>
       )}
 
@@ -185,8 +216,17 @@ export default function StaffAccountsTab({ departmentId, refreshKey }) {
                     <p className="font-semibold text-sm text-gray-900">{person.name}</p>
                     <p className="text-xs text-gray-600 capitalize">{person.rank}</p>
                   </td>
-                  <td className="px-3 py-3 border border-gray-200 text-sm text-gray-700 capitalize">
-                    {person.role || 'staff'}
+                  <td className="px-3 py-3 border border-gray-200">
+                    <select
+                      value={person.role || 'staff'}
+                      onChange={(e) => handleRoleChange(person.staff_id, e.target.value)}
+                      disabled={savingRoleId === person.staff_id}
+                      className="px-2 py-1 border border-gray-300 rounded text-sm disabled:opacity-50"
+                    >
+                      {ROLE_OPTIONS.map(r => (
+                        <option key={r.value} value={r.value}>{r.label}</option>
+                      ))}
+                    </select>
                   </td>
                   <td className="px-3 py-3 border border-gray-200">
                     {person.user_id ? (
@@ -204,6 +244,16 @@ export default function StaffAccountsTab({ departmentId, refreshKey }) {
                           autoFocus
                           className="px-2 py-1 border border-gray-300 rounded text-sm w-40"
                         />
+                        <select
+                          value={linkRole}
+                          onChange={(e) => setLinkRole(e.target.value)}
+                          disabled={linking}
+                          className="px-2 py-1 border border-gray-300 rounded text-sm"
+                        >
+                          {ROLE_OPTIONS.map(r => (
+                            <option key={r.value} value={r.value}>{r.label}</option>
+                          ))}
+                        </select>
                         <button
                           onClick={() => handleSendLink(person)}
                           disabled={linking || !linkEmail.trim()}
