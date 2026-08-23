@@ -51,9 +51,7 @@ import { createTheatreActivity,
   updateStaffAssignmentLeaveCode,
   updateDepartmentPayCentreNumber,
   getAllStaffAssignmentsForRange,
-  getStaffShiftAllocationsForRange,
-  upsertStaffShiftAllocation,
-  deleteStaffShiftAllocation,
+  assignStaffFortnight,
   validateShiftAssignment,
 } from './supabaseClient';
 import { downloadPayrollExcel, getMondayOfWeek } from './payrollExport';
@@ -101,6 +99,11 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   const [fortnightAllocations, setFortnightAllocations] = useState([]);
   const [loadingFortnight, setLoadingFortnight] = useState(false);
   const [fortnightModalDate, setFortnightModalDate] = useState(null); // Date | null — which day cell's picker is open
+  // Fortnight assignment wizard step within that modal — see
+  // handleOpenFortnightModal/handleFortnightPickShift/PickLocation/PickActivity.
+  const [fortnightWizardStep, setFortnightWizardStep] = useState('shift'); // 'shift' | 'location' | 'activity'
+  const [fortnightWizardShiftId, setFortnightWizardShiftId] = useState(null);
+  const [fortnightWizardLocationId, setFortnightWizardLocationId] = useState(null);
   const [selectedDate, setSelectedDate] = useState(null);
   const [selectedStaff, setSelectedStaff] = useState(null);
   const [openDropdown, setOpenDropdown] = useState(null);
@@ -199,8 +202,10 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
 
   // Activity Management State
   const [newActivityInput, setNewActivityInput] = useState('');
+  const [newActivityAbbreviation, setNewActivityAbbreviation] = useState('');
   const [editingActivityId, setEditingActivityId] = useState(null);
   const [editActivityName, setEditActivityName] = useState('');
+  const [editActivityAbbreviation, setEditActivityAbbreviation] = useState('');
 
   // Leave Type Management State
   const [newLeaveTypeName, setNewLeaveTypeName] = useState('');
@@ -374,20 +379,19 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     loadAllocationStatus();
   }, [departmentId, calendarWeekStart, activeTab]);
 
-  // Fortnight tab — whole department's shift allocations for the visible
-  // 14-day window, refetched whenever that window changes or an allocation
-  // is added/cleared (via fortnightRefreshKey).
+  // Fortnight tab — whole department's real staff_assignments for the
+  // visible 14-day window (same data the Day view reads/writes, see
+  // assignStaffFortnight), refetched whenever that window changes or an
+  // assignment is added/removed (via fortnightRefreshKey).
   const [fortnightRefreshKey, setFortnightRefreshKey] = useState(0);
   useEffect(() => {
     const loadFortnightAllocations = async () => {
       if (!departmentId || activeTab !== 'fortnight') return;
 
       setLoadingFortnight(true);
-      const rangeEnd = new Date(fortnightStart);
-      rangeEnd.setDate(rangeEnd.getDate() + 13);
 
       try {
-        const { data, error } = await getStaffShiftAllocationsForRange(departmentId, fortnightStart, rangeEnd);
+        const { data, error } = await getAllStaffAssignmentsForRange(departmentId, fortnightStart, 14);
         if (error) throw error;
         setFortnightAllocations(data);
         setError(null);
@@ -630,31 +634,62 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     }
   };
 
-  const handleAllocateFortnightShift = async (staffId, date, shiftId) => {
-    if (!departmentId) return;
+  // Fortnight assignment wizard — shift, then location, then activity, in
+  // that order. Each step just narrows the choice; the actual write only
+  // happens once an activity is picked (see assignStaffFortnight), which
+  // finds-or-creates the matching theatre_activities card and adds this
+  // person to it exactly as "Add Activity" + assign staff does in the Day
+  // view, just starting from the person instead of the location.
+  const handleOpenFortnightModal = (date) => {
+    setFortnightModalDate(date);
+    setFortnightWizardStep('shift');
+    setFortnightWizardShiftId(null);
+    setFortnightWizardLocationId(null);
+  };
+
+  const handleCloseFortnightModal = () => {
+    setFortnightModalDate(null);
+    setFortnightWizardStep('shift');
+    setFortnightWizardShiftId(null);
+    setFortnightWizardLocationId(null);
+  };
+
+  const handleFortnightPickShift = (shiftId) => {
+    setFortnightWizardShiftId(shiftId);
+    setFortnightWizardStep('location');
+  };
+
+  const handleFortnightPickLocation = (locationId) => {
+    setFortnightWizardLocationId(locationId);
+    setFortnightWizardStep('activity');
+  };
+
+  const handleFortnightPickActivity = async (activityId) => {
+    if (!departmentId || !fortnightModalDate || !fortnightSelectedStaffId || !fortnightWizardShiftId || !fortnightWizardLocationId) return;
 
     try {
-      const { error } = await upsertStaffShiftAllocation(departmentId, staffId, date, shiftId);
+      const { error } = await assignStaffFortnight(
+        departmentId, fortnightModalDate, fortnightSelectedStaffId, fortnightWizardShiftId, fortnightWizardLocationId, activityId
+      );
       if (error) throw error;
 
-      setFortnightModalDate(null);
+      handleCloseFortnightModal();
       setFortnightRefreshKey(k => k + 1);
       setError(null);
     } catch (err) {
-      setError(`Failed to allocate shift: ${err.message}`);
+      setError(`Failed to assign: ${err.message}`);
     }
   };
 
-  const handleClearFortnightShift = async (staffId, date) => {
+  const handleRemoveFortnightAssignment = async (assignmentId) => {
     try {
-      const { error } = await deleteStaffShiftAllocation(staffId, date);
+      const { error } = await deleteStaffAssignment(assignmentId);
       if (error) throw error;
 
-      setFortnightModalDate(null);
       setFortnightRefreshKey(k => k + 1);
       setError(null);
     } catch (err) {
-      setError(`Failed to clear shift: ${err.message}`);
+      setError(`Failed to remove assignment: ${err.message}`);
     }
   };
 
@@ -1038,11 +1073,12 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     if (!newActivityInput.trim() || !departmentId) return;
 
     try {
-      const { data, error } = await createActivityType(departmentId, newActivityInput);
+      const { data, error } = await createActivityType(departmentId, newActivityInput, newActivityAbbreviation.trim() || null);
       if (error) throw error;
 
       setRefData(prev => ({ ...prev, activities: [...prev.activities, data] }));
       setNewActivityInput('');
+      setNewActivityAbbreviation('');
       setError(null);
     } catch (err) {
       setError(`Failed to create activity: ${err.message}`);
@@ -1068,18 +1104,20 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   const handleStartEditActivity = (activity) => {
     setEditingActivityId(activity.activity_id);
     setEditActivityName(activity.name);
+    setEditActivityAbbreviation(activity.abbreviation || '');
   };
 
   const handleUpdateActivity = async () => {
     if (!editingActivityId || !editActivityName.trim()) return;
 
     try {
-      const { data, error } = await updateActivityTypeName(editingActivityId, editActivityName.trim());
+      const { data, error } = await updateActivityTypeName(editingActivityId, editActivityName.trim(), editActivityAbbreviation.trim() || null);
       if (error) throw error;
 
       setRefData(prev => ({ ...prev, activities: prev.activities.map(a => a.activity_id === editingActivityId ? data : a) }));
       setEditingActivityId(null);
       setEditActivityName('');
+      setEditActivityAbbreviation('');
       setError(null);
     } catch (err) {
       setError(`Failed to rename activity: ${err.message}`);
@@ -1658,15 +1696,33 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
         (allocationsByDate[a.date] = allocationsByDate[a.date] || []).push(a);
       });
 
+      // Compact per-shift/per-activity codes for the grid's abridged cells
+      // — SESSION_CODE from each shift's own session field, activity from
+      // the abbreviation set in Settings → Activities (falls back to the
+      // full name so an unset abbreviation doesn't just disappear).
+      const SESSION_CODE = { full: 'D', AM: 'AM', PM: 'PM', night: 'Night', evening: 'E' };
+      const activityLabelFor = (a) => {
+        const activityId = a.theatre_activities?.activity_id;
+        if (!activityId) return null;
+        const activity = refData.activities.find(act => act.activity_id === activityId);
+        return activity?.abbreviation || activity?.name || null;
+      };
+
       const selectedStaff = refData.staff.find(s => s.staff_id === fortnightSelectedStaffId);
       const selectedStaffAllocations = fortnightAllocations.filter(a => a.staff_id === fortnightSelectedStaffId);
+      // Shifts, not assignment rows: a day where someone covers two
+      // activities (e.g. AM Endoscopy then PM Anaesthetics) is one day off
+      // their FTE count, not two, so this counts distinct dates.
+      const selectedStaffDatesCovered = new Set(selectedStaffAllocations.map(a => a.date)).size;
       const expectedShifts = selectedStaff ? (selectedStaff.fte ?? DEFAULT_FTE) * 10 : 0;
-      const remainingShifts = expectedShifts - selectedStaffAllocations.length;
+      const remainingShifts = expectedShifts - selectedStaffDatesCovered;
 
       const modalDateStr = fortnightModalDate ? toLocalDateStr(fortnightModalDate) : null;
       const modalDateAllocations = modalDateStr ? (allocationsByDate[modalDateStr] || []) : [];
-      const modalExistingForStaff = modalDateAllocations.find(a => a.staff_id === fortnightSelectedStaffId);
-      const activeShifts = refData.shifts.filter(s => s.active !== false);
+      const activeShifts = refData.shifts.filter(s => s.active !== false && !/on.?call/i.test(s.name || ''));
+      const activeLocations = refData.locations.filter(l => l.active !== false);
+      const wizardShift = refData.shifts.find(s => s.shift_id === fortnightWizardShiftId);
+      const wizardLocation = refData.locations.find(l => l.location_id === fortnightWizardLocationId);
 
       return (
         <div className="p-4 pb-24">
@@ -1695,7 +1751,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
               {selectedStaff ? (
                 <div className={`mt-4 p-3 rounded-lg border ${remainingShifts < 0 ? 'bg-orange-50 border-orange-300' : 'bg-blue-50 border-blue-200'}`}>
                   <p className="text-sm font-semibold text-gray-900">
-                    {selectedStaffAllocations.length} of {expectedShifts.toFixed(1)} shifts allocated this fortnight ({formatFte(selectedStaff.fte ?? DEFAULT_FTE)} FTE)
+                    {selectedStaffDatesCovered} of {expectedShifts.toFixed(1)} shifts allocated this fortnight ({formatFte(selectedStaff.fte ?? DEFAULT_FTE)} FTE)
                   </p>
                   <p className={`text-xs mt-1 ${remainingShifts < 0 ? 'text-orange-700 font-semibold' : 'text-gray-600'}`}>
                     {remainingShifts >= 0 ? `${remainingShifts.toFixed(1)} remaining` : `${Math.abs(remainingShifts).toFixed(1)} over FTE`}
@@ -1753,7 +1809,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                       <button
                         key={idx}
                         disabled={!fortnightSelectedStaffId}
-                        onClick={() => setFortnightModalDate(date)}
+                        onClick={() => handleOpenFortnightModal(date)}
                         title={!fortnightSelectedStaffId ? 'Select a staff member first' : undefined}
                         className={`min-h-[76px] p-1.5 rounded-lg border text-left align-top transition ${
                           !fortnightSelectedStaffId
@@ -1767,12 +1823,13 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                         <div className="space-y-0.5">
                           {dayAllocations.map(a => (
                             <div
-                              key={a.allocation_id}
+                              key={a.assignment_id}
                               className={`text-[10px] leading-tight px-1 py-0.5 rounded truncate ${
                                 a.staff_id === fortnightSelectedStaffId ? 'bg-blue-600 text-white font-semibold' : 'bg-gray-100 text-gray-700'
                               }`}
                             >
-                              {getInitials(a.staff?.name)} · {a.shifts?.name}
+                              {getInitials(a.staff?.name)} {SESSION_CODE[a.shifts?.session] || a.shifts?.name}
+                              {activityLabelFor(a) ? `/${activityLabelFor(a)}` : ''}
                             </div>
                           ))}
                         </div>
@@ -1784,7 +1841,10 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
             </div>
           </div>
 
-          {/* Shift Picker Modal */}
+          {/* Fortnight Assignment Wizard — shift, then location, then
+              activity, writing straight into staff_assignments/
+              theatre_activities like the Day view does (see
+              handleFortnightPickActivity/assignStaffFortnight). */}
           {fortnightModalDate && selectedStaff && (
             <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
               <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-md max-h-[85vh] overflow-y-auto">
@@ -1795,7 +1855,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                       {fortnightModalDate.toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long' })}
                     </p>
                   </div>
-                  <button onClick={() => setFortnightModalDate(null)} className="p-1 hover:bg-gray-100 rounded-lg">
+                  <button onClick={handleCloseFortnightModal} className="p-1 hover:bg-gray-100 rounded-lg">
                     <X size={20} />
                   </button>
                 </div>
@@ -1805,45 +1865,103 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                     <p className="text-xs font-semibold text-gray-600 uppercase mb-2">Already on this day</p>
                     <div className="space-y-1">
                       {modalDateAllocations.map(a => (
-                        <p key={a.allocation_id} className="text-sm text-gray-800">
-                          {a.staff?.name} — {a.shifts?.name}
-                          {a.staff_id === fortnightSelectedStaffId && (
-                            <span className="ml-1 text-xs text-blue-600 font-semibold">(this person)</span>
-                          )}
-                        </p>
+                        <div key={a.assignment_id} className="flex items-center justify-between gap-2">
+                          <p className="text-sm text-gray-800">
+                            {a.staff?.name} — {a.locations?.name} · {a.shifts?.name}
+                            {a.staff_id === fortnightSelectedStaffId && (
+                              <span className="ml-1 text-xs text-blue-600 font-semibold">(this person)</span>
+                            )}
+                          </p>
+                          <button
+                            onClick={() => handleRemoveFortnightAssignment(a.assignment_id)}
+                            className="text-xs text-red-600 hover:text-red-700 font-semibold flex-shrink-0"
+                          >
+                            Remove
+                          </button>
+                        </div>
                       ))}
                     </div>
                   </div>
                 )}
 
-                <p className="text-xs font-semibold text-gray-600 uppercase mb-2">Choose a shift</p>
-                {activeShifts.length === 0 ? (
-                  <p className="text-sm text-gray-500">No shifts configured — add some in Settings.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {activeShifts.map(shift => (
-                      <button
-                        key={shift.shift_id}
-                        onClick={() => handleAllocateFortnightShift(fortnightSelectedStaffId, fortnightModalDate, shift.shift_id)}
-                        className={`w-full text-left px-3 py-2 rounded-lg text-sm border transition ${
-                          modalExistingForStaff?.shift_id === shift.shift_id
-                            ? 'bg-blue-600 text-white border-blue-600'
-                            : 'bg-white border-gray-300 hover:bg-blue-50 hover:border-blue-400'
-                        }`}
-                      >
-                        {shift.name} ({shift.start_time?.slice(0, 5)}–{shift.end_time?.slice(0, 5)})
-                      </button>
-                    ))}
+                {/* Step breadcrumb — click an earlier step to go back and change it */}
+                {fortnightWizardStep !== 'shift' && (
+                  <div className="mb-3 flex items-center gap-1 text-xs text-gray-500 flex-wrap">
+                    <button onClick={() => setFortnightWizardStep('shift')} className="text-blue-600 hover:underline font-medium">
+                      {wizardShift?.name}
+                    </button>
+                    {fortnightWizardStep === 'activity' && (
+                      <>
+                        <span>›</span>
+                        <button onClick={() => setFortnightWizardStep('location')} className="text-blue-600 hover:underline font-medium">
+                          {wizardLocation?.name}
+                        </button>
+                      </>
+                    )}
                   </div>
                 )}
 
-                {modalExistingForStaff && (
-                  <button
-                    onClick={() => handleClearFortnightShift(fortnightSelectedStaffId, fortnightModalDate)}
-                    className="w-full mt-3 px-3 py-2 bg-red-50 hover:bg-red-100 text-red-700 text-sm font-semibold rounded-lg transition"
-                  >
-                    Clear Assignment
-                  </button>
+                {fortnightWizardStep === 'shift' && (
+                  <>
+                    <p className="text-xs font-semibold text-gray-600 uppercase mb-2">1. Choose a shift</p>
+                    {activeShifts.length === 0 ? (
+                      <p className="text-sm text-gray-500">No shifts configured — add some in Settings.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {activeShifts.map(shift => (
+                          <button
+                            key={shift.shift_id}
+                            onClick={() => handleFortnightPickShift(shift.shift_id)}
+                            className="w-full text-left px-3 py-2 rounded-lg text-sm border bg-white border-gray-300 hover:bg-blue-50 hover:border-blue-400 transition"
+                          >
+                            {shift.name} ({shift.start_time?.slice(0, 5)}–{shift.end_time?.slice(0, 5)})
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {fortnightWizardStep === 'location' && (
+                  <>
+                    <p className="text-xs font-semibold text-gray-600 uppercase mb-2">2. Choose a location</p>
+                    {activeLocations.length === 0 ? (
+                      <p className="text-sm text-gray-500">No locations configured — add some in Settings.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {activeLocations.map(location => (
+                          <button
+                            key={location.location_id}
+                            onClick={() => handleFortnightPickLocation(location.location_id)}
+                            className="w-full text-left px-3 py-2 rounded-lg text-sm border bg-white border-gray-300 hover:bg-blue-50 hover:border-blue-400 transition"
+                          >
+                            {location.name}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {fortnightWizardStep === 'activity' && (
+                  <>
+                    <p className="text-xs font-semibold text-gray-600 uppercase mb-2">3. Choose an activity</p>
+                    {refData.activities.length === 0 ? (
+                      <p className="text-sm text-gray-500">No activities configured — add some in Settings.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {refData.activities.map(activity => (
+                          <button
+                            key={activity.activity_id}
+                            onClick={() => handleFortnightPickActivity(activity.activity_id)}
+                            className="w-full text-left px-3 py-2 rounded-lg text-sm border bg-white border-gray-300 hover:bg-blue-50 hover:border-blue-400 transition"
+                          >
+                            {activity.name}{activity.abbreviation ? ` (${activity.abbreviation})` : ''}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             </div>
@@ -2938,6 +3056,14 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                   onChange={(e) => setNewActivityInput(e.target.value)}
                   className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm"
                 />
+                <input
+                  type="text"
+                  placeholder="Abbrev. (e.g., 'ED')"
+                  value={newActivityAbbreviation}
+                  onChange={(e) => setNewActivityAbbreviation(e.target.value)}
+                  title="Short code shown in the Fortnight view's abridged day cells"
+                  className="w-28 px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                />
                 <button
                   onClick={handleCreateActivity}
                   className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition text-sm"
@@ -2957,6 +3083,13 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                           onChange={(e) => setEditActivityName(e.target.value)}
                           className="flex-1 px-2 py-1 border border-gray-300 rounded text-sm"
                         />
+                        <input
+                          type="text"
+                          value={editActivityAbbreviation}
+                          onChange={(e) => setEditActivityAbbreviation(e.target.value)}
+                          title="Short code shown in the Fortnight view's abridged day cells"
+                          className="w-24 px-2 py-1 border border-gray-300 rounded text-sm"
+                        />
                         <button
                           onClick={handleUpdateActivity}
                           className="px-3 py-1 bg-green-600 hover:bg-green-700 text-white font-medium rounded text-xs transition"
@@ -2972,7 +3105,9 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                       </div>
                     ) : (
                       <>
-                        <p className="font-semibold text-sm text-gray-900">{act.name}</p>
+                        <p className="font-semibold text-sm text-gray-900">
+                          {act.name}{act.abbreviation && <span className="ml-2 text-xs font-normal text-gray-500">({act.abbreviation})</span>}
+                        </p>
                         <div className="flex gap-2">
                           <button
                             onClick={() => handleStartEditActivity(act)}

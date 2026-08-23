@@ -775,11 +775,11 @@ export async function getActivityTypes(departmentId) {
   }
 }
 
-export async function createActivityType(departmentId, name) {
+export async function createActivityType(departmentId, name, abbreviation = null) {
   try {
     const { data, error } = await supabase
       .from('activity_types')
-      .insert([{ department_id: departmentId, name }])
+      .insert([{ department_id: departmentId, name, abbreviation }])
       .select()
       .single();
 
@@ -789,14 +789,17 @@ export async function createActivityType(departmentId, name) {
   }
 }
 
-// Renames an activity type in place — same past-changes-too caveat as
-// updateLocation: every theatre_activity referencing this activity_id
-// joins the live row, so this rewrites how already-past dates display it.
-export async function updateActivityTypeName(activityId, name) {
+// Renames an activity type (and/or its abbreviation) in place — same
+// past-changes-too caveat as updateLocation: every theatre_activity
+// referencing this activity_id joins the live row, so this rewrites how
+// already-past dates display it. abbreviation is left untouched
+// (undefined) by callers that only care about the name, e.g.
+// updateDutyType's rename-to-match-the-duty-type-label call.
+export async function updateActivityTypeName(activityId, name, abbreviation) {
   try {
     const { data, error } = await supabase
       .from('activity_types')
-      .update({ name })
+      .update({ name, ...(abbreviation !== undefined ? { abbreviation } : {}) })
       .eq('activity_id', activityId)
       .select()
       .single();
@@ -2317,10 +2320,13 @@ export async function updateDepartmentPayCentreNumber(departmentId, payCentreNum
 }
 
 // All staff_assignments for a department across a Mon-Sun week, with the
-// staff's name/payroll_number and shift start/end times attached — the data
-// source for the payroll Excel export. Mirrors getAllOnCallAssignmentsForWeek's
-// "whole department, date range" shape rather than getStaffAssignmentsForWeek's
-// single-staff one, since payroll needs every staff member at once.
+// staff's name/payroll_number, shift start/end times, and linked activity
+// attached — the data source for the payroll Excel export, and (joined
+// with refData.activities client-side for each row's activity_type
+// abbreviation) the Fortnight view's abridged day cells. Mirrors
+// getAllOnCallAssignmentsForWeek's "whole department, date range" shape
+// rather than getStaffAssignmentsForWeek's single-staff one, since both
+// consumers need every staff member at once.
 export async function getAllStaffAssignmentsForRange(departmentId, rangeStartDate, numDays) {
   console.log('getAllStaffAssignmentsForRange called', departmentId, rangeStartDate, numDays);
   const startStr = toLocalDateStr(rangeStartDate);
@@ -2331,7 +2337,7 @@ export async function getAllStaffAssignmentsForRange(departmentId, rangeStartDat
   try {
     const { data, error } = await supabase
       .from('staff_assignments')
-      .select('*, staff(name, payroll_number), locations(name), shifts(name, start_time, end_time, session)')
+      .select('*, staff(name, payroll_number, rank), locations(name), shifts(name, start_time, end_time, session), theatre_activities(activity_id)')
       .eq('department_id', departmentId)
       .gte('date', startStr)
       .lte('date', endStr)
@@ -2346,74 +2352,79 @@ export async function getAllStaffAssignmentsForRange(departmentId, rangeStartDat
 }
 
 // ============================================================
-// FORTNIGHT VIEW — staff-to-shift allocation (no location/role, unlike
-// staff_assignments; see migrations/2026-08-15_fortnight_allocations.sql)
+// FORTNIGHT VIEW — person-first assignment into the same
+// staff_assignments/theatre_activities tables the Day view uses (see
+// migrations/2026-08-23_activity_abbreviation_and_fortnight_unify.sql,
+// which drops the old separate, disconnected staff_shift_allocations
+// table this used to read/write instead). getAllStaffAssignmentsForRange
+// above is the read side; assignStaffFortnight below is the write side.
 // ============================================================
 
-// Whole department's shift allocations across a date range, for the
-// fortnight grid's "who else is on" brief view and the department-wide list
-// shown in the shift-picker modal.
-export async function getStaffShiftAllocationsForRange(departmentId, startDate, endDate) {
-  console.log('getStaffShiftAllocationsForRange called', departmentId, startDate, endDate);
-  const startStr = toLocalDateStr(startDate);
-  const endStr = toLocalDateStr(endDate);
-
-  try {
-    const { data, error } = await supabase
-      .from('staff_shift_allocations')
-      .select('*, staff(name, rank, fte), shifts(name, start_time, end_time, session)')
-      .eq('department_id', departmentId)
-      .gte('date', startStr)
-      .lte('date', endStr)
-      .order('date');
-
-    console.log('Staff shift allocations for range:', data?.length || 0, error);
-    return { data: data || [], error };
-  } catch (err) {
-    console.error('getStaffShiftAllocationsForRange error:', err);
-    return { data: [], error: err };
-  }
-}
-
-// One shift per staff member per day — upsert on (staff_id, date) so
-// re-picking a shift for a day they're already allocated replaces it rather
-// than stacking a second row.
-export async function upsertStaffShiftAllocation(departmentId, staffId, date, shiftId) {
-  console.log('upsertStaffShiftAllocation called', departmentId, staffId, date, shiftId);
+// Adds staffId to the shift/location/activity picked in the Fortnight
+// wizard. Finds an existing theatre_activities card for this exact (date,
+// location, activity, shift) combination and joins it if one already
+// exists — e.g. a second person picking the same AM Endoscopy slot lands
+// on the same card — otherwise creates a new one using the shift's own
+// times, same as a location's activity card always being time-scoped to
+// match whichever shift it was created for.
+export async function assignStaffFortnight(departmentId, date, staffId, shiftId, locationId, activityId) {
+  console.log('assignStaffFortnight called', { departmentId, date, staffId, shiftId, locationId, activityId });
   const dateStr = toLocalDateStr(date);
 
   try {
-    const { data, error } = await supabase
-      .from('staff_shift_allocations')
-      .upsert(
-        [{ department_id: departmentId, staff_id: staffId, date: dateStr, shift_id: shiftId }],
-        { onConflict: 'staff_id,date' }
-      )
-      .select('*, staff(name, rank, fte), shifts(name, start_time, end_time, session)')
-      .single();
+    const [{ data: existingTa, error: findError }, { data: shift, error: shiftError }, { data: staffRow, error: staffError }] = await Promise.all([
+      supabase
+        .from('theatre_activities')
+        .select('theatre_activity_id')
+        .eq('department_id', departmentId)
+        .eq('date', dateStr)
+        .eq('location_id', locationId)
+        .eq('activity_id', activityId)
+        .eq('shift_id', shiftId)
+        .maybeSingle(),
+      supabase.from('shifts').select('start_time, end_time').eq('shift_id', shiftId).single(),
+      supabase.from('staff').select('rank').eq('staff_id', staffId).single(),
+    ]);
+    if (findError) throw findError;
+    if (shiftError) throw shiftError;
+    if (staffError) throw staffError;
 
-    return { data, error };
+    let theatreActivityId = existingTa?.theatre_activity_id;
+    if (!theatreActivityId) {
+      const { data: newTa, error: createError } = await supabase
+        .from('theatre_activities')
+        .insert([{
+          department_id: departmentId,
+          date: dateStr,
+          location_id: locationId,
+          shift_id: shiftId,
+          activity_id: activityId,
+          start_time: shift.start_time,
+          end_time: shift.end_time,
+        }])
+        .select('theatre_activity_id')
+        .single();
+      if (createError) throw createError;
+      theatreActivityId = newTa.theatre_activity_id;
+    } else {
+      const { count, error: dupError } = await supabase
+        .from('staff_assignments')
+        .select('assignment_id', { count: 'exact', head: true })
+        .eq('theatre_activity_id', theatreActivityId)
+        .eq('staff_id', staffId);
+      if (dupError) throw dupError;
+      if (count > 0) return { data: null, error: null }; // already there — no-op, not an error
+    }
+
+    const role = (staffRow.rank === 'consultant' || staffRow.rank === 'fellow') ? 'consultant' : 'registrar';
+
+    const { data, error } = await createStaffAssignment(departmentId, dateStr, locationId, staffId, shiftId, role, null, theatreActivityId, false);
+    if (error) throw error;
+
+    return { data, error: null };
   } catch (err) {
-    console.error('upsertStaffShiftAllocation error:', err);
+    console.error('assignStaffFortnight error:', err);
     return { data: null, error: err };
-  }
-}
-
-export async function deleteStaffShiftAllocation(staffId, date) {
-  console.log('deleteStaffShiftAllocation called', staffId, date);
-  const dateStr = toLocalDateStr(date);
-
-  try {
-    const { error } = await supabase
-      .from('staff_shift_allocations')
-      .delete()
-      .eq('staff_id', staffId)
-      .eq('date', dateStr);
-
-    return { error };
-  } catch (err) {
-    console.error('deleteStaffShiftAllocation error:', err);
-    return { error: err };
   }
 }
 
