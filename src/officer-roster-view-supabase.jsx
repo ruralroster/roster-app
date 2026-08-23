@@ -1931,7 +1931,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
               handleFortnightPickActivity/assignStaffFortnight). */}
           {fortnightModalDate && selectedStaff && (
             <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-              <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-md max-h-[85vh] overflow-y-auto">
+              <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-2xl max-h-[85vh] overflow-y-auto">
                 <div className="flex justify-between items-start mb-4">
                   <div>
                     <h2 className="text-lg font-bold text-gray-900">{selectedStaff.name}</h2>
@@ -1944,118 +1944,126 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                   </button>
                 </div>
 
-                {modalDateAllocations.length > 0 && (
-                  <div className="mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
-                    <p className="text-xs font-semibold text-gray-600 uppercase mb-2">Already on this day</p>
-                    <div className="space-y-1">
-                      {Array.from(groupAllocationsByStaff(modalDateAllocations).values()).map(person => (
-                        <div key={person.staffId} className="flex items-start justify-between gap-2 py-1">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="text-sm font-semibold text-gray-900">{person.name}</span>
-                            {person.staffId === fortnightSelectedStaffId && (
-                              <span className="text-xs text-blue-600 font-semibold">(this person)</span>
-                            )}
-                            {Array.from(person.activityGroups.values()).map((group, i) => (
-                              <span
-                                key={i}
-                                className="px-2 py-0.5 bg-blue-50 text-blue-800 text-xs font-medium rounded-full border border-blue-200"
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                  {/* Left: the assignment wizard */}
+                  <div>
+                    {/* Step breadcrumb — click an earlier step to go back and change it */}
+                    {fortnightWizardStep !== 'shift' && (
+                      <div className="mb-3 flex items-center gap-1 text-xs text-gray-500 flex-wrap">
+                        <button onClick={() => setFortnightWizardStep('shift')} className="text-blue-600 hover:underline font-medium">
+                          {wizardShift?.name}
+                        </button>
+                        {fortnightWizardStep === 'activity' && (
+                          <>
+                            <span>›</span>
+                            <button onClick={() => setFortnightWizardStep('location')} className="text-blue-600 hover:underline font-medium">
+                              {wizardLocation?.name}
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    )}
+
+                    {fortnightWizardStep === 'shift' && (
+                      <>
+                        <p className="text-xs font-semibold text-gray-600 uppercase mb-2">1. Choose a shift</p>
+                        {activeShifts.length === 0 ? (
+                          <p className="text-sm text-gray-500">No shifts configured — add some in Settings.</p>
+                        ) : (
+                          <div className="space-y-2">
+                            {activeShifts.map(shift => (
+                              <button
+                                key={shift.shift_id}
+                                onClick={() => handleFortnightPickShift(shift.shift_id)}
+                                className="w-full text-left px-3 py-2 rounded-lg text-sm border bg-white border-gray-300 hover:bg-blue-50 hover:border-blue-400 transition"
                               >
-                                {group.label ? `${group.label} · ` : ''}{Array.from(group.sessions).join('/')}
-                              </span>
+                                {shift.name} ({shift.start_time?.slice(0, 5)}–{shift.end_time?.slice(0, 5)})
+                              </button>
                             ))}
                           </div>
-                          <button
-                            onClick={() => handleRemoveFortnightPersonDay(person.assignmentIds)}
-                            title="Removes all of this person's activities for the day"
-                            className="text-xs text-red-600 hover:text-red-700 font-semibold flex-shrink-0"
-                          >
-                            Remove
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                        )}
+                      </>
+                    )}
 
-                {/* Step breadcrumb — click an earlier step to go back and change it */}
-                {fortnightWizardStep !== 'shift' && (
-                  <div className="mb-3 flex items-center gap-1 text-xs text-gray-500 flex-wrap">
-                    <button onClick={() => setFortnightWizardStep('shift')} className="text-blue-600 hover:underline font-medium">
-                      {wizardShift?.name}
-                    </button>
+                    {fortnightWizardStep === 'location' && (
+                      <>
+                        <p className="text-xs font-semibold text-gray-600 uppercase mb-2">2. Choose a location</p>
+                        {activeLocations.length === 0 ? (
+                          <p className="text-sm text-gray-500">No locations configured — add some in Settings.</p>
+                        ) : (
+                          <div className="space-y-2">
+                            {activeLocations.map(location => (
+                              <button
+                                key={location.location_id}
+                                onClick={() => handleFortnightPickLocation(location.location_id)}
+                                className="w-full text-left px-3 py-2 rounded-lg text-sm border bg-white border-gray-300 hover:bg-blue-50 hover:border-blue-400 transition"
+                              >
+                                {location.name}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    )}
+
                     {fortnightWizardStep === 'activity' && (
                       <>
-                        <span>›</span>
-                        <button onClick={() => setFortnightWizardStep('location')} className="text-blue-600 hover:underline font-medium">
-                          {wizardLocation?.name}
-                        </button>
+                        <p className="text-xs font-semibold text-gray-600 uppercase mb-2">3. Choose an activity</p>
+                        {activitiesAllowedAtLocation(fortnightWizardLocationId).length === 0 ? (
+                          <p className="text-sm text-gray-500">No activities configured — add some in Settings.</p>
+                        ) : (
+                          <div className="space-y-2">
+                            {activitiesAllowedAtLocation(fortnightWizardLocationId).map(activity => (
+                              <button
+                                key={activity.activity_id}
+                                onClick={() => handleFortnightPickActivity(activity.activity_id)}
+                                className="w-full text-left px-3 py-2 rounded-lg text-sm border bg-white border-gray-300 hover:bg-blue-50 hover:border-blue-400 transition"
+                              >
+                                {activity.name}{activity.abbreviation ? ` (${activity.abbreviation})` : ''}
+                              </button>
+                            ))}
+                          </div>
+                        )}
                       </>
                     )}
                   </div>
-                )}
 
-                {fortnightWizardStep === 'shift' && (
-                  <>
-                    <p className="text-xs font-semibold text-gray-600 uppercase mb-2">1. Choose a shift</p>
-                    {activeShifts.length === 0 ? (
-                      <p className="text-sm text-gray-500">No shifts configured — add some in Settings.</p>
+                  {/* Right: who's already on this day */}
+                  <div>
+                    <p className="text-xs font-semibold text-gray-600 uppercase mb-2">Already on this day</p>
+                    {modalDateAllocations.length === 0 ? (
+                      <p className="text-sm text-gray-400 italic">Nobody yet.</p>
                     ) : (
-                      <div className="space-y-2">
-                        {activeShifts.map(shift => (
-                          <button
-                            key={shift.shift_id}
-                            onClick={() => handleFortnightPickShift(shift.shift_id)}
-                            className="w-full text-left px-3 py-2 rounded-lg text-sm border bg-white border-gray-300 hover:bg-blue-50 hover:border-blue-400 transition"
-                          >
-                            {shift.name} ({shift.start_time?.slice(0, 5)}–{shift.end_time?.slice(0, 5)})
-                          </button>
+                      <div className="space-y-1 p-3 bg-gray-50 rounded-lg border border-gray-200">
+                        {Array.from(groupAllocationsByStaff(modalDateAllocations).values()).map(person => (
+                          <div key={person.staffId} className="flex items-start justify-between gap-2 py-1">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="text-sm font-semibold text-gray-900">{person.name}</span>
+                              {person.staffId === fortnightSelectedStaffId && (
+                                <span className="text-xs text-blue-600 font-semibold">(this person)</span>
+                              )}
+                              {Array.from(person.activityGroups.values()).map((group, i) => (
+                                <span
+                                  key={i}
+                                  className="px-2 py-0.5 bg-blue-50 text-blue-800 text-xs font-medium rounded-full border border-blue-200"
+                                >
+                                  {group.label ? `${group.label} · ` : ''}{Array.from(group.sessions).join('/')}
+                                </span>
+                              ))}
+                            </div>
+                            <button
+                              onClick={() => handleRemoveFortnightPersonDay(person.assignmentIds)}
+                              title="Removes all of this person's activities for the day"
+                              className="text-xs text-red-600 hover:text-red-700 font-semibold flex-shrink-0"
+                            >
+                              Remove
+                            </button>
+                          </div>
                         ))}
                       </div>
                     )}
-                  </>
-                )}
-
-                {fortnightWizardStep === 'location' && (
-                  <>
-                    <p className="text-xs font-semibold text-gray-600 uppercase mb-2">2. Choose a location</p>
-                    {activeLocations.length === 0 ? (
-                      <p className="text-sm text-gray-500">No locations configured — add some in Settings.</p>
-                    ) : (
-                      <div className="space-y-2">
-                        {activeLocations.map(location => (
-                          <button
-                            key={location.location_id}
-                            onClick={() => handleFortnightPickLocation(location.location_id)}
-                            className="w-full text-left px-3 py-2 rounded-lg text-sm border bg-white border-gray-300 hover:bg-blue-50 hover:border-blue-400 transition"
-                          >
-                            {location.name}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </>
-                )}
-
-                {fortnightWizardStep === 'activity' && (
-                  <>
-                    <p className="text-xs font-semibold text-gray-600 uppercase mb-2">3. Choose an activity</p>
-                    {activitiesAllowedAtLocation(fortnightWizardLocationId).length === 0 ? (
-                      <p className="text-sm text-gray-500">No activities configured — add some in Settings.</p>
-                    ) : (
-                      <div className="space-y-2">
-                        {activitiesAllowedAtLocation(fortnightWizardLocationId).map(activity => (
-                          <button
-                            key={activity.activity_id}
-                            onClick={() => handleFortnightPickActivity(activity.activity_id)}
-                            className="w-full text-left px-3 py-2 rounded-lg text-sm border bg-white border-gray-300 hover:bg-blue-50 hover:border-blue-400 transition"
-                          >
-                            {activity.name}{activity.abbreviation ? ` (${activity.abbreviation})` : ''}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </>
-                )}
+                  </div>
+                </div>
               </div>
             </div>
           )}
