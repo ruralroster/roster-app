@@ -31,7 +31,7 @@ export async function initializeDepartment(departmentId) {
   console.log('initializeDepartment called with departmentId:', departmentId);
   
   try {
-    const [locRes, activitiesRes, shiftsRes, staffRes, leaveTypesRes, departmentRes, dutyTypesRes] = await Promise.all([
+    const [locRes, activitiesRes, shiftsRes, staffRes, leaveTypesRes, departmentRes, dutyTypesRes, phoneBookRes] = await Promise.all([
       supabase
         .from('locations')
         .select('*')
@@ -67,6 +67,12 @@ export async function initializeDepartment(departmentId) {
         .select('*')
         .eq('department_id', departmentId)
         .order('sort_order'),
+      supabase
+        .from('phone_book_entries')
+        .select('*')
+        .eq('department_id', departmentId)
+        .eq('active', true)
+        .order('sort_order'),
     ]);
 
     console.log('Locations:', locRes.data?.length || 0, locRes.error);
@@ -76,6 +82,7 @@ export async function initializeDepartment(departmentId) {
     console.log('Leave types:', leaveTypesRes.data?.length || 0, leaveTypesRes.error);
     console.log('Department:', departmentRes.data, departmentRes.error);
     console.log('Duty types:', dutyTypesRes.data?.length || 0, dutyTypesRes.error);
+    console.log('Phone book entries:', phoneBookRes.data?.length || 0, phoneBookRes.error);
 
     return {
       locations: locRes.data || [],
@@ -85,7 +92,8 @@ export async function initializeDepartment(departmentId) {
       leaveTypes: leaveTypesRes.data || [],
       department: departmentRes.data || null,
       dutyTypes: dutyTypesRes.data || [],
-      errors: [locRes.error, activitiesRes.error, shiftsRes.error, staffRes.error, leaveTypesRes.error, departmentRes.error, dutyTypesRes.error].filter(Boolean),
+      phoneBookEntries: phoneBookRes.data || [],
+      errors: [locRes.error, activitiesRes.error, shiftsRes.error, staffRes.error, leaveTypesRes.error, departmentRes.error, dutyTypesRes.error, phoneBookRes.error].filter(Boolean),
     };
   } catch (err) {
     console.error('initializeDepartment error:', err);
@@ -469,6 +477,74 @@ export async function reactivateDutyType(dutyTypeId) {
       .from('duty_types')
       .update({ active: true })
       .eq('duty_type_id', dutyTypeId);
+
+    return { error };
+  } catch (err) {
+    return { error: err };
+  }
+}
+
+// ============================================================
+// PHONE BOOK — officer-managed list of important non-staff numbers (e.g.
+// the nearest tertiary ED, the on-site ED SMO line, the Nurse Unit
+// Manager). See migrations/2026-08-24_phone_book.sql. Shown to everyone in
+// the department under the (renamed) Phone Book tab in the staff view,
+// below the weekly on-call list; editable only by officers, in Settings.
+// ============================================================
+
+export async function getPhoneBookEntries(departmentId) {
+  try {
+    const { data, error } = await supabase
+      .from('phone_book_entries')
+      .select('*')
+      .eq('department_id', departmentId)
+      .eq('active', true)
+      .order('sort_order');
+
+    return { data: data || [], error };
+  } catch (err) {
+    console.error('getPhoneBookEntries error:', err);
+    return { data: [], error: err };
+  }
+}
+
+export async function createPhoneBookEntry(departmentId, label, phone, sortOrder = 0) {
+  try {
+    const { data, error } = await supabase
+      .from('phone_book_entries')
+      .insert([{ department_id: departmentId, label: label.trim(), phone: phone.trim(), sort_order: sortOrder }])
+      .select()
+      .single();
+
+    return { data, error };
+  } catch (err) {
+    return { data: null, error: err };
+  }
+}
+
+export async function updatePhoneBookEntry(phoneBookEntryId, label, phone, sortOrder) {
+  try {
+    const { data, error } = await supabase
+      .from('phone_book_entries')
+      .update({ label: label.trim(), phone: phone.trim(), sort_order: sortOrder })
+      .eq('phone_book_entry_id', phoneBookEntryId)
+      .select()
+      .single();
+
+    return { data, error };
+  } catch (err) {
+    return { data: null, error: err };
+  }
+}
+
+// Hard-deleted, unlike duty types — there's no assignment history keyed to
+// a phone book entry that would need its label preserved.
+export async function deletePhoneBookEntry(phoneBookEntryId) {
+  try {
+    const { error } = await supabase
+      .from('phone_book_entries')
+      .delete()
+      .eq('phone_book_entry_id', phoneBookEntryId);
 
     return { error };
   } catch (err) {

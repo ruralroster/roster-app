@@ -30,6 +30,9 @@ import { createTheatreActivity,
   updateDutyType,
   deactivateDutyType,
   reactivateDutyType,
+  createPhoneBookEntry,
+  updatePhoneBookEntry,
+  deletePhoneBookEntry,
   createLocation,
   updateLocation,
   updateLocationAllowedActivities,
@@ -122,6 +125,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     leaveTypes: [],
     department: null,
     dutyTypes: [],
+    phoneBookEntries: [],
   });
   // Bumped whenever staff are added/removed, so components that fetch their
   // own staff-derived data independently (Case Mix, Fairness, Staff Profiles,
@@ -191,6 +195,15 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   const [editDutyTypeSortOrder, setEditDutyTypeSortOrder] = useState(0);
   const [editDutyTypeStartTime, setEditDutyTypeStartTime] = useState('');
   const [editDutyTypeEndTime, setEditDutyTypeEndTime] = useState('');
+
+  // Phone Book Management State (list lives in refData.phoneBookEntries —
+  // non-staff numbers like the nearest tertiary ED or the NUM line, shown
+  // to everyone under the staff view's Phone Book tab).
+  const [newPhoneBookLabel, setNewPhoneBookLabel] = useState('');
+  const [newPhoneBookPhone, setNewPhoneBookPhone] = useState('');
+  const [editingPhoneBookEntryId, setEditingPhoneBookEntryId] = useState(null);
+  const [editPhoneBookLabel, setEditPhoneBookLabel] = useState('');
+  const [editPhoneBookPhone, setEditPhoneBookPhone] = useState('');
 
   // Location Management State. Default hours are optional (blank = "always
   // open", e.g. an Emergency Department) — just a pre-fill offered when
@@ -1008,6 +1021,61 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     setEditDutyTypeSortOrder(dutyType.sort_order);
     setEditDutyTypeStartTime(dutyType.start_time?.slice(0, 5) || '');
     setEditDutyTypeEndTime(dutyType.end_time?.slice(0, 5) || '');
+  };
+
+  const handleCreatePhoneBookEntry = async () => {
+    if (!newPhoneBookLabel.trim() || !newPhoneBookPhone.trim() || !departmentId) return;
+
+    try {
+      const nextSortOrder = refData.phoneBookEntries.reduce((max, p) => Math.max(max, p.sort_order), -1) + 1;
+      const { data, error } = await createPhoneBookEntry(departmentId, newPhoneBookLabel, newPhoneBookPhone, nextSortOrder);
+      if (error) throw error;
+
+      setRefData(prev => ({ ...prev, phoneBookEntries: [...prev.phoneBookEntries, data] }));
+      setNewPhoneBookLabel('');
+      setNewPhoneBookPhone('');
+      setError(null);
+    } catch (err) {
+      setError(`Failed to add phone book entry: ${err.message}`);
+    }
+  };
+
+  const handleStartEditPhoneBookEntry = (entry) => {
+    setEditingPhoneBookEntryId(entry.phone_book_entry_id);
+    setEditPhoneBookLabel(entry.label);
+    setEditPhoneBookPhone(entry.phone);
+  };
+
+  const handleUpdatePhoneBookEntry = async () => {
+    if (!editingPhoneBookEntryId || !editPhoneBookLabel.trim() || !editPhoneBookPhone.trim()) return;
+
+    try {
+      const editingEntry = refData.phoneBookEntries.find(p => p.phone_book_entry_id === editingPhoneBookEntryId);
+      const { data, error } = await updatePhoneBookEntry(editingPhoneBookEntryId, editPhoneBookLabel, editPhoneBookPhone, editingEntry?.sort_order ?? 0);
+      if (error) throw error;
+
+      setRefData(prev => ({ ...prev, phoneBookEntries: prev.phoneBookEntries.map(p => p.phone_book_entry_id === editingPhoneBookEntryId ? data : p) }));
+      setEditingPhoneBookEntryId(null);
+      setEditPhoneBookLabel('');
+      setEditPhoneBookPhone('');
+      setError(null);
+    } catch (err) {
+      setError(`Failed to update phone book entry: ${err.message}`);
+    }
+  };
+
+  const handleDeletePhoneBookEntry = async (entryId) => {
+    if (!window.confirm('Remove this phone book entry?')) return;
+
+    try {
+      const { error } = await deletePhoneBookEntry(entryId);
+      if (error) throw error;
+
+      setRefData(prev => ({ ...prev, phoneBookEntries: prev.phoneBookEntries.filter(p => p.phone_book_entry_id !== entryId) }));
+      setError(null);
+    } catch (err) {
+      setError(`Failed to remove phone book entry: ${err.message}`);
+    }
   };
 
   // Location Management Handlers
@@ -3216,6 +3284,96 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                               Deactivate
                             </button>
                           )}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </CollapsibleSection>
+
+            {/* Phone Book Section — non-staff numbers (nearest tertiary
+                ED, on-site ED SMO line, Nurse Unit Manager, etc.), shown to
+                everyone under the staff view's Phone Book tab. */}
+            <CollapsibleSection title="Phone Book">
+              <div className="mb-6 p-4 bg-teal-50 rounded-lg">
+                <div className="grid grid-cols-2 gap-3 mb-3">
+                  <input
+                    type="text"
+                    placeholder="Name (e.g., 'Nearest Tertiary ED')"
+                    value={newPhoneBookLabel}
+                    onChange={(e) => setNewPhoneBookLabel(e.target.value)}
+                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  />
+                  <input
+                    type="tel"
+                    placeholder="Phone number"
+                    value={newPhoneBookPhone}
+                    onChange={(e) => setNewPhoneBookPhone(e.target.value)}
+                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  />
+                </div>
+                <button
+                  onClick={handleCreatePhoneBookEntry}
+                  disabled={!newPhoneBookLabel.trim() || !newPhoneBookPhone.trim()}
+                  className="w-full px-4 py-2 bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white font-medium rounded-lg transition text-sm"
+                >
+                  Add Number
+                </button>
+              </div>
+
+              <div className="space-y-2">
+                {refData.phoneBookEntries.length === 0 && (
+                  <p className="text-sm text-gray-500">No phone book entries yet — add one above.</p>
+                )}
+                {refData.phoneBookEntries.map(entry => (
+                  <div key={entry.phone_book_entry_id} className="p-3 border border-gray-200 rounded-lg flex items-center justify-between gap-2">
+                    {editingPhoneBookEntryId === entry.phone_book_entry_id ? (
+                      <div className="flex flex-wrap gap-2 items-center flex-1">
+                        <input
+                          type="text"
+                          value={editPhoneBookLabel}
+                          onChange={(e) => setEditPhoneBookLabel(e.target.value)}
+                          className="flex-1 min-w-[8rem] px-2 py-1 border border-gray-300 rounded text-sm"
+                        />
+                        <input
+                          type="tel"
+                          value={editPhoneBookPhone}
+                          onChange={(e) => setEditPhoneBookPhone(e.target.value)}
+                          className="px-2 py-1 border border-gray-300 rounded text-sm"
+                        />
+                        <button
+                          onClick={handleUpdatePhoneBookEntry}
+                          className="px-3 py-1 bg-green-600 hover:bg-green-700 text-white font-medium rounded text-xs transition"
+                        >
+                          Save
+                        </button>
+                        <button
+                          onClick={() => setEditingPhoneBookEntryId(null)}
+                          className="px-3 py-1 bg-gray-400 hover:bg-gray-500 text-white font-medium rounded text-xs transition"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <div>
+                          <p className="font-semibold text-sm text-gray-900">{entry.label}</p>
+                          <p className="text-xs text-gray-600 font-mono">{entry.phone}</p>
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleStartEditPhoneBookEntry(entry)}
+                            className="px-3 py-1 bg-blue-100 hover:bg-blue-200 text-blue-900 font-medium rounded text-xs transition"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => handleDeletePhoneBookEntry(entry.phone_book_entry_id)}
+                            className="px-3 py-1 bg-red-100 hover:bg-red-200 text-red-900 font-medium rounded text-xs transition"
+                          >
+                            Delete
+                          </button>
                         </div>
                       </>
                     )}

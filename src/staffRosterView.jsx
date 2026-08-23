@@ -8,6 +8,7 @@ import {
   getAllOnCallAssignmentsForWeek,
   getDutyAssignmentsForDate,
   getDutyTypes,
+  getPhoneBookEntries,
   searchStaff,
   getStaffAvailability,
   toggleStaffAvailability,
@@ -87,9 +88,11 @@ export default function StaffRosterView({ departmentId, staffId }) {
   const [weekAssignments, setWeekAssignments] = useState([]);
   const [loadingWeek, setLoadingWeek] = useState(false);
 
-  // On-call tab state
+  // On-call tab state (renamed "Phone Book" in the nav — the on-call
+  // roster plus the officer-managed non-staff numbers below it)
   const [allOnCallAssignments, setAllOnCallAssignments] = useState([]);
   const [loadingOnCall, setLoadingOnCall] = useState(false);
+  const [phoneBookEntries, setPhoneBookEntries] = useState([]);
 
   // Volunteer tab state
   const [volunteerOpportunities, setVolunteerOpportunities] = useState([]);
@@ -136,14 +139,20 @@ export default function StaffRosterView({ departmentId, staffId }) {
       }
 
       try {
-        const [{ data, error: staffError }, { data: dutyTypesData, error: dutyTypesError }] = await Promise.all([
+        // phoneBookError isn't fatal to the rest of the staff view — until
+        // migrations/2026-08-24_phone_book.sql has been run, the table
+        // doesn't exist yet, and the Phone Book tab should just show
+        // nothing rather than block loading everything else.
+        const [{ data, error: staffError }, { data: dutyTypesData, error: dutyTypesError }, { data: phoneBookData }] = await Promise.all([
           getStaffById(staffId),
           getDutyTypes(departmentId),
+          getPhoneBookEntries(departmentId),
         ]);
         if (staffError) throw staffError;
         if (dutyTypesError) throw dutyTypesError;
         setStaffMember(data);
         setDutyTypes(dutyTypesData);
+        setPhoneBookEntries(phoneBookData || []);
         setError(null);
       } catch (err) {
         setError(`Failed to load staff: ${err.message}`);
@@ -852,8 +861,8 @@ export default function StaffRosterView({ departmentId, staffId }) {
           <div className="max-w-3xl mx-auto">
             <div className="bg-white rounded-lg shadow-sm p-6 mb-6 flex items-center justify-between">
               <div>
-                <h1 className="text-2xl font-bold text-gray-900">On-Call Roster</h1>
-                <p className="text-sm text-gray-500">Week of {formatDateShort(weekStart)}</p>
+                <h1 className="text-2xl font-bold text-gray-900">Phone Book</h1>
+                <p className="text-sm text-gray-500">On-call roster — week of {formatDateShort(weekStart)}</p>
               </div>
               <div className="flex gap-2">
                 <button
@@ -896,7 +905,9 @@ export default function StaffRosterView({ departmentId, staffId }) {
                                 <p className="text-xs font-semibold text-gray-600 uppercase mb-1">
                                   {new Date(assignment.date).toLocaleDateString('en-AU', { weekday: 'short', month: 'short', day: 'numeric' })}
                                 </p>
-                                <p className="text-sm font-bold text-gray-900">{assignment.staff?.name}</p>
+                                <button onClick={() => handleViewStaffDetail(assignment.staff_id)} className="text-sm font-bold text-gray-900 hover:underline hover:text-blue-700">
+                                  {assignment.staff?.name}
+                                </button>
                                 {assignment.staff?.phone && (
                                   <p className="text-xs text-gray-600 font-mono">{assignment.staff.phone}</p>
                                 )}
@@ -912,6 +923,23 @@ export default function StaffRosterView({ departmentId, staffId }) {
                       </div>
                     </CollapsibleSection>
                   ) : null
+                )}
+
+                {phoneBookEntries.length > 0 && (
+                  <CollapsibleSection title="Phone Book" defaultOpen>
+                    <div className="space-y-2">
+                      {phoneBookEntries.map(entry => (
+                        <a
+                          key={entry.phone_book_entry_id}
+                          href={`tel:${entry.phone}`}
+                          className="block p-4 bg-teal-50 hover:bg-teal-100 border-l-4 border-teal-500 rounded transition"
+                        >
+                          <p className="text-xs font-semibold text-gray-600 uppercase mb-1">{entry.label}</p>
+                          <p className="text-sm font-mono font-bold text-teal-700 underline">{entry.phone}</p>
+                        </a>
+                      ))}
+                    </div>
+                  </CollapsibleSection>
                 )}
               </div>
             )}
@@ -1391,17 +1419,17 @@ export default function StaffRosterView({ departmentId, staffId }) {
             </div>
 
             {selectedSearchResult.phone && (
-              <div className="bg-blue-50 rounded-lg p-4 mb-6">
+              <a href={`tel:${selectedSearchResult.phone}`} className="block bg-blue-50 hover:bg-blue-100 rounded-lg p-4 mb-6 transition">
                 <p className="text-xs text-gray-600 uppercase tracking-wide mb-1">Phone</p>
-                <p className="text-lg font-mono font-semibold text-gray-900">{selectedSearchResult.phone}</p>
-              </div>
+                <p className="text-lg font-mono font-semibold text-blue-700 underline">{selectedSearchResult.phone}</p>
+              </a>
             )}
 
             {selectedSearchResult.email && (
-              <div className="bg-green-50 rounded-lg p-4 mb-6">
+              <a href={`mailto:${selectedSearchResult.email}`} className="block bg-green-50 hover:bg-green-100 rounded-lg p-4 mb-6 transition">
                 <p className="text-xs text-gray-600 uppercase tracking-wide mb-1">Email</p>
-                <p className="text-sm font-semibold text-gray-900 break-all">{selectedSearchResult.email}</p>
-              </div>
+                <p className="text-sm font-semibold text-blue-700 underline break-all">{selectedSearchResult.email}</p>
+              </a>
             )}
 
             {selectedSearchResult.coffee_order && (
@@ -1476,7 +1504,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
             }`}
           >
             <Phone size={20} className="mx-auto" />
-            <div className="text-[10px] font-semibold mt-0.5">On-Call</div>
+            <div className="text-[10px] font-semibold mt-0.5">Phone Book</div>
           </button>
           <button
             onClick={() => setActiveTab('volunteer')}
