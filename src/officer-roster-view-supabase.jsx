@@ -1955,6 +1955,8 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                     locationName: location?.name || 'Unknown location',
                     activityId,
                     activityName: activity ? (activity.abbreviation ? `${activity.name} (${activity.abbreviation})` : activity.name) : 'Unknown activity',
+                    startTime: a.theatre_activities?.start_time,
+                    endTime: a.theatre_activities?.end_time,
                     people: [],
                   });
                 }
@@ -2193,7 +2195,12 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                                 onClick={() => handleFortnightPickActivity(card.activityId, card.locationId, card.theatreActivityId)}
                                 className="w-full text-left px-3 py-2 rounded-lg text-sm border bg-white border-gray-300 hover:bg-blue-50 hover:border-blue-400 transition"
                               >
-                                <span className="block font-medium">{card.locationName} — {card.activityName}</span>
+                                <span className="block font-medium">
+                                  {card.locationName} — {card.activityName}
+                                  {card.startTime && card.endTime && (
+                                    <span className="font-normal text-gray-500"> ({card.startTime.slice(0, 5)}–{card.endTime.slice(0, 5)})</span>
+                                  )}
+                                </span>
                                 <span className="block text-xs text-gray-500">
                                   with {card.people.map(p => `${p.name}${p.role ? ` (${p.role}${p.onCall ? ', on call' : ''})` : ''}`).join(', ')}
                                 </span>

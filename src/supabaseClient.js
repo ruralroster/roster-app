@@ -2404,7 +2404,7 @@ export async function getAllStaffAssignmentsForRange(departmentId, rangeStartDat
   try {
     const { data, error } = await supabase
       .from('staff_assignments')
-      .select('*, staff(name, payroll_number, rank), locations(name), shifts(name, start_time, end_time, session), theatre_activities(activity_id)')
+      .select('*, staff(name, payroll_number, rank), locations(name), shifts(name, start_time, end_time, session), theatre_activities(activity_id, start_time, end_time)')
       .eq('department_id', departmentId)
       .gte('date', startStr)
       .lte('date', endStr)
@@ -2569,8 +2569,14 @@ export async function assignStaffFortnight(departmentId, date, staffId, shiftId,
     // mirrors cascadeAssignmentAcrossSections in the Day view, just
     // writing straight through instead of staging a draft, since Fortnight
     // has no draft/Complete-Allocation step of its own.
+    //
+    // Skipped when joining a specific card via theatreActivityIdOverride —
+    // there the officer deliberately picked exactly one existing card (see
+    // cardsInSessionForJunior in officer-roster-view-supabase.jsx), and
+    // spilling onto sibling cards for the same activity/location would add
+    // them somewhere they weren't asked to go.
     const shiftGroups = getSessionGroups(shift);
-    if (shiftGroups.length > 1) {
+    if (!theatreActivityIdOverride && shiftGroups.length > 1) {
       const { data: siblings, error: siblingsError } = await supabase
         .from('theatre_activities')
         .select('theatre_activity_id, start_time, end_time')
