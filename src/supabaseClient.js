@@ -2303,6 +2303,34 @@ export async function getAllStaffAssignmentsForRange(departmentId, rangeStartDat
   }
 }
 
+// Whole department's duty_assignments (on-call etc.) across a date range —
+// the Fortnight grid's other data source alongside
+// getAllStaffAssignmentsForRange, since duty-type assignments no longer
+// create a staff_assignments row at all (see assignStaffFortnight).
+export async function getDutyAssignmentsForRange(departmentId, rangeStartDate, numDays) {
+  console.log('getDutyAssignmentsForRange called', departmentId, rangeStartDate, numDays);
+  const startStr = toLocalDateStr(rangeStartDate);
+  const endDate = new Date(rangeStartDate);
+  endDate.setDate(endDate.getDate() + numDays - 1);
+  const endStr = toLocalDateStr(endDate);
+
+  try {
+    const { data, error } = await supabase
+      .from('duty_assignments')
+      .select('*, staff(name)')
+      .eq('department_id', departmentId)
+      .gte('date', startStr)
+      .lte('date', endStr)
+      .order('date');
+
+    console.log('Duty assignments for range:', data?.length || 0, error);
+    return { data: data || [], error };
+  } catch (err) {
+    console.error('getDutyAssignmentsForRange error:', err);
+    return { data: [], error: err };
+  }
+}
+
 // ============================================================
 // FORTNIGHT VIEW — person-first assignment into the same
 // staff_assignments/theatre_activities tables the Day view uses (see

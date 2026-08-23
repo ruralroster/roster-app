@@ -51,6 +51,7 @@ import { createTheatreActivity,
   updateStaffAssignmentLeaveCode,
   updateDepartmentPayCentreNumber,
   getAllStaffAssignmentsForRange,
+  getDutyAssignmentsForRange,
   assignStaffFortnight,
   validateShiftAssignment,
 } from './supabaseClient';
@@ -98,6 +99,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   const [fortnightRankFilter, setFortnightRankFilter] = useState('');
   const [fortnightSelectedStaffId, setFortnightSelectedStaffId] = useState('');
   const [fortnightAllocations, setFortnightAllocations] = useState([]);
+  const [fortnightDutyAssignments, setFortnightDutyAssignments] = useState([]);
   const [loadingFortnight, setLoadingFortnight] = useState(false);
   const [fortnightModalDate, setFortnightModalDate] = useState(null); // Date | null — which day cell's picker is open
   // Fortnight assignment wizard step within that modal — see
@@ -382,10 +384,12 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     loadAllocationStatus();
   }, [departmentId, calendarWeekStart, activeTab]);
 
-  // Fortnight tab — whole department's real staff_assignments for the
-  // visible 14-day window (same data the Day view reads/writes, see
-  // assignStaffFortnight), refetched whenever that window changes or an
-  // assignment is added/removed (via fortnightRefreshKey).
+  // Fortnight tab — whole department's real staff_assignments AND
+  // duty_assignments for the visible 14-day window (same data the Day view
+  // reads/writes — see assignStaffFortnight, which writes to one or the
+  // other depending on whether the activity picked belongs to a duty
+  // type), refetched whenever that window changes or an assignment is
+  // added/removed (via fortnightRefreshKey).
   const [fortnightRefreshKey, setFortnightRefreshKey] = useState(0);
   useEffect(() => {
     const loadFortnightAllocations = async () => {
@@ -394,9 +398,14 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
       setLoadingFortnight(true);
 
       try {
-        const { data, error } = await getAllStaffAssignmentsForRange(departmentId, fortnightStart, 14);
-        if (error) throw error;
-        setFortnightAllocations(data);
+        const [assignRes, dutyRes] = await Promise.all([
+          getAllStaffAssignmentsForRange(departmentId, fortnightStart, 14),
+          getDutyAssignmentsForRange(departmentId, fortnightStart, 14),
+        ]);
+        if (assignRes.error) throw assignRes.error;
+        if (dutyRes.error) throw dutyRes.error;
+        setFortnightAllocations(assignRes.data);
+        setFortnightDutyAssignments(dutyRes.data);
         setError(null);
       } catch (err) {
         setError(`Failed to load fortnight allocations: ${err.message}`);
@@ -669,12 +678,19 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   };
 
   // "Already on this day" is grouped one line per person (see the Fortnight
-  // grid cells' own grouping) — someone with two activities that day has
-  // two assignment rows behind one line, so removing them clears all of
-  // that person's rows for the day rather than just one.
-  const handleRemoveFortnightPersonDay = async (assignmentIds) => {
+  // grid cells' own grouping) — someone with two activities and/or duties
+  // that day has multiple rows behind one line, so removing them clears
+  // all of that person's rows for the day rather than just one. person is
+  // a groupAllocationsByStaff entry, carrying both regular assignmentIds
+  // and on-call dutyKeys (duty_type keys, cleared via updateDutyAssignment
+  // since duty-type assignments no longer have a staff_assignments row at
+  // all — see assignStaffFortnight).
+  const handleRemoveFortnightPersonDay = async (person, date) => {
     try {
-      const results = await Promise.all(assignmentIds.map(id => deleteStaffAssignment(id)));
+      const results = await Promise.all([
+        ...person.assignmentIds.map(id => deleteStaffAssignment(id)),
+        ...person.dutyKeys.map(key => updateDutyAssignment(departmentId, date, key, null)),
+      ]);
       const failed = results.find(r => r.error);
       if (failed) throw failed.error;
 
@@ -1739,6 +1755,13 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
         (allocationsByDate[a.date] = allocationsByDate[a.date] || []).push(a);
       });
 
+      const dutyAllocationsByDate = {};
+      fortnightDutyAssignments.forEach(d => {
+        (dutyAllocationsByDate[d.date] = dutyAllocationsByDate[d.date] || []).push(d);
+      });
+
+      const dutyTypeByKey = new Map(refData.dutyTypes.map(dt => [dt.key, dt]));
+
       // Per-activity abbreviation for the grid's abridged cells — set in
       // Settings → Activities, falling back to the full name so an unset
       // abbreviation doesn't just disappear.
@@ -1749,45 +1772,81 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
         return activity?.abbreviation || activity?.name || null;
       };
 
-      // Session code(s) an assignment's own shift bridges — reuses the same
-      // getSessionGroups logic the Day view groups cards by, rather than
-      // picking just the earliest, so a long shift spanning e.g. AM into
-      // Night shows as "AM/Night" and not a misleadingly narrow "AM".
+      // Session code(s) a {start_time, end_time}-shaped object bridges —
+      // reuses the same getSessionGroups logic the Day view groups cards
+      // by, rather than picking just the earliest, so a long shift
+      // spanning e.g. AM into Night shows as "AM/Night" and not a
+      // misleadingly narrow "AM". Takes the shift/duty-type object
+      // directly (not the assignment row) so it works for both a regular
+      // assignment's shift and a duty type's own configured times.
       const SESSION_LABEL = { morning: 'AM', afternoon: 'PM', night: 'Night' };
-      const sessionLabelsFor = (a) => getSessionGroups(a.shifts).map(g => SESSION_LABEL[g]);
+      const sessionLabelsForTimes = (shiftLike) => getSessionGroups(shiftLike).map(g => SESSION_LABEL[g]);
 
       // One entry per person, further grouped by activity — used by both
       // the grid's abridged day cells and the modal's "Already on this
-      // day" list, so the two always read the same way.
-      const groupAllocationsByStaff = (allocations) => {
+      // day" list, so the two always read the same way. dutyEntries are
+      // duty_assignments rows for the same day — these no longer have a
+      // staff_assignments row at all (see assignStaffFortnight), so they're
+      // merged in here from a separate source, tagged onto the same person
+      // and given their own activity group keyed by duty_type. Session
+      // labels for a duty group come from that duty type's own start/end
+      // time in Settings, if it has one — a duty type with no times set
+      // just shows its label with no session.
+      const groupAllocationsByStaff = (allocations, dutyEntries = []) => {
         const byStaff = new Map();
-        allocations.forEach(a => {
-          if (!byStaff.has(a.staff_id)) {
-            byStaff.set(a.staff_id, { staffId: a.staff_id, name: a.staff?.name, activityGroups: new Map(), assignmentIds: [] });
+        const getOrCreate = (staffId, name) => {
+          if (!byStaff.has(staffId)) {
+            byStaff.set(staffId, { staffId, name, activityGroups: new Map(), assignmentIds: [], dutyKeys: [] });
           }
-          const person = byStaff.get(a.staff_id);
+          return byStaff.get(staffId);
+        };
+
+        allocations.forEach(a => {
+          const person = getOrCreate(a.staff_id, a.staff?.name);
           person.assignmentIds.push(a.assignment_id);
           const activityKey = a.theatre_activities?.activity_id || 'none';
           if (!person.activityGroups.has(activityKey)) {
             person.activityGroups.set(activityKey, { label: activityLabelFor(a), sessions: new Set() });
           }
           const group = person.activityGroups.get(activityKey);
-          sessionLabelsFor(a).forEach(s => group.sessions.add(s));
+          sessionLabelsForTimes(a.shifts).forEach(s => group.sessions.add(s));
         });
+
+        dutyEntries.forEach(d => {
+          if (!d.staff_id) return;
+          const person = getOrCreate(d.staff_id, d.staff?.name);
+          person.dutyKeys.push(d.duty_type);
+          const groupKey = `duty:${d.duty_type}`;
+          const dutyType = dutyTypeByKey.get(d.duty_type);
+          if (!person.activityGroups.has(groupKey)) {
+            person.activityGroups.set(groupKey, { label: dutyType?.label || d.duty_type, sessions: new Set() });
+          }
+          if (dutyType?.start_time && dutyType?.end_time) {
+            const group = person.activityGroups.get(groupKey);
+            sessionLabelsForTimes(dutyType).forEach(s => group.sessions.add(s));
+          }
+        });
+
         return byStaff;
       };
 
       const selectedStaff = refData.staff.find(s => s.staff_id === fortnightSelectedStaffId);
       const selectedStaffAllocations = fortnightAllocations.filter(a => a.staff_id === fortnightSelectedStaffId);
+      const selectedStaffDutyAssignments = fortnightDutyAssignments.filter(d => d.staff_id === fortnightSelectedStaffId);
       // Shifts, not assignment rows: a day where someone covers two
       // activities (e.g. AM Endoscopy then PM Anaesthetics) is one day off
-      // their FTE count, not two, so this counts distinct dates.
-      const selectedStaffDatesCovered = new Set(selectedStaffAllocations.map(a => a.date)).size;
+      // their FTE count, not two, so this counts distinct dates — on-call
+      // duty days count too, alongside regular activity days.
+      const selectedStaffDatesCovered = new Set([
+        ...selectedStaffAllocations.map(a => a.date),
+        ...selectedStaffDutyAssignments.map(d => d.date),
+      ]).size;
       const expectedShifts = selectedStaff ? (selectedStaff.fte ?? DEFAULT_FTE) * 10 : 0;
       const remainingShifts = expectedShifts - selectedStaffDatesCovered;
 
       const modalDateStr = fortnightModalDate ? toLocalDateStr(fortnightModalDate) : null;
       const modalDateAllocations = modalDateStr ? (allocationsByDate[modalDateStr] || []) : [];
+      const modalDateDutyAssignments = modalDateStr ? (dutyAllocationsByDate[modalDateStr] || []) : [];
       const activeShifts = refData.shifts.filter(s => s.active !== false && !/on.?call/i.test(s.name || ''));
       const activeLocations = refData.locations.filter(l => l.active !== false);
       const wizardShift = refData.shifts.find(s => s.shift_id === fortnightWizardShiftId);
@@ -1885,11 +1944,13 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                   {days.map((date, idx) => {
                     const dateStr = toLocalDateStr(date);
                     const dayAllocations = allocationsByDate[dateStr] || [];
-                    const staffOwnAllocation = dayAllocations.find(a => a.staff_id === fortnightSelectedStaffId);
+                    const dayDutyAssignments = dutyAllocationsByDate[dateStr] || [];
+                    const staffOwnAllocation = dayAllocations.find(a => a.staff_id === fortnightSelectedStaffId)
+                      || dayDutyAssignments.find(d => d.staff_id === fortnightSelectedStaffId);
 
                     // One line per person per day, grouped further by
                     // activity — see groupAllocationsByStaff.
-                    const byStaff = groupAllocationsByStaff(dayAllocations);
+                    const byStaff = groupAllocationsByStaff(dayAllocations, dayDutyAssignments);
 
                     return (
                       <div
@@ -1926,7 +1987,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                                 })}
                               </span>
                               <button
-                                onClick={(e) => { e.stopPropagation(); handleRemoveFortnightPersonDay(person.assignmentIds); }}
+                                onClick={(e) => { e.stopPropagation(); handleRemoveFortnightPersonDay(person, date); }}
                                 title={`Remove ${person.name}'s allocations for this day`}
                                 className="flex-shrink-0 leading-none opacity-70 hover:opacity-100"
                               >
@@ -2049,37 +2110,41 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                   {/* Right: who's already on this day */}
                   <div>
                     <p className="text-xs font-semibold text-gray-600 uppercase mb-2">Already on this day</p>
-                    {modalDateAllocations.length === 0 ? (
-                      <p className="text-sm text-gray-400 italic">Nobody yet.</p>
-                    ) : (
-                      <div className="space-y-1 p-3 bg-gray-50 rounded-lg border border-gray-200">
-                        {Array.from(groupAllocationsByStaff(modalDateAllocations).values()).map(person => (
-                          <div key={person.staffId} className="flex items-start justify-between gap-2 py-1">
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className="text-sm font-semibold text-gray-900">{person.name}</span>
-                              {person.staffId === fortnightSelectedStaffId && (
-                                <span className="text-xs text-blue-600 font-semibold">(this person)</span>
-                              )}
-                              {Array.from(person.activityGroups.values()).map((group, i) => (
-                                <span
-                                  key={i}
-                                  className="px-2 py-0.5 bg-blue-50 text-blue-800 text-xs font-medium rounded-full border border-blue-200"
-                                >
-                                  {group.label ? `${group.label} · ` : ''}{Array.from(group.sessions).join('/')}
-                                </span>
-                              ))}
+                    {(() => {
+                      const modalByStaff = groupAllocationsByStaff(modalDateAllocations, modalDateDutyAssignments);
+                      if (modalByStaff.size === 0) {
+                        return <p className="text-sm text-gray-400 italic">Nobody yet.</p>;
+                      }
+                      return (
+                        <div className="space-y-1 p-3 bg-gray-50 rounded-lg border border-gray-200">
+                          {Array.from(modalByStaff.values()).map(person => (
+                            <div key={person.staffId} className="flex items-start justify-between gap-2 py-1">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="text-sm font-semibold text-gray-900">{person.name}</span>
+                                {person.staffId === fortnightSelectedStaffId && (
+                                  <span className="text-xs text-blue-600 font-semibold">(this person)</span>
+                                )}
+                                {Array.from(person.activityGroups.values()).map((group, i) => (
+                                  <span
+                                    key={i}
+                                    className="px-2 py-0.5 bg-blue-50 text-blue-800 text-xs font-medium rounded-full border border-blue-200"
+                                  >
+                                    {group.label ? `${group.label} · ` : ''}{Array.from(group.sessions).join('/')}
+                                  </span>
+                                ))}
+                              </div>
+                              <button
+                                onClick={() => handleRemoveFortnightPersonDay(person, fortnightModalDate)}
+                                title="Removes all of this person's activities and duties for the day"
+                                className="text-xs text-red-600 hover:text-red-700 font-semibold flex-shrink-0"
+                              >
+                                Remove
+                              </button>
                             </div>
-                            <button
-                              onClick={() => handleRemoveFortnightPersonDay(person.assignmentIds)}
-                              title="Removes all of this person's activities for the day"
-                              className="text-xs text-red-600 hover:text-red-700 font-semibold flex-shrink-0"
-                            >
-                              Remove
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                          ))}
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
               </div>
