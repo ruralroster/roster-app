@@ -1777,12 +1777,17 @@ export async function getFairnessReport(departmentId) {
 const NIGHT_LOOKBACK_DAYS = 7; // far enough back to find the last night shift before a cooldown check
 
 // For a date being rostered, works out per-staff fatigue constraints based
-// on what they worked the days before:
-//  - postNightRestStaffIds: worked a Night-session shift the day before —
-//    hard rest day, cannot be assigned anything on `date`.
-//  - nightCooldownStaffIds: two days out from their last night shift — the
-//    mandatory rest day has passed, but they still can't go back onto a Day
-//    shift for one more day (Night shifts are unaffected).
+// on what they worked the days before. Both of the first two only count a
+// genuine in-person night shift (on_call = false) — an on_call night is
+// deliberately excluded, so a routine Day / Night on-call / Day / Night
+// on-call rotation isn't treated as fatiguing the same way back-to-back
+// in-person nights are:
+//  - postNightRestStaffIds: worked an in-person Night-session shift the
+//    day before — rest day, blocked from (overridable) assignment and
+//    excluded outright from on-call duty options on `date`.
+//  - nightCooldownStaffIds: two days out from their last in-person night
+//    shift — the mandatory rest day has passed, but they still can't go
+//    back onto a Day shift for one more day (Night shifts are unaffected).
 //  - fatigueRiskStaffIds: was on a duty type marked counts_as_on_call
 //    overnight the day before — not blocked, just flagged as a fatigue
 //    risk when assigned.
@@ -1803,7 +1808,7 @@ export async function getStaffFatigueStatus(departmentId, date) {
     const [assignmentsRes, dutyRes, dutyTypesRes] = await Promise.all([
       supabase
         .from('staff_assignments')
-        .select('staff_id, date, shifts(session)')
+        .select('staff_id, date, on_call, shifts(session)')
         .eq('department_id', departmentId)
         .gte('date', lookbackStartStr)
         .lt('date', dateStr),
@@ -1823,9 +1828,16 @@ export async function getStaffFatigueStatus(departmentId, date) {
     if (dutyRes.error) throw dutyRes.error;
     if (dutyTypesRes.error) throw dutyTypesRes.error;
 
+    // on_call rows are deliberately excluded here — being reachable
+    // overnight but not physically present isn't the same fatigue load as
+    // an in-person night shift, so it shouldn't trigger the mandatory
+    // rest day / day-shift cooldown below (this previously blocked, or
+    // silently excluded from the on-call dropdown, a routine Day / Night
+    // on-call / Day / Night on-call rotation). A genuine back-to-back
+    // in-person night shift (on_call = false) still counts.
     const lastNightDateByStaff = new Map();
     (assignmentsRes.data || []).forEach(a => {
-      if (a.shifts?.session !== 'night') return;
+      if (a.shifts?.session !== 'night' || a.on_call) return;
       const existing = lastNightDateByStaff.get(a.staff_id);
       if (!existing || a.date > existing) {
         lastNightDateByStaff.set(a.staff_id, a.date);
