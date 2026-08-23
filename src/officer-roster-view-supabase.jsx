@@ -1371,14 +1371,24 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   };
 
   // A shift long enough to span more than one of Morning/Afternoon/Night
-  // (e.g. 10:30-22:00) shouldn't need adding by hand to every other card at
-  // the same location that falls inside it — that's the same person, same
-  // shift, same location, just a different card because each session's
-  // slice of the day is its own theatre_activities row. So once the
-  // person's shift is known to cover >1 group (getSessionGroups on the
-  // shift itself), auto-stage the same staffId/role/shiftId onto every
-  // sibling card at this location+date whose own time window overlaps one
-  // of those groups too — skipping any where they're already an entry.
+  // (e.g. 10:30-22:00) shouldn't need adding by hand to every other card
+  // for the SAME activity at this location that falls inside it — that's
+  // the same person, same shift, same task, just a different card because
+  // each session's slice of the day is its own theatre_activities row
+  // (e.g. an "ED" activity split into a Morning card and a Night card). So
+  // once the person's shift is known to cover >1 group (getSessionGroups
+  // on the shift itself), auto-stage the same staffId/role/shiftId onto
+  // every sibling card with the same activity_id at this location+date
+  // whose own time window overlaps one of those groups too — skipping any
+  // where they're already an entry.
+  //
+  // Deliberately scoped to the same activity_id, not just the same
+  // location: the shared "On Call" location (see syncDutyOnCallActivity)
+  // can host several genuinely distinct, simultaneous duty types — e.g.
+  // ED On-Call and Anaesthetics On-Call both overnight — and matching on
+  // location alone wrongly copied someone assigned to one duty type's card
+  // onto every other duty type's card there too.
+  //
   // Each card's own Complete Allocation still has to be run to commit and
   // to re-check consultant cover, same as any other draft change.
   const cascadeAssignmentAcrossSections = (theatreActivityId, locationId, shiftId, staffId, staffName, role) => {
@@ -1386,8 +1396,11 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     const shiftGroups = getSessionGroups(shift);
     if (shiftGroups.length <= 1) return;
 
+    const originActivityId = theatreActivities.find(t => t.theatre_activity_id === theatreActivityId)?.activity_id;
+    if (!originActivityId) return;
+
     theatreActivities
-      .filter(sibling => sibling.location_id === locationId && sibling.theatre_activity_id !== theatreActivityId)
+      .filter(sibling => sibling.location_id === locationId && sibling.activity_id === originActivityId && sibling.theatre_activity_id !== theatreActivityId)
       .forEach(sibling => {
         const siblingGroups = getSessionGroups({ start_time: sibling.start_time, end_time: sibling.end_time });
         if (!siblingGroups.some(g => shiftGroups.includes(g))) return;
@@ -1898,17 +1911,19 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                     const byStaff = groupAllocationsByStaff(dayAllocations);
 
                     return (
-                      <button
+                      <div
                         key={idx}
-                        disabled={!fortnightSelectedStaffId}
-                        onClick={() => handleOpenFortnightModal(date)}
+                        role="button"
+                        tabIndex={fortnightSelectedStaffId ? 0 : -1}
+                        onClick={() => fortnightSelectedStaffId && handleOpenFortnightModal(date)}
+                        onKeyDown={(e) => { if (fortnightSelectedStaffId && (e.key === 'Enter' || e.key === ' ')) handleOpenFortnightModal(date); }}
                         title={!fortnightSelectedStaffId ? 'Select a staff member first' : undefined}
                         className={`min-h-[76px] p-1.5 rounded-lg border text-left align-top transition ${
                           !fortnightSelectedStaffId
                             ? 'border-gray-100 bg-gray-50 cursor-not-allowed'
                             : staffOwnAllocation
-                              ? 'border-blue-400 bg-blue-50 hover:bg-blue-100'
-                              : 'border-gray-200 bg-white hover:border-blue-400 hover:bg-blue-50'
+                              ? 'border-blue-400 bg-blue-50 hover:bg-blue-100 cursor-pointer'
+                              : 'border-gray-200 bg-white hover:border-blue-400 hover:bg-blue-50 cursor-pointer'
                         }`}
                       >
                         <div className="text-xs font-semibold text-gray-700 mb-1">{date.getDate()}</div>
@@ -1916,21 +1931,30 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                           {Array.from(byStaff.values()).map(person => (
                             <div
                               key={person.staffId}
-                              className={`text-[10px] leading-tight px-1 py-0.5 rounded truncate ${
+                              className={`text-[10px] leading-tight px-1 py-0.5 rounded truncate flex items-center justify-between gap-1 ${
                                 person.staffId === fortnightSelectedStaffId ? 'bg-blue-600 text-white font-semibold' : 'bg-gray-100 text-gray-700'
                               }`}
                             >
-                              {getFirstName(person.name)}
-                              {Array.from(person.activityGroups.values()).map((group, i) => {
-                                const sessions = Array.from(group.sessions).join('/');
-                                return (
-                                  <span key={i}> ({group.label ? `${group.label} - ` : ''}{sessions})</span>
-                                );
-                              })}
+                              <span className="truncate">
+                                {getFirstName(person.name)}
+                                {Array.from(person.activityGroups.values()).map((group, i) => {
+                                  const sessions = Array.from(group.sessions).join('/');
+                                  return (
+                                    <span key={i}> ({group.label ? `${group.label} - ` : ''}{sessions})</span>
+                                  );
+                                })}
+                              </span>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); handleRemoveFortnightPersonDay(person.assignmentIds); }}
+                                title={`Remove ${person.name}'s allocations for this day`}
+                                className="flex-shrink-0 leading-none opacity-70 hover:opacity-100"
+                              >
+                                ×
+                              </button>
                             </div>
                           ))}
                         </div>
-                      </button>
+                      </div>
                     );
                   })}
                 </div>
