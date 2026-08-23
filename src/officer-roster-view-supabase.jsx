@@ -681,10 +681,15 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     }
   };
 
-  const handleRemoveFortnightAssignment = async (assignmentId) => {
+  // "Already on this day" is grouped one line per person (see the Fortnight
+  // grid cells' own grouping) — someone with two activities that day has
+  // two assignment rows behind one line, so removing them clears all of
+  // that person's rows for the day rather than just one.
+  const handleRemoveFortnightPersonDay = async (assignmentIds) => {
     try {
-      const { error } = await deleteStaffAssignment(assignmentId);
-      if (error) throw error;
+      const results = await Promise.all(assignmentIds.map(id => deleteStaffAssignment(id)));
+      const failed = results.find(r => r.error);
+      if (failed) throw failed.error;
 
       setFortnightRefreshKey(k => k + 1);
       setError(null);
@@ -1713,6 +1718,27 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
       const SESSION_LABEL = { morning: 'AM', afternoon: 'PM', night: 'Night' };
       const sessionLabelsFor = (a) => getSessionGroups(a.shifts).map(g => SESSION_LABEL[g]);
 
+      // One entry per person, further grouped by activity — used by both
+      // the grid's abridged day cells and the modal's "Already on this
+      // day" list, so the two always read the same way.
+      const groupAllocationsByStaff = (allocations) => {
+        const byStaff = new Map();
+        allocations.forEach(a => {
+          if (!byStaff.has(a.staff_id)) {
+            byStaff.set(a.staff_id, { staffId: a.staff_id, name: a.staff?.name, activityGroups: new Map(), assignmentIds: [] });
+          }
+          const person = byStaff.get(a.staff_id);
+          person.assignmentIds.push(a.assignment_id);
+          const activityKey = a.theatre_activities?.activity_id || 'none';
+          if (!person.activityGroups.has(activityKey)) {
+            person.activityGroups.set(activityKey, { label: activityLabelFor(a), sessions: new Set() });
+          }
+          const group = person.activityGroups.get(activityKey);
+          sessionLabelsFor(a).forEach(s => group.sessions.add(s));
+        });
+        return byStaff;
+      };
+
       const selectedStaff = refData.staff.find(s => s.staff_id === fortnightSelectedStaffId);
       const selectedStaffAllocations = fortnightAllocations.filter(a => a.staff_id === fortnightSelectedStaffId);
       // Shifts, not assignment rows: a day where someone covers two
@@ -1811,24 +1837,9 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                     const dayAllocations = allocationsByDate[dateStr] || [];
                     const staffOwnAllocation = dayAllocations.find(a => a.staff_id === fortnightSelectedStaffId);
 
-                    // One line per person per day, not per assignment row —
-                    // grouped further by activity, so someone covering two
-                    // activities that day (e.g. AM Endoscopy then PM
-                    // Anaesthetics) reads as "John (Endo - AM) (A - PM)",
-                    // each with every session its own shift bridges.
-                    const byStaff = new Map();
-                    dayAllocations.forEach(a => {
-                      if (!byStaff.has(a.staff_id)) {
-                        byStaff.set(a.staff_id, { staffId: a.staff_id, name: a.staff?.name, activityGroups: new Map() });
-                      }
-                      const person = byStaff.get(a.staff_id);
-                      const activityKey = a.theatre_activities?.activity_id || 'none';
-                      if (!person.activityGroups.has(activityKey)) {
-                        person.activityGroups.set(activityKey, { label: activityLabelFor(a), sessions: new Set() });
-                      }
-                      const group = person.activityGroups.get(activityKey);
-                      sessionLabelsFor(a).forEach(s => group.sessions.add(s));
-                    });
+                    // One line per person per day, grouped further by
+                    // activity — see groupAllocationsByStaff.
+                    const byStaff = groupAllocationsByStaff(dayAllocations);
 
                     return (
                       <button
@@ -1894,16 +1905,20 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                   <div className="mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
                     <p className="text-xs font-semibold text-gray-600 uppercase mb-2">Already on this day</p>
                     <div className="space-y-1">
-                      {modalDateAllocations.map(a => (
-                        <div key={a.assignment_id} className="flex items-center justify-between gap-2">
+                      {Array.from(groupAllocationsByStaff(modalDateAllocations).values()).map(person => (
+                        <div key={person.staffId} className="flex items-center justify-between gap-2">
                           <p className="text-sm text-gray-800">
-                            {a.staff?.name} — {a.locations?.name} · {a.shifts?.name}
-                            {a.staff_id === fortnightSelectedStaffId && (
+                            {person.name}
+                            {Array.from(person.activityGroups.values()).map((group, i) => (
+                              <span key={i}> ({group.label ? `${group.label} - ` : ''}{Array.from(group.sessions).join('/')})</span>
+                            ))}
+                            {person.staffId === fortnightSelectedStaffId && (
                               <span className="ml-1 text-xs text-blue-600 font-semibold">(this person)</span>
                             )}
                           </p>
                           <button
-                            onClick={() => handleRemoveFortnightAssignment(a.assignment_id)}
+                            onClick={() => handleRemoveFortnightPersonDay(person.assignmentIds)}
+                            title="Removes all of this person's activities for the day"
                             className="text-xs text-red-600 hover:text-red-700 font-semibold flex-shrink-0"
                           >
                             Remove
