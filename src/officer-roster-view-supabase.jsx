@@ -1906,16 +1906,21 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                     <p className="text-xs font-semibold text-gray-600 uppercase mb-2">Already on this day</p>
                     <div className="space-y-1">
                       {Array.from(groupAllocationsByStaff(modalDateAllocations).values()).map(person => (
-                        <div key={person.staffId} className="flex items-center justify-between gap-2">
-                          <p className="text-sm text-gray-800">
-                            {person.name}
-                            {Array.from(person.activityGroups.values()).map((group, i) => (
-                              <span key={i}> ({group.label ? `${group.label} - ` : ''}{Array.from(group.sessions).join('/')})</span>
-                            ))}
+                        <div key={person.staffId} className="flex items-start justify-between gap-2 py-1">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-sm font-semibold text-gray-900">{person.name}</span>
                             {person.staffId === fortnightSelectedStaffId && (
-                              <span className="ml-1 text-xs text-blue-600 font-semibold">(this person)</span>
+                              <span className="text-xs text-blue-600 font-semibold">(this person)</span>
                             )}
-                          </p>
+                            {Array.from(person.activityGroups.values()).map((group, i) => (
+                              <span
+                                key={i}
+                                className="px-2 py-0.5 bg-blue-50 text-blue-800 text-xs font-medium rounded-full border border-blue-200"
+                              >
+                                {group.label ? `${group.label} · ` : ''}{Array.from(group.sessions).join('/')}
+                              </span>
+                            ))}
+                          </div>
                           <button
                             onClick={() => handleRemoveFortnightPersonDay(person.assignmentIds)}
                             title="Removes all of this person's activities for the day"
