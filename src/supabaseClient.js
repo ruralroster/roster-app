@@ -2470,11 +2470,13 @@ export async function assignStaffFortnight(departmentId, date, staffId, shiftId,
 // ============================================================
 // SHIFT PATTERN RULES
 // ============================================================
-// A rule occupies a fixed 4-day window ending on the day a shift is being
-// assigned: shift_1_id = 3 days before, shift_2_id = 2 days before,
-// shift_3_id = yesterday, shift_4_id = the shift being assigned today.
-// NULL in any position is the "Any Shift" wildcard — a rule that only
-// cares about the most recent 1-3 days leaves its leading position(s) null.
+// A rule occupies a fixed 7-day window ending on the day a shift is being
+// assigned: shift_1_id = 6 days before, shift_2_id = 5 days before, ...
+// shift_6_id = yesterday, shift_7_id = the shift being assigned today (see
+// migrations/2026-08-23_shift_pattern_rules_7day.sql — this used to be a
+// 4-day window). NULL in any position is the "Any Shift" wildcard — a rule
+// that only cares about the most recent 1-6 days leaves its leading
+// position(s) null.
 
 export async function getShiftPatternRules(departmentId) {
   console.log('getShiftPatternRules called', departmentId);
@@ -2483,7 +2485,7 @@ export async function getShiftPatternRules(departmentId) {
     const { data, error } = await supabase
       .from('shift_pattern_rules')
       .select(
-        '*, shift_1:shift_1_id(shift_id, name), shift_2:shift_2_id(shift_id, name), shift_3:shift_3_id(shift_id, name), shift_4:shift_4_id(shift_id, name)'
+        '*, shift_1:shift_1_id(shift_id, name), shift_2:shift_2_id(shift_id, name), shift_3:shift_3_id(shift_id, name), shift_4:shift_4_id(shift_id, name), shift_5:shift_5_id(shift_id, name), shift_6:shift_6_id(shift_id, name), shift_7:shift_7_id(shift_id, name)'
       )
       .eq('department_id', departmentId)
       .order('created_at');
@@ -2497,7 +2499,7 @@ export async function getShiftPatternRules(departmentId) {
 
 export async function addShiftPatternRule(departmentId, shiftIds, action, description) {
   console.log('addShiftPatternRule called', departmentId, shiftIds, action, description);
-  const [shift1, shift2, shift3, shift4] = shiftIds;
+  const [shift1, shift2, shift3, shift4, shift5, shift6, shift7] = shiftIds;
 
   try {
     const { data, error } = await supabase
@@ -2509,6 +2511,9 @@ export async function addShiftPatternRule(departmentId, shiftIds, action, descri
           shift_2_id: shift2 || null,
           shift_3_id: shift3 || null,
           shift_4_id: shift4 || null,
+          shift_5_id: shift5 || null,
+          shift_6_id: shift6 || null,
+          shift_7_id: shift7 || null,
           rule_action: action,
           description,
         },
@@ -2525,7 +2530,7 @@ export async function addShiftPatternRule(departmentId, shiftIds, action, descri
 
 export async function updateShiftPatternRule(ruleId, shiftIds, action, description) {
   console.log('updateShiftPatternRule called', ruleId, shiftIds, action, description);
-  const [shift1, shift2, shift3, shift4] = shiftIds;
+  const [shift1, shift2, shift3, shift4, shift5, shift6, shift7] = shiftIds;
 
   try {
     const { data, error } = await supabase
@@ -2535,6 +2540,9 @@ export async function updateShiftPatternRule(ruleId, shiftIds, action, descripti
         shift_2_id: shift2 || null,
         shift_3_id: shift3 || null,
         shift_4_id: shift4 || null,
+        shift_5_id: shift5 || null,
+        shift_6_id: shift6 || null,
+        shift_7_id: shift7 || null,
         rule_action: action,
         description,
       })
@@ -2585,7 +2593,7 @@ export async function deleteAllShiftPatternRules(departmentId) {
   }
 }
 
-// Checks a staff member's 3 previous days plus the shift about to be
+// Checks a staff member's 6 previous days plus the shift about to be
 // assigned against the department's shift pattern rules, and returns the
 // most specific (most non-wildcard positions) matching rule's action. A day
 // with no staff_assignments row (a genuine day off) is treated as the
@@ -2599,7 +2607,7 @@ export async function validateShiftAssignment(staffId, date, shiftId, department
   try {
     const dateStr = toLocalDateStr(date);
     const lookbackStart = new Date(date);
-    lookbackStart.setDate(lookbackStart.getDate() - 3);
+    lookbackStart.setDate(lookbackStart.getDate() - 6);
     const lookbackStartStr = toLocalDateStr(lookbackStart);
 
     const [rulesRes, assignmentsRes, offShiftRes] = await Promise.all([
@@ -2623,7 +2631,7 @@ export async function validateShiftAssignment(staffId, date, shiftId, department
     const offShiftId = offShiftRes.data?.shift_id ?? null;
     const shiftByDate = new Map((assignmentsRes.data || []).map(a => [a.date, a.shift_id]));
 
-    const sequence = [3, 2, 1].map(daysAgo => {
+    const sequence = [6, 5, 4, 3, 2, 1].map(daysAgo => {
       const d = new Date(date);
       d.setDate(d.getDate() - daysAgo);
       const dStr = toLocalDateStr(d);
@@ -2634,7 +2642,7 @@ export async function validateShiftAssignment(staffId, date, shiftId, department
     let best = null;
     let bestSpecificity = -1;
     for (const rule of rules) {
-      const cols = [rule.shift_1_id, rule.shift_2_id, rule.shift_3_id, rule.shift_4_id];
+      const cols = [rule.shift_1_id, rule.shift_2_id, rule.shift_3_id, rule.shift_4_id, rule.shift_5_id, rule.shift_6_id, rule.shift_7_id];
       const isMatch = cols.every((col, i) => col === null || col === sequence[i]);
       if (!isMatch) continue;
       const specificity = cols.filter(c => c !== null).length;

@@ -8,14 +8,18 @@ const ACTION_STYLES = {
   WARN: 'bg-yellow-100 text-yellow-900',
 };
 
-const EMPTY_FORM = { shift1: '', shift2: '', shift3: '', shift4: '', action: 'WARN', description: '' };
+const EMPTY_FORM = {
+  shift1: '', shift2: '', shift3: '', shift4: '', shift5: '', shift6: '', shift7: '',
+  action: 'WARN', description: '',
+};
 
-// Rules are always fixed to the same 4-day window (3 days before → 2 days
-// before → yesterday → the shift being assigned today) — see the header
-// comment on validateShiftAssignment() in supabaseClient.js.
+// Rules are always fixed to the same 7-day window (6 days before → ... →
+// yesterday → the shift being assigned today) — see the header comment on
+// validateShiftAssignment() in supabaseClient.js.
 function describePattern(rule, shifts) {
   const shiftName = (id) => (id ? shifts.find(s => s.shift_id === id)?.name || '(deleted shift)' : 'Any Shift');
-  return [rule.shift_1_id, rule.shift_2_id, rule.shift_3_id, rule.shift_4_id].map(shiftName).join(' → ');
+  return [rule.shift_1_id, rule.shift_2_id, rule.shift_3_id, rule.shift_4_id, rule.shift_5_id, rule.shift_6_id, rule.shift_7_id]
+    .map(shiftName).join(' → ');
 }
 
 export default function ShiftPatternRulesUI({ departmentId, shifts }) {
@@ -60,6 +64,9 @@ export default function ShiftPatternRulesUI({ departmentId, shifts }) {
       shift2: rule.shift_2_id || '',
       shift3: rule.shift_3_id || '',
       shift4: rule.shift_4_id || '',
+      shift5: rule.shift_5_id || '',
+      shift6: rule.shift_6_id || '',
+      shift7: rule.shift_7_id || '',
       action: rule.rule_action,
       description: rule.description || '',
     });
@@ -70,7 +77,10 @@ export default function ShiftPatternRulesUI({ departmentId, shifts }) {
     setSaving(true);
     setError(null);
     try {
-      const shiftIds = [form.shift1 || null, form.shift2 || null, form.shift3 || null, form.shift4 || null];
+      const shiftIds = [
+        form.shift1 || null, form.shift2 || null, form.shift3 || null, form.shift4 || null,
+        form.shift5 || null, form.shift6 || null, form.shift7 || null,
+      ];
       const { error: e } = editingRuleId
         ? await updateShiftPatternRule(editingRuleId, shiftIds, form.action, form.description.trim())
         : await addShiftPatternRule(departmentId, shiftIds, form.action, form.description.trim());
@@ -120,8 +130,8 @@ export default function ShiftPatternRulesUI({ departmentId, shifts }) {
     <div>
       {error && <div className="mb-4 p-3 bg-red-50 border border-red-300 rounded-lg text-sm text-red-700">{error}</div>}
       <p className="text-xs text-gray-600 mb-4">
-        Each rule checks a fixed 4-day window: 3 days before the assignment date → 2 days before → yesterday → the
-        shift being assigned today. Leave a position as "Any Shift" to ignore it.
+        Each rule checks a fixed 7-day window: 6 days before the assignment date → ... → yesterday → the shift being
+        assigned today. Leave a position as "Any Shift" to ignore it.
       </p>
 
       <div className="mb-4 flex gap-2">
@@ -194,7 +204,7 @@ export default function ShiftPatternRulesUI({ departmentId, shifts }) {
             </div>
 
             <div className="space-y-3 mb-4">
-              {[1, 2, 3, 4].map(n => (
+              {[1, 2, 3, 4, 5, 6, 7].map(n => (
                 <div key={n}>
                   <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">
                     Shift {n}{n === 1 ? '' : ' (optional)'}
