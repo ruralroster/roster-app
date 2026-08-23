@@ -1494,6 +1494,26 @@ export async function getStaffAvailabilityForDate(departmentId, date) {
 // STAFF FTE
 // ============================================================
 
+// Corrects a misspelled staff name in place — every staff_assignments/
+// duty_assignments/theatre_activities row referencing this staff_id joins
+// the live row, so this rewrites how already-past dates display it, same
+// past-changes-too caveat as renaming a shift/location/activity.
+export async function updateStaffName(staffId, name) {
+  console.log('updateStaffName called', staffId, name);
+
+  try {
+    const { data, error } = await supabase
+      .from('staff')
+      .update({ name })
+      .eq('staff_id', staffId)
+      .select();
+
+    return { data, error };
+  } catch (err) {
+    return { data: null, error: err };
+  }
+}
+
 export async function updateStaffEmail(staffId, email) {
   console.log('updateStaffEmail called', staffId, email);
 

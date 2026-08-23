@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { AlertCircle, Loader } from 'lucide-react';
-import { getStaffActivityMatrix, updateStaffActivityRestrictions, updateStaffEmail, updateStaffCoffeeOrder } from './supabaseClient';
+import { getStaffActivityMatrix, updateStaffActivityRestrictions, updateStaffEmail, updateStaffCoffeeOrder, updateStaffName } from './supabaseClient';
 import CoffeePicker from './CoffeePicker';
 import EditableCell from './EditableCell';
 
@@ -58,6 +58,22 @@ export default function StaffProfilesTab({ departmentId, refreshKey }) {
       setError(null);
     } catch (err) {
       setError(`Failed to update restrictions: ${err.message}`);
+    } finally {
+      setUpdating(null);
+    }
+  };
+
+  const handleNameChange = async (staffId, name) => {
+    if (!name.trim()) return;
+    setUpdating(staffId);
+    try {
+      const { error: updateError } = await updateStaffName(staffId, name.trim());
+      if (updateError) throw updateError;
+
+      setStaff(staff.map(s => s.staff_id === staffId ? { ...s, name: name.trim() } : s));
+      setError(null);
+    } catch (err) {
+      setError(`Failed to update name: ${err.message}`);
     } finally {
       setUpdating(null);
     }
@@ -137,7 +153,12 @@ export default function StaffProfilesTab({ departmentId, refreshKey }) {
               <tr key={person.staff_id} className="hover:bg-gray-50">
                 <td className="px-4 py-3 border border-gray-200">
                   <div>
-                    <p className="font-semibold text-sm text-gray-900">{person.name}</p>
+                    <EditableCell
+                      value={person.name}
+                      placeholder="Name"
+                      disabled={updating === person.staff_id}
+                      onSave={(value) => handleNameChange(person.staff_id, value)}
+                    />
                     <p className="text-xs text-gray-600 capitalize">{person.rank}</p>
                   </div>
                 </td>

@@ -1277,10 +1277,10 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
 
   // "Dr Sarah Jones" -> "SJ" — drops a leading title so initials reflect the
   // person's actual name, for the fortnight grid's brief per-day view.
-  const getInitials = (name) => {
+  const getFirstName = (name) => {
     if (!name) return '?';
     const words = name.split(' ').filter(Boolean).filter(w => !/^(Dr|Mr|Mrs|Ms|Prof)\.?$/i.test(w));
-    return words.slice(0, 2).map(w => w[0].toUpperCase()).join('') || '?';
+    return words[0] || '?';
   };
 
   // Scoped to a specific theatre_activity (a Day activity and a Night
@@ -1696,11 +1696,9 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
         (allocationsByDate[a.date] = allocationsByDate[a.date] || []).push(a);
       });
 
-      // Compact per-shift/per-activity codes for the grid's abridged cells
-      // — SESSION_CODE from each shift's own session field, activity from
-      // the abbreviation set in Settings → Activities (falls back to the
-      // full name so an unset abbreviation doesn't just disappear).
-      const SESSION_CODE = { full: 'D', AM: 'AM', PM: 'PM', night: 'Night', evening: 'E' };
+      // Per-activity abbreviation for the grid's abridged cells — set in
+      // Settings → Activities, falling back to the full name so an unset
+      // abbreviation doesn't just disappear.
       const activityLabelFor = (a) => {
         const activityId = a.theatre_activities?.activity_id;
         if (!activityId) return null;
@@ -1805,6 +1803,21 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                     const dateStr = toLocalDateStr(date);
                     const dayAllocations = allocationsByDate[dateStr] || [];
                     const staffOwnAllocation = dayAllocations.find(a => a.staff_id === fortnightSelectedStaffId);
+
+                    // One line per person per day, not per assignment row —
+                    // someone covering two activities that day (e.g. AM
+                    // Endoscopy then PM Anaesthetics) reads as one line with
+                    // both abbreviations, not two separate lines.
+                    const byStaff = new Map();
+                    dayAllocations.forEach(a => {
+                      if (!byStaff.has(a.staff_id)) {
+                        byStaff.set(a.staff_id, { staffId: a.staff_id, name: a.staff?.name, labels: [] });
+                      }
+                      const label = activityLabelFor(a);
+                      const entry = byStaff.get(a.staff_id);
+                      if (label && !entry.labels.includes(label)) entry.labels.push(label);
+                    });
+
                     return (
                       <button
                         key={idx}
@@ -1821,15 +1834,14 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                       >
                         <div className="text-xs font-semibold text-gray-700 mb-1">{date.getDate()}</div>
                         <div className="space-y-0.5">
-                          {dayAllocations.map(a => (
+                          {Array.from(byStaff.values()).map(person => (
                             <div
-                              key={a.assignment_id}
+                              key={person.staffId}
                               className={`text-[10px] leading-tight px-1 py-0.5 rounded truncate ${
-                                a.staff_id === fortnightSelectedStaffId ? 'bg-blue-600 text-white font-semibold' : 'bg-gray-100 text-gray-700'
+                                person.staffId === fortnightSelectedStaffId ? 'bg-blue-600 text-white font-semibold' : 'bg-gray-100 text-gray-700'
                               }`}
                             >
-                              {getInitials(a.staff?.name)} {SESSION_CODE[a.shifts?.session] || a.shifts?.name}
-                              {activityLabelFor(a) ? `/${activityLabelFor(a)}` : ''}
+                              {getFirstName(person.name)}{person.labels.length > 0 ? ` (${person.labels.join(', ')})` : ''}
                             </div>
                           ))}
                         </div>

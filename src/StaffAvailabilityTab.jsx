@@ -9,6 +9,7 @@ import {
   createStaff,
   deactivateStaff,
   reactivateStaff,
+  updateStaffName,
   updateStaffPayrollNumber,
   updateStaffPositionId,
   updateStaffCostCentre,
@@ -74,6 +75,8 @@ export default function StaffAvailabilityTab({ departmentId, staffList = [], lea
   const [savingDate, setSavingDate] = useState(null);
   const [fteOverrides, setFteOverrides] = useState({});
   const [savingFte, setSavingFte] = useState(false);
+  const [nameOverrides, setNameOverrides] = useState({});
+  const [savingName, setSavingName] = useState(false);
   const [payrollNumberOverrides, setPayrollNumberOverrides] = useState({});
   const [savingPayrollNumber, setSavingPayrollNumber] = useState(false);
   const [positionIdOverrides, setPositionIdOverrides] = useState({});
@@ -240,6 +243,30 @@ export default function StaffAvailabilityTab({ departmentId, staffList = [], lea
       setError(`Failed to update FTE: ${err.message}`);
     } finally {
       setSavingFte(false);
+    }
+  };
+
+  const handleNameInput = (value) => {
+    if (!selectedStaffId) return;
+    setNameOverrides(prev => ({ ...prev, [selectedStaffId]: value }));
+  };
+
+  const handleSaveName = async () => {
+    if (!selectedStaffId) return;
+    const name = nameOverrides[selectedStaffId] ?? selectedStaff?.name ?? '';
+    if (!name.trim()) return;
+
+    setSavingName(true);
+    try {
+      const { error: nameError } = await updateStaffName(selectedStaffId, name.trim());
+      if (nameError) throw nameError;
+
+      if (onStaffChanged) await onStaffChanged();
+      setError(null);
+    } catch (err) {
+      setError(`Failed to update name: ${err.message}`);
+    } finally {
+      setSavingName(false);
     }
   };
 
@@ -543,6 +570,7 @@ export default function StaffAvailabilityTab({ departmentId, staffList = [], lea
 
   const selectedStaff = staffList.find(s => s.staff_id === selectedStaffId);
   const currentFte = fteOverrides[selectedStaffId] ?? selectedStaff?.fte ?? DEFAULT_FTE;
+  const currentName = nameOverrides[selectedStaffId] ?? selectedStaff?.name ?? '';
   const currentPayrollNumber = payrollNumberOverrides[selectedStaffId] ?? selectedStaff?.payroll_number ?? '';
   const currentPositionId = positionIdOverrides[selectedStaffId] ?? selectedStaff?.position_id ?? '';
   const currentCostCentre = costCentreOverrides[selectedStaffId] ?? selectedStaff?.cost_centre ?? '';
@@ -642,6 +670,27 @@ export default function StaffAvailabilityTab({ departmentId, staffList = [], lea
 
       {selectedStaffId && (
         <>
+          <div className="mb-4">
+            <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Name</label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                placeholder="Full name"
+                value={currentName}
+                onChange={(e) => handleNameInput(e.target.value)}
+                disabled={savingName}
+                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+              />
+              <button
+                onClick={handleSaveName}
+                disabled={savingName || !currentName.trim()}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-medium rounded-lg transition text-sm"
+              >
+                {savingName ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+          </div>
+
           <div className="mb-4">
             <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">FTE</label>
             <select
