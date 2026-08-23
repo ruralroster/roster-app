@@ -2858,8 +2858,12 @@ export async function createDepartment(name) {
 // browser — see supabase/functions/invite-staff/index.ts). The function
 // re-checks officer status itself server-side; this call fails harmlessly
 // if the caller isn't actually an officer for departmentId.
-export async function inviteStaff(departmentId, name, email, rank, role) {
-  console.log('inviteStaff called', departmentId, name, email, rank, role);
+// staffId (optional): links this invite to an already-existing, unlinked
+// staff row (see the "Invite" action on a "Not linked" row in
+// StaffAccountsTab) instead of creating a new one — see
+// supabase/functions/invite-staff/index.ts for the two modes.
+export async function inviteStaff(departmentId, name, email, rank, role, staffId = null) {
+  console.log('inviteStaff called', departmentId, name, email, rank, role, staffId);
 
   try {
     const { data, error } = await supabase.functions.invoke('invite-staff', {
@@ -2869,6 +2873,7 @@ export async function inviteStaff(departmentId, name, email, rank, role) {
         email,
         rank,
         role,
+        staffId,
         // Same redirect the "Forgot password" flow uses (Login.jsx) — without
         // it, Supabase falls back to the project's default Site URL, which
         // may not point at this deployment, and the invite link never lands

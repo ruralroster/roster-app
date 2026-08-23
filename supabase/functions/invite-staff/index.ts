@@ -1,14 +1,22 @@
-// Creates (or links) a login for a staff member and makes them a member of
-// `departmentId`. Runs server-side because creating an auth.users row needs
-// the service_role key, which must never reach the browser — the anon key
-// the rest of the app uses can't do this.
+// Creates (or links) a login and makes them a member of `departmentId`.
+// Runs server-side because creating an auth.users row needs the
+// service_role key, which must never reach the browser — the anon key the
+// rest of the app uses can't do this.
+//
+// Two modes, both keyed off whether `staffId` is present in the request:
+//  - Creating a brand new staff record (StaffAccountsTab's invite form):
+//    staffId omitted, name required, a new `staff` row is inserted.
+//  - Linking an EXISTING staff row that has no account yet (the "Invite"
+//    action next to a "Not linked" row in the Staff Accounts list): staffId
+//    provided, name not required, the existing row is updated in place
+//    (email + user_id) rather than a second, duplicate row being created.
 //
 // Deploy: `supabase functions deploy invite-staff`
 // Required secret (never committed, set via the Supabase CLI or dashboard):
 //   supabase secrets set SUPABASE_SERVICE_ROLE_KEY=<service role key>
 // SUPABASE_URL is provided automatically to every Edge Function.
 //
-// Request body: { departmentId, name, email, rank, role, redirectTo }
+// Request body: { departmentId, name, email, rank, role, redirectTo, staffId? }
 // Response:     { data: { staffId, invited } } | { error }
 
 import { createClient } from 'jsr:@supabase/supabase-js@2';
@@ -34,16 +42,16 @@ Deno.serve(async (req) => {
     return json({ error: 'Missing Authorization header' }, 401);
   }
 
-  let body: { departmentId?: string; name?: string; email?: string; rank?: string; role?: string; redirectTo?: string };
+  let body: { departmentId?: string; name?: string; email?: string; rank?: string; role?: string; redirectTo?: string; staffId?: string };
   try {
     body = await req.json();
   } catch {
     return json({ error: 'Invalid JSON body' }, 400);
   }
 
-  const { departmentId, name, email, rank, role, redirectTo } = body;
-  if (!departmentId || !name || !email || !rank || !role) {
-    return json({ error: 'departmentId, name, email, rank, and role are all required' }, 400);
+  const { departmentId, name, email, rank, role, redirectTo, staffId } = body;
+  if (!departmentId || !email || !rank || !role || (!staffId && !name)) {
+    return json({ error: 'departmentId, email, rank, and role are required (plus name, unless linking an existing staffId)' }, 400);
   }
   if (role !== 'staff' && role !== 'officer' && role !== 'intern') {
     return json({ error: "role must be 'staff', 'officer', or 'intern'" }, 400);
@@ -104,6 +112,28 @@ Deno.serve(async (req) => {
     if (profileError) {
       return json({ error: `Profile link failed: ${profileError.message}` }, 500);
     }
+  }
+
+  if (staffId) {
+    // Link an existing, previously-unlinked staff row rather than creating
+    // a duplicate one — scoped to this department so a caller can't use a
+    // staffId from a department they don't officer.
+    const { data: linkedStaff, error: linkError } = await adminClient
+      .from('staff')
+      .update({ email, user_id: targetUserId })
+      .eq('staff_id', staffId)
+      .eq('department_id', departmentId)
+      .select('staff_id')
+      .single();
+
+    if (linkError) {
+      return json({ error: `Staff link failed: ${linkError.message}` }, 500);
+    }
+    if (!linkedStaff) {
+      return json({ error: 'No matching unlinked staff row in this department' }, 404);
+    }
+
+    return json({ data: { staffId: linkedStaff.staff_id, invited } });
   }
 
   const { data: staffRow, error: staffError } = await adminClient

@@ -27,6 +27,14 @@ export default function StaffAccountsTab({ departmentId, refreshKey }) {
   const [inviteError, setInviteError] = useState(null);
   const [inviteSuccess, setInviteSuccess] = useState(null);
 
+  // Inviting an existing, not-yet-linked staff row (as opposed to the form
+  // above, which creates a brand new one) — which row's inline email input
+  // is open, if any.
+  const [linkingStaffId, setLinkingStaffId] = useState(null);
+  const [linkEmail, setLinkEmail] = useState('');
+  const [linking, setLinking] = useState(false);
+  const [linkError, setLinkError] = useState(null);
+
   const loadStaff = async () => {
     setLoading(true);
     try {
@@ -67,6 +75,31 @@ export default function StaffAccountsTab({ departmentId, refreshKey }) {
       setInviteError(`Failed to invite: ${err.message}`);
     } finally {
       setInviting(false);
+    }
+  };
+
+  const handleStartLink = (person) => {
+    setLinkingStaffId(person.staff_id);
+    setLinkEmail(person.email || '');
+    setLinkError(null);
+  };
+
+  const handleSendLink = async (person) => {
+    if (!linkEmail.trim()) return;
+
+    setLinking(true);
+    setLinkError(null);
+    try {
+      const { error: linkErr } = await inviteStaff(departmentId, person.name, linkEmail.trim(), person.rank, person.role || 'staff', person.staff_id);
+      if (linkErr) throw linkErr;
+
+      setLinkingStaffId(null);
+      setLinkEmail('');
+      loadStaff();
+    } catch (err) {
+      setLinkError(`Failed to invite: ${err.message}`);
+    } finally {
+      setLinking(false);
     }
   };
 
@@ -160,10 +193,45 @@ export default function StaffAccountsTab({ departmentId, refreshKey }) {
                       <span className="inline-flex items-center gap-1 text-xs font-semibold text-green-700">
                         <CheckCircle2 size={14} /> Linked
                       </span>
+                    ) : linkingStaffId === person.staff_id ? (
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="email"
+                          placeholder="Email"
+                          value={linkEmail}
+                          onChange={(e) => setLinkEmail(e.target.value)}
+                          disabled={linking}
+                          autoFocus
+                          className="px-2 py-1 border border-gray-300 rounded text-sm w-40"
+                        />
+                        <button
+                          onClick={() => handleSendLink(person)}
+                          disabled={linking || !linkEmail.trim()}
+                          className="px-2 py-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-medium rounded text-xs transition"
+                        >
+                          {linking ? 'Sending...' : 'Send'}
+                        </button>
+                        <button
+                          onClick={() => { setLinkingStaffId(null); setLinkError(null); }}
+                          disabled={linking}
+                          className="px-2 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded text-xs transition"
+                        >
+                          Cancel
+                        </button>
+                        {linkError && <p className="text-xs text-red-700 basis-full">{linkError}</p>}
+                      </div>
                     ) : (
-                      <span className="inline-flex items-center gap-1 text-xs font-semibold text-gray-500">
-                        <CircleDashed size={14} /> Not linked
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="inline-flex items-center gap-1 text-xs font-semibold text-gray-500">
+                          <CircleDashed size={14} /> Not linked
+                        </span>
+                        <button
+                          onClick={() => handleStartLink(person)}
+                          className="px-2 py-0.5 bg-blue-100 hover:bg-blue-200 text-blue-900 font-medium rounded text-xs transition"
+                        >
+                          Invite
+                        </button>
+                      </div>
                     )}
                   </td>
                 </tr>
