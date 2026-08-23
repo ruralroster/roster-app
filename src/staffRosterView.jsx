@@ -584,8 +584,8 @@ export default function StaffRosterView({ departmentId, staffId }) {
             ) : (
               <>
                 {/* On-Call */}
-                <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
-                  <h2 className="text-2xl font-bold mb-3" style={{ fontFamily: "'Comic Sans MS', 'Comic Sans', cursive", color: '#ec4899' }}>On-Call</h2>
+                <div className="bg-white rounded-lg shadow-xl p-6 mb-6">
+                  <h2 className="font-bold mb-3" style={{ fontFamily: "'Comic Sans MS', 'Comic Sans', cursive", color: '#f97316', fontSize: '1.75rem' }}>On-Call</h2>
                   {todayOnCall.length === 0 ? (
                     <p className="text-sm text-gray-500">No on-call roster set for this date.</p>
                   ) : (
@@ -617,8 +617,8 @@ export default function StaffRosterView({ departmentId, staffId }) {
                     quick glance. Click one to see who else is rostered on
                     that same session (looked up from groupedAssignments,
                     the same department-wide data the sections below use). */}
-                <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
-                  <h2 className="text-2xl font-bold mb-3" style={{ fontFamily: "'Comic Sans MS', 'Comic Sans', cursive", color: '#ec4899' }}>My allocations for today</h2>
+                <div className="bg-white rounded-lg shadow-xl p-6 mb-6">
+                  <h2 className="font-bold mb-3" style={{ fontFamily: "'Comic Sans MS', 'Comic Sans', cursive", color: '#f97316', fontSize: '1.75rem' }}>My allocations for today</h2>
                   {todayAssignments.length === 0 ? (
                     <p className="text-sm text-gray-500">No assignments for this date.</p>
                   ) : (
