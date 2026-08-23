@@ -2396,8 +2396,14 @@ export async function getDutyAssignmentsForRange(departmentId, rangeStartDate, n
 // slot lands on the same card — otherwise creates a new one using the
 // shift's own times, same as a location's activity card always being
 // time-scoped to match whichever shift it was created for.
-export async function assignStaffFortnight(departmentId, date, staffId, shiftId, locationId, activityId) {
-  console.log('assignStaffFortnight called', { departmentId, date, staffId, shiftId, locationId, activityId });
+//
+// onCall marks the resulting staff_assignments row the same way the Day
+// view's on-call checkbox does — used when the Fortnight wizard adds a
+// junior doctor's supervising on-call consultant onto the same card (see
+// handleFortnightPickActivity), since that consultant isn't physically
+// present.
+export async function assignStaffFortnight(departmentId, date, staffId, shiftId, locationId, activityId, onCall = false) {
+  console.log('assignStaffFortnight called', { departmentId, date, staffId, shiftId, locationId, activityId, onCall });
   const dateStr = toLocalDateStr(date);
 
   try {
@@ -2466,7 +2472,7 @@ export async function assignStaffFortnight(departmentId, date, staffId, shiftId,
 
     const role = (staffRow.rank === 'consultant' || staffRow.rank === 'fellow') ? 'consultant' : 'registrar';
 
-    const { data, error } = await createStaffAssignment(departmentId, date, locationId, staffId, shiftId, role, null, theatreActivityId, false);
+    const { data, error } = await createStaffAssignment(departmentId, date, locationId, staffId, shiftId, role, null, theatreActivityId, onCall);
     if (error) throw error;
 
     return { data, error: null };

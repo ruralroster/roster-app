@@ -114,6 +114,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   // pick for the rest of this wizard run — see handleFortnightPickShift and
   // handleFortnightConfirmOnCall.
   const [fortnightWizardOnCallConfirmed, setFortnightWizardOnCallConfirmed] = useState(false);
+  const [fortnightWizardOnCallStaffId, setFortnightWizardOnCallStaffId] = useState(null);
   const [fortnightWizardOnCallStaffName, setFortnightWizardOnCallStaffName] = useState(null);
   const [selectedDate, setSelectedDate] = useState(null);
   const [selectedStaff, setSelectedStaff] = useState(null);
@@ -650,6 +651,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     setFortnightWizardShiftId(null);
     setFortnightWizardLocationId(null);
     setFortnightWizardOnCallConfirmed(false);
+    setFortnightWizardOnCallStaffId(null);
     setFortnightWizardOnCallStaffName(null);
   };
 
@@ -659,6 +661,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     setFortnightWizardShiftId(null);
     setFortnightWizardLocationId(null);
     setFortnightWizardOnCallConfirmed(false);
+    setFortnightWizardOnCallStaffId(null);
     setFortnightWizardOnCallStaffName(null);
   };
 
@@ -673,6 +676,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   const handleFortnightPickShift = (shiftId) => {
     setFortnightWizardShiftId(shiftId);
     setFortnightWizardOnCallConfirmed(false);
+    setFortnightWizardOnCallStaffId(null);
     setFortnightWizardOnCallStaffName(null);
 
     const staff = refData.staff.find(s => s.staff_id === fortnightSelectedStaffId);
@@ -692,11 +696,14 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   };
 
   // The officer picks which on-call person is covering this junior's
-  // shift — purely a confirmation gate (nothing is written for it), which
-  // unlocks the normal free location/activity pick below, same as a
-  // consultant/fellow staff member gets.
-  const handleFortnightConfirmOnCall = (staffName) => {
+  // shift. Nothing is written yet — this just remembers who, so that once
+  // a location/activity is picked, handleFortnightPickActivity can add
+  // them to the same card as an on-call consultant alongside the junior,
+  // making the card read the same as if the officer had ticked "on call"
+  // for a consultant in Day view.
+  const handleFortnightConfirmOnCall = (staffId, staffName) => {
     setFortnightWizardOnCallConfirmed(true);
+    setFortnightWizardOnCallStaffId(staffId || null);
     setFortnightWizardOnCallStaffName(staffName || null);
     setFortnightWizardStep('location');
   };
@@ -718,6 +725,16 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
         departmentId, fortnightModalDate, fortnightSelectedStaffId, fortnightWizardShiftId, locationId, activityId
       );
       if (error) throw error;
+
+      // The junior's supervising consultant isn't physically present —
+      // add them to the same card as a consultant with the on-call flag
+      // set, same as assignStaffFortnight already did for the junior.
+      if (fortnightWizardOnCallConfirmed && fortnightWizardOnCallStaffId) {
+        const { error: onCallError } = await assignStaffFortnight(
+          departmentId, fortnightModalDate, fortnightWizardOnCallStaffId, fortnightWizardShiftId, locationId, activityId, true
+        );
+        if (onCallError) throw onCallError;
+      }
 
       handleCloseFortnightModal();
       setFortnightRefreshKey(k => k + 1);
@@ -2156,7 +2173,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                           {modalDateDutyAssignments.filter(d => d.staff_id).map(d => (
                             <button
                               key={`${d.date}-${d.duty_type}`}
-                              onClick={() => handleFortnightConfirmOnCall(d.staff?.name)}
+                              onClick={() => handleFortnightConfirmOnCall(d.staff_id, d.staff?.name)}
                               className="w-full text-left px-3 py-2 rounded-lg text-sm border bg-white border-gray-300 hover:bg-blue-50 hover:border-blue-400 transition"
                             >
                               <span className="block font-medium">{d.staff?.name}</span>
