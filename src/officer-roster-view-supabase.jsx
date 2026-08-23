@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import StaffProfilesTab from './StaffProfilesTab';
 import StaffAccountsTab from './StaffAccountsTab';
-import StaffAvailabilityTab from './StaffAvailabilityTab';
+import StaffAvailabilityTab, { RANK_OPTIONS } from './StaffAvailabilityTab';
 import ShiftPatternRulesUI from './ShiftPatternRulesUI';
 import CaseMixReport from './CaseMixReport';
 import FairnessReport from './FairnessReport';
@@ -96,6 +96,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   const [calendarWeekStart, setCalendarWeekStart] = useState(() => startOfWeek(new Date()));
   const [calendarAllocationStatus, setCalendarAllocationStatus] = useState({}); // dateStr -> 'none'|'green'|'yellow'|'red'
   const [fortnightStart, setFortnightStart] = useState(() => getMondayOfWeek(new Date()));
+  const [fortnightRankFilter, setFortnightRankFilter] = useState('');
   const [fortnightSelectedStaffId, setFortnightSelectedStaffId] = useState('');
   const [fortnightAllocations, setFortnightAllocations] = useState([]);
   const [loadingFortnight, setLoadingFortnight] = useState(false);
@@ -1810,6 +1811,18 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
 
             {/* Staff picker + FTE counter */}
             <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
+              <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Rank</label>
+              <select
+                value={fortnightRankFilter}
+                onChange={(e) => { setFortnightRankFilter(e.target.value); setFortnightSelectedStaffId(''); }}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">All ranks</option>
+                {RANK_OPTIONS.map(r => (
+                  <option key={r.value} value={r.value}>{r.label}</option>
+                ))}
+              </select>
+
               <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Staff Member</label>
               <select
                 value={fortnightSelectedStaffId}
@@ -1817,7 +1830,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="">— Select a staff member —</option>
-                {refData.staff.filter(s => s.active !== false).map(s => (
+                {refData.staff.filter(s => s.active !== false && (!fortnightRankFilter || s.rank === fortnightRankFilter)).map(s => (
                   <option key={s.staff_id} value={s.staff_id}>{s.name} ({s.rank})</option>
                 ))}
               </select>
@@ -1934,7 +1947,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
               <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-2xl max-h-[85vh] overflow-y-auto">
                 <div className="flex justify-between items-start mb-4">
                   <div>
-                    <h2 className="text-lg font-bold text-gray-900">{selectedStaff.name}</h2>
+                    <h2 className="text-lg font-bold text-red-600">{selectedStaff.name}</h2>
                     <p className="text-sm text-gray-600">
                       {fortnightModalDate.toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long' })}
                     </p>
