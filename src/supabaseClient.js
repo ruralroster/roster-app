@@ -2313,20 +2313,46 @@ export async function getAllStaffAssignmentsForRange(departmentId, rangeStartDat
 // ============================================================
 
 // Adds staffId to the shift/location/activity picked in the Fortnight
-// wizard. Finds an existing theatre_activities card for this exact (date,
-// location, activity, shift) combination and joins it if one already
-// exists — e.g. a second person picking the same AM Endoscopy slot lands
-// on the same card — otherwise creates a new one using the shift's own
-// times, same as a location's activity card always being time-scoped to
-// match whichever shift it was created for. If the activity picked is one
-// a duty type auto-created for itself, this also upserts the matching
-// duty_assignments row, so assigning "ED On-Call" from here shows up in
-// the Duty Assignments panel too, not just as a card.
+// wizard.
+//
+// If the activity picked is one a duty type auto-created for itself (see
+// createDutyType) — e.g. "ED On-Call" — this is a duty assignment, not a
+// real activity: it only upserts the matching duty_assignments row and
+// stops there. No theatre_activities card is created for it, exactly like
+// assigning that duty type from the Duty Assignments panel — otherwise it
+// would show as an ordinary card grouped into Morning/Afternoon/Night,
+// which is the exact bug this was built to avoid.
+//
+// Otherwise, finds an existing theatre_activities card for this exact
+// (date, location, activity, shift) combination and joins it if one
+// already exists — e.g. a second person picking the same AM Endoscopy
+// slot lands on the same card — otherwise creates a new one using the
+// shift's own times, same as a location's activity card always being
+// time-scoped to match whichever shift it was created for.
 export async function assignStaffFortnight(departmentId, date, staffId, shiftId, locationId, activityId) {
   console.log('assignStaffFortnight called', { departmentId, date, staffId, shiftId, locationId, activityId });
   const dateStr = toLocalDateStr(date);
 
   try {
+    const { data: dutyType, error: dutyTypeError } = await supabase
+      .from('duty_types')
+      .select('key')
+      .eq('department_id', departmentId)
+      .eq('activity_type_id', activityId)
+      .maybeSingle();
+    if (dutyTypeError) throw dutyTypeError;
+
+    if (dutyType) {
+      const { error } = await supabase
+        .from('duty_assignments')
+        .upsert(
+          [{ department_id: departmentId, date: dateStr, duty_type: dutyType.key, staff_id: staffId }],
+          { onConflict: 'date,duty_type' }
+        );
+      if (error) throw error;
+      return { data: null, error: null };
+    }
+
     const [{ data: existingTa, error: findError }, { data: shift, error: shiftError }, { data: staffRow, error: staffError }] = await Promise.all([
       supabase
         .from('theatre_activities')
@@ -2375,33 +2401,6 @@ export async function assignStaffFortnight(departmentId, date, staffId, shiftId,
 
     const { data, error } = await createStaffAssignment(departmentId, date, locationId, staffId, shiftId, role, null, theatreActivityId, false);
     if (error) throw error;
-
-    // If this activity is one a duty type auto-created for itself (see
-    // createDutyType), also mirror this assignment into duty_assignments —
-    // the reverse of the old duty->card projection that was removed for
-    // showing under the wrong sections. One direction only, so there's no
-    // sync loop: this never creates or edits a card, only ever the other
-    // way around. Best-effort — a hiccup here shouldn't make the card
-    // assignment the officer just made look like it failed.
-    try {
-      const { data: dutyType } = await supabase
-        .from('duty_types')
-        .select('key')
-        .eq('department_id', departmentId)
-        .eq('activity_type_id', activityId)
-        .maybeSingle();
-
-      if (dutyType) {
-        await supabase
-          .from('duty_assignments')
-          .upsert(
-            [{ department_id: departmentId, date: dateStr, duty_type: dutyType.key, staff_id: staffId }],
-            { onConflict: 'date,duty_type' }
-          );
-      }
-    } catch (dutySyncErr) {
-      console.error('assignStaffFortnight duty sync error:', dutySyncErr);
-    }
 
     return { data, error: null };
   } catch (err) {
