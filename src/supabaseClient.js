@@ -265,10 +265,15 @@ export async function updateDutyAssignment(departmentId, date, dutyType, staffId
       return { data: null, error };
     }
 
-    // onConflict must target the table's actual unique constraint
-    // (date, duty_type) — without it, upsert() defaults to the primary key
-    // (duty_id, always a fresh UUID), so it attempts a plain INSERT and
-    // errors out on the constraint instead of updating the existing row.
+    // onConflict must target the table's actual unique constraint —
+    // (department_id, date, duty_type) as of
+    // migrations/2026-08-24_duty_assignments_department_scoped_unique.sql
+    // (previously just (date, duty_type), which let two departments
+    // sharing a duty type key collide on the same date and silently
+    // overwrite each other's row). Without onConflict matching the real
+    // constraint, upsert() defaults to the primary key (duty_id, always a
+    // fresh UUID), so it attempts a plain INSERT and errors out on the
+    // constraint instead of updating the existing row.
     const { data, error } = await supabase
       .from('duty_assignments')
       .upsert(
@@ -280,7 +285,7 @@ export async function updateDutyAssignment(departmentId, date, dutyType, staffId
             staff_id: staffId,
           },
         ],
-        { onConflict: 'date,duty_type' }
+        { onConflict: 'department_id,date,duty_type' }
       )
       .select();
 
@@ -2375,7 +2380,7 @@ export async function assignStaffFortnight(departmentId, date, staffId, shiftId,
         .from('duty_assignments')
         .upsert(
           [{ department_id: departmentId, date: dateStr, duty_type: dutyType.key, staff_id: staffId }],
-          { onConflict: 'date,duty_type' }
+          { onConflict: 'department_id,date,duty_type' }
         );
       if (error) throw error;
       return { data: null, error: null };
