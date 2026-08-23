@@ -1899,8 +1899,32 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
             )}
 
             <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
-              <h1 className="text-2xl font-bold text-gray-900">{formatDate(selectedDate)}</h1>
-              <p className="text-sm text-gray-500">Large Rural Hospital — Rostering Officer</p>
+              <div className="flex items-center justify-between gap-2">
+                <button
+                  onClick={() => {
+                    const d = new Date(selectedDate);
+                    d.setDate(d.getDate() - 1);
+                    setSelectedDate(d);
+                  }}
+                  className="p-2 hover:bg-gray-100 rounded-lg transition flex-shrink-0"
+                >
+                  <ChevronLeft size={24} />
+                </button>
+                <div className="text-center">
+                  <h1 className="text-2xl font-bold text-gray-900">{formatDate(selectedDate)}</h1>
+                  <p className="text-sm text-gray-500">Large Rural Hospital — Rostering Officer</p>
+                </div>
+                <button
+                  onClick={() => {
+                    const d = new Date(selectedDate);
+                    d.setDate(d.getDate() + 1);
+                    setSelectedDate(d);
+                  }}
+                  className="p-2 hover:bg-gray-100 rounded-lg transition flex-shrink-0"
+                >
+                  <ChevronRight size={24} />
+                </button>
+              </div>
               {error && (
                 <div className="mt-4 p-3 bg-red-50 border border-red-300 rounded-lg flex gap-2 items-start">
                   <AlertCircle size={18} className="text-red-600 flex-shrink-0 mt-0.5" />
