@@ -3769,8 +3769,8 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
               activeTab === 'settings' ? 'text-blue-600 border-t-2 border-blue-600' : 'text-gray-600 hover:text-gray-900'
             }`}
           >
-            <Settings size={18} className="mx-auto mb-0.5" />
-            <div className="text-sm font-semibold">Settings</div>
+            <Settings size={20} className="mx-auto" />
+            <div className="text-[10px] font-semibold mt-0.5">Settings</div>
           </button>
         </div>
       </div>
