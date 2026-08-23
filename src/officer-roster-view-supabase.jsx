@@ -94,7 +94,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   const [activeTab, setActiveTab] = useState('calendar');
   const [calendarWeekStart, setCalendarWeekStart] = useState(() => startOfWeek(new Date()));
   const [calendarAllocationStatus, setCalendarAllocationStatus] = useState({}); // dateStr -> 'none'|'green'|'yellow'|'red'
-  const [fortnightStart, setFortnightStart] = useState(() => startOfWeek(new Date()));
+  const [fortnightStart, setFortnightStart] = useState(() => getMondayOfWeek(new Date()));
   const [fortnightSelectedStaffId, setFortnightSelectedStaffId] = useState('');
   const [fortnightAllocations, setFortnightAllocations] = useState([]);
   const [loadingFortnight, setLoadingFortnight] = useState(false);
@@ -1796,7 +1796,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                 </div>
               ) : (
                 <div className="grid grid-cols-7 gap-2">
-                  {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
+                  {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(day => (
                     <div key={day} className="text-center text-xs font-bold text-gray-600 py-1">{day}</div>
                   ))}
                   {days.map((date, idx) => {
