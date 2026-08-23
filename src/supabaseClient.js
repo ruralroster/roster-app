@@ -2398,12 +2398,17 @@ export async function getDutyAssignmentsForRange(departmentId, rangeStartDate, n
 // time-scoped to match whichever shift it was created for.
 //
 // onCall marks the resulting staff_assignments row the same way the Day
-// view's on-call checkbox does — used when the Fortnight wizard adds a
-// junior doctor's supervising on-call consultant onto the same card (see
-// handleFortnightPickActivity), since that consultant isn't physically
-// present.
-export async function assignStaffFortnight(departmentId, date, staffId, shiftId, locationId, activityId, onCall = false) {
-  console.log('assignStaffFortnight called', { departmentId, date, staffId, shiftId, locationId, activityId, onCall });
+// view's on-call checkbox does.
+//
+// theatreActivityIdOverride lets a caller join a specific existing card
+// directly (used by the Fortnight junior wizard, which lists actual cards
+// rather than a shift+location+activity combination) — the person's own
+// shiftId may legitimately differ from whichever shift originally created
+// that card (e.g. a registrar working a "Day" shift joining a card a
+// consultant's "Long Day" shift created), so the normal find-by-shift_id
+// lookup below would otherwise miss it and create a duplicate card.
+export async function assignStaffFortnight(departmentId, date, staffId, shiftId, locationId, activityId, onCall = false, theatreActivityIdOverride = null) {
+  console.log('assignStaffFortnight called', { departmentId, date, staffId, shiftId, locationId, activityId, onCall, theatreActivityIdOverride });
   const dateStr = toLocalDateStr(date);
 
   try {
@@ -2427,15 +2432,17 @@ export async function assignStaffFortnight(departmentId, date, staffId, shiftId,
     }
 
     const [{ data: existingTa, error: findError }, { data: shift, error: shiftError }, { data: staffRow, error: staffError }] = await Promise.all([
-      supabase
-        .from('theatre_activities')
-        .select('theatre_activity_id')
-        .eq('department_id', departmentId)
-        .eq('date', dateStr)
-        .eq('location_id', locationId)
-        .eq('activity_id', activityId)
-        .eq('shift_id', shiftId)
-        .maybeSingle(),
+      theatreActivityIdOverride
+        ? { data: { theatre_activity_id: theatreActivityIdOverride }, error: null }
+        : supabase
+            .from('theatre_activities')
+            .select('theatre_activity_id')
+            .eq('department_id', departmentId)
+            .eq('date', dateStr)
+            .eq('location_id', locationId)
+            .eq('activity_id', activityId)
+            .eq('shift_id', shiftId)
+            .maybeSingle(),
       supabase.from('shifts').select('start_time, end_time').eq('shift_id', shiftId).single(),
       supabase.from('staff').select('rank').eq('staff_id', staffId).single(),
     ]);
@@ -2444,6 +2451,7 @@ export async function assignStaffFortnight(departmentId, date, staffId, shiftId,
     if (staffError) throw staffError;
 
     let theatreActivityId = existingTa?.theatre_activity_id;
+    let alreadyOnCard = false;
     if (!theatreActivityId) {
       const { data: newTa, error: createError } = await supabase
         .from('theatre_activities')
@@ -2467,13 +2475,52 @@ export async function assignStaffFortnight(departmentId, date, staffId, shiftId,
         .eq('theatre_activity_id', theatreActivityId)
         .eq('staff_id', staffId);
       if (dupError) throw dupError;
-      if (count > 0) return { data: null, error: null }; // already there — no-op, not an error
+      alreadyOnCard = count > 0;
     }
 
     const role = (staffRow.rank === 'consultant' || staffRow.rank === 'fellow') ? 'consultant' : 'registrar';
 
-    const { data, error } = await createStaffAssignment(departmentId, date, locationId, staffId, shiftId, role, null, theatreActivityId, onCall);
-    if (error) throw error;
+    let data = null;
+    if (!alreadyOnCard) {
+      const result = await createStaffAssignment(departmentId, date, locationId, staffId, shiftId, role, null, theatreActivityId, onCall);
+      if (result.error) throw result.error;
+      data = result.data;
+    }
+
+    // A shift spanning more than one session (e.g. 10:30-22:00 covering
+    // Afternoon + Night) shouldn't need adding by hand to every other card
+    // for the SAME activity at this location that falls inside it —
+    // mirrors cascadeAssignmentAcrossSections in the Day view, just
+    // writing straight through instead of staging a draft, since Fortnight
+    // has no draft/Complete-Allocation step of its own.
+    const shiftGroups = getSessionGroups(shift);
+    if (shiftGroups.length > 1) {
+      const { data: siblings, error: siblingsError } = await supabase
+        .from('theatre_activities')
+        .select('theatre_activity_id, start_time, end_time')
+        .eq('department_id', departmentId)
+        .eq('date', dateStr)
+        .eq('location_id', locationId)
+        .eq('activity_id', activityId)
+        .neq('theatre_activity_id', theatreActivityId);
+      if (siblingsError) throw siblingsError;
+
+      for (const sibling of siblings || []) {
+        const siblingGroups = getSessionGroups({ start_time: sibling.start_time, end_time: sibling.end_time });
+        if (!siblingGroups.some(g => shiftGroups.includes(g))) continue;
+
+        const { count: siblingCount, error: siblingDupError } = await supabase
+          .from('staff_assignments')
+          .select('assignment_id', { count: 'exact', head: true })
+          .eq('theatre_activity_id', sibling.theatre_activity_id)
+          .eq('staff_id', staffId);
+        if (siblingDupError) throw siblingDupError;
+        if (siblingCount > 0) continue;
+
+        const { error: cascadeError } = await createStaffAssignment(departmentId, date, locationId, staffId, shiftId, role, null, sibling.theatre_activity_id, onCall);
+        if (cascadeError) throw cascadeError;
+      }
+    }
 
     return { data, error: null };
   } catch (err) {
