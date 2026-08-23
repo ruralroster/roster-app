@@ -2078,7 +2078,7 @@ export async function getAvailableShiftsForStaff(staffId, departmentId) {
         .lte('date', endStr),
       supabase
         .from('staff_assignments')
-        .select('location_id, date, role')
+        .select('theatre_activity_id, role')
         .eq('department_id', departmentId)
         .gte('date', startStr)
         .lte('date', endStr),
@@ -2106,11 +2106,18 @@ export async function getAvailableShiftsForStaff(staffId, departmentId) {
 
     const restrictions = staffRes.data?.activity_restrictions || [];
 
-    const filledRolesByKey = new Map(); // `${date}|${location_id}` -> Set(role)
+    // Keyed by theatre_activity_id, not location+date: a location can host
+    // more than one activity/card on the same day (e.g. AM Endoscopy and PM
+    // Anaesthetics both at "Theatre 1"), and a role filled on one card
+    // shouldn't hide a genuinely empty slot on a different card at the same
+    // location. theatre_activity_id is always set here — duty-type
+    // assignments (on-call) no longer create a staff_assignments row at
+    // all, so every row this query sees belongs to a real card.
+    const filledRolesByTheatreActivity = new Map(); // theatre_activity_id -> Set(role)
     (assignRes.data || []).forEach(a => {
-      const key = `${a.date}|${a.location_id}`;
-      if (!filledRolesByKey.has(key)) filledRolesByKey.set(key, new Set());
-      filledRolesByKey.get(key).add(a.role);
+      if (!a.theatre_activity_id) return;
+      if (!filledRolesByTheatreActivity.has(a.theatre_activity_id)) filledRolesByTheatreActivity.set(a.theatre_activity_id, new Set());
+      filledRolesByTheatreActivity.get(a.theatre_activity_id).add(a.role);
     });
 
     const availableDates = new Set(
@@ -2123,7 +2130,7 @@ export async function getAvailableShiftsForStaff(staffId, departmentId) {
 
     const opportunities = (theatreRes.data || [])
       .filter(ta => {
-        const filledRoles = filledRolesByKey.get(`${ta.date}|${ta.location_id}`) || new Set();
+        const filledRoles = filledRolesByTheatreActivity.get(ta.theatre_activity_id) || new Set();
         if (filledRoles.has(roleForRank)) return false; // role already filled
         if (!availableDates.has(ta.date)) return false; // staff hasn't confirmed availability
         const activityName = ta.activity_types?.name;
