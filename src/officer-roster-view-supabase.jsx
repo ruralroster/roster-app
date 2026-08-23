@@ -8,7 +8,7 @@ import CaseMixReport from './CaseMixReport';
 import FairnessReport from './FairnessReport';
 import CollapsibleSection from './CollapsibleSection';
 import { toLocalDateStr } from './dateUtils';
-import { ChevronLeft, ChevronRight, X, AlertCircle, Loader } from 'lucide-react';
+import { ChevronLeft, ChevronRight, X, AlertCircle, Loader, Hand, Settings } from 'lucide-react';
 import { createTheatreActivity,
   initializeDepartment,
   getTheatreActivitiesForDate,
@@ -2568,8 +2568,9 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                       />
                     </div>
                     {getTotalVolunteerCount(ta.theatre_activity_id) > 0 && (
-                      <span className="px-2 py-0.5 bg-purple-100 text-purple-900 text-xs font-semibold rounded-full">
-                        🙋 {getTotalVolunteerCount(ta.theatre_activity_id)} volunteer{getTotalVolunteerCount(ta.theatre_activity_id) === 1 ? '' : 's'} waiting
+                      <span className="flex items-center gap-1 px-2 py-0.5 bg-purple-100 text-purple-900 text-xs font-semibold rounded-full">
+                        <Hand size={12} />
+                        {getTotalVolunteerCount(ta.theatre_activity_id)} volunteer{getTotalVolunteerCount(ta.theatre_activity_id) === 1 ? '' : 's'} waiting
                       </span>
                     )}
                   </div>
@@ -2660,7 +2661,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                                   hardBlocked ? 'text-gray-400 cursor-not-allowed bg-gray-50 border-gray-200' : 'bg-purple-50 border-purple-200 text-purple-900 hover:bg-purple-100'
                                 }`}
                               >
-                                🙋 {s.name}{label}
+                                <span className="inline-flex items-center gap-1"><Hand size={13} />{s.name}{label}</span>
                               </button>
                             );
                           })}
@@ -2767,7 +2768,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                                   hardBlocked ? 'text-gray-400 cursor-not-allowed bg-gray-50 border-gray-200' : 'bg-purple-50 border-purple-200 text-purple-900 hover:bg-purple-100'
                                 }`}
                               >
-                                🙋 {s.name}{label}
+                                <span className="inline-flex items-center gap-1"><Hand size={13} />{s.name}{label}</span>
                               </button>
                             );
                           })}
@@ -3768,6 +3769,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
               activeTab === 'settings' ? 'text-blue-600 border-t-2 border-blue-600' : 'text-gray-600 hover:text-gray-900'
             }`}
           >
+            <Settings size={18} className="mx-auto mb-0.5" />
             <div className="text-sm font-semibold">Settings</div>
           </button>
         </div>
