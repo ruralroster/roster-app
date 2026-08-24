@@ -2611,7 +2611,7 @@ export async function assignStaffFortnight(departmentId, date, staffId, shiftId,
       }
     }
 
-    return { data, error: null };
+    return { data, error: null, theatreActivityId };
   } catch (err) {
     console.error('assignStaffFortnight error:', err);
     return { data: null, error: err };
