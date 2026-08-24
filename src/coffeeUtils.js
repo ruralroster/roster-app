@@ -8,7 +8,7 @@ export const NO_COFFEE = 'No Coffee';
 export const NO_MILK = 'No Milk';
 
 export const COFFEE_TYPES = ['No Coffee', 'Cappuccino', 'Flat White', 'Latte', 'Espresso', 'Long Black', 'Iced Latte'];
-export const MILK_TYPES = ['Whole Milk', 'Skim Milk', 'Oat Milk', 'Almond Milk'];
+export const MILK_TYPES = ['Whole Milk', 'Skim Milk', 'Oat Milk', 'Almond Milk', 'Lactose Free Milk'];
 
 // Espresso and Long Black are always taken black.
 const BLACK_ONLY_TYPES = new Set(['Espresso', 'Long Black']);
