@@ -739,7 +739,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
                                   .filter(a => a.staff_id !== staffId && a.location_id === assignment.location_id)
                                   .map(a => [a.staff_id, a])
                               ).values()
-                            )
+                            ).sort((a, b) => (a.shifts?.start_time || '').localeCompare(b.shifts?.start_time || ''))
                           : [];
 
                         return (
@@ -803,6 +803,9 @@ export default function StaffRosterView({ departmentId, staffId }) {
                     }
                     byLocation[byLocationIndex.get(locationId)].assignments.push(assignment);
                   });
+                  // Earliest shift first within each location, for a quick
+                  // read of who's arriving when.
+                  byLocation.forEach(loc => loc.assignments.sort((a, b) => (a.shifts?.start_time || '').localeCompare(b.shifts?.start_time || '')));
 
                   return (
                     <CollapsibleSection key={groupKey} title={SESSION_GROUP_LABELS[groupKey]}>
