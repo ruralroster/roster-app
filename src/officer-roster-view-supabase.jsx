@@ -53,6 +53,7 @@ import { createTheatreActivity,
   deleteLeaveType,
   updateStaffAssignmentLeaveCode,
   updateDepartmentPayCentreNumber,
+  updateDepartmentCoffeePlace,
   getAllStaffAssignmentsForRange,
   getDutyAssignmentsForRange,
   assignStaffFortnight,
@@ -243,6 +244,9 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   // separate from refData.department so typing doesn't need a round-trip)
   const [payCentreNumberInput, setPayCentreNumberInput] = useState('');
   const [savingPayCentreNumber, setSavingPayCentreNumber] = useState(false);
+  const [coffeePlaceNameInput, setCoffeePlaceNameInput] = useState('');
+  const [coffeePlacePhoneInput, setCoffeePlacePhoneInput] = useState('');
+  const [savingCoffeePlace, setSavingCoffeePlace] = useState(false);
 
   // Leave/Special Code popover state — which assignment is being edited and
   // the in-progress value, following the same "local draft object, confirm
@@ -267,6 +271,8 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
         }
         setRefData(result);
         setPayCentreNumberInput(result.department?.pay_centre_number || '');
+        setCoffeePlaceNameInput(result.department?.coffee_place_name || '');
+        setCoffeePlacePhoneInput(result.department?.coffee_place_phone || '');
         setError(null);
       } catch (err) {
         setError(`Failed to load department: ${err.message}`);
@@ -1407,6 +1413,26 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
       setError(`Failed to save pay centre number: ${err.message}`);
     } finally {
       setSavingPayCentreNumber(false);
+    }
+  };
+
+  const handleSaveCoffeePlace = async () => {
+    if (!departmentId) return;
+
+    setSavingCoffeePlace(true);
+    try {
+      const { error } = await updateDepartmentCoffeePlace(departmentId, coffeePlaceNameInput.trim(), coffeePlacePhoneInput.trim());
+      if (error) throw error;
+
+      setRefData(prev => ({
+        ...prev,
+        department: { ...prev.department, coffee_place_name: coffeePlaceNameInput.trim() || null, coffee_place_phone: coffeePlacePhoneInput.trim() || null },
+      }));
+      setError(null);
+    } catch (err) {
+      setError(`Failed to save coffee place: ${err.message}`);
+    } finally {
+      setSavingCoffeePlace(false);
     }
   };
 
@@ -3385,6 +3411,37 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                 ED, on-site ED SMO line, Nurse Unit Manager, etc.), shown to
                 everyone under the staff view's Phone Book tab. */}
             <CollapsibleSection title="Phone Book">
+              {/* Coffee Place — separate from the general numbers list
+                  below: the Coffee Orders modal looks this up directly to
+                  build its "text the order" link. */}
+              <div className="mb-6 p-4 bg-amber-50 rounded-lg border border-amber-200">
+                <p className="text-xs font-semibold text-amber-900 uppercase mb-2">Coffee Place</p>
+                <div className="grid grid-cols-2 gap-3 mb-3">
+                  <input
+                    type="text"
+                    placeholder="Name (e.g., 'Roasted on Main')"
+                    value={coffeePlaceNameInput}
+                    onChange={(e) => setCoffeePlaceNameInput(e.target.value)}
+                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  />
+                  <input
+                    type="tel"
+                    placeholder="Phone number"
+                    value={coffeePlacePhoneInput}
+                    onChange={(e) => setCoffeePlacePhoneInput(e.target.value)}
+                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  />
+                </div>
+                <button
+                  onClick={handleSaveCoffeePlace}
+                  disabled={savingCoffeePlace}
+                  className="w-full px-4 py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-medium rounded-lg transition text-sm"
+                >
+                  {savingCoffeePlace ? 'Saving...' : 'Save'}
+                </button>
+                <p className="text-xs text-gray-500 mt-2">Where the staff view's Coffee Orders summary texts the order to.</p>
+              </div>
+
               <div className="mb-6 p-4 bg-teal-50 rounded-lg">
                 <div className="grid grid-cols-2 gap-3 mb-3">
                   <input

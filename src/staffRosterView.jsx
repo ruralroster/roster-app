@@ -9,6 +9,7 @@ import {
   getDutyAssignmentsForDate,
   getDutyTypes,
   getPhoneBookEntries,
+  getDepartment,
   searchStaff,
   getStaffAvailability,
   toggleStaffAvailability,
@@ -37,8 +38,9 @@ import {
 } from './availabilityUtils';
 import { buildAssignmentsIcs, getIcsExportFilename, downloadTextFile } from './icsExport';
 import { toLocalDateStr } from './dateUtils';
-import { NO_COFFEE, parseCoffeeOrder } from './coffeeUtils';
+import { NO_COFFEE, NO_MILK, parseCoffeeOrder } from './coffeeUtils';
 import { getMondayOfWeek } from './payrollExport';
+import { isIOS } from './installPrompt';
 
 const SETTINGS_WEEKS_SHOWN = 4;
 const SETTINGS_DAYS_SHOWN = SETTINGS_WEEKS_SHOWN * 7;
@@ -93,6 +95,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
   const [allOnCallAssignments, setAllOnCallAssignments] = useState([]);
   const [loadingOnCall, setLoadingOnCall] = useState(false);
   const [phoneBookEntries, setPhoneBookEntries] = useState([]);
+  const [department, setDepartment] = useState(null); // for coffee_place_name/coffee_place_phone — see the Coffee Orders modal
 
   // Volunteer tab state
   const [volunteerOpportunities, setVolunteerOpportunities] = useState([]);
@@ -116,7 +119,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
   // Which shift groupings to include — all on by default ("everyone working
   // today"); unchecking a box drops that session's staff from the list
   // instead of trying to guess it from the viewer's local clock.
-  const [coffeeSessionFilters, setCoffeeSessionFilters] = useState({ morning: true, afternoon: true, night: true });
+  const [coffeeSessionFilters, setCoffeeSessionFilters] = useState({ morning: true, afternoon: false, night: false });
 
   // Settings tab state
   const [settingsSubTab, setSettingsSubTab] = useState('profile');
@@ -143,16 +146,18 @@ export default function StaffRosterView({ departmentId, staffId }) {
         // migrations/2026-08-24_phone_book.sql has been run, the table
         // doesn't exist yet, and the Phone Book tab should just show
         // nothing rather than block loading everything else.
-        const [{ data, error: staffError }, { data: dutyTypesData, error: dutyTypesError }, { data: phoneBookData }] = await Promise.all([
+        const [{ data, error: staffError }, { data: dutyTypesData, error: dutyTypesError }, { data: phoneBookData }, { data: departmentData }] = await Promise.all([
           getStaffById(staffId),
           getDutyTypes(departmentId),
           getPhoneBookEntries(departmentId),
+          getDepartment(departmentId),
         ]);
         if (staffError) throw staffError;
         if (dutyTypesError) throw dutyTypesError;
         setStaffMember(data);
         setDutyTypes(dutyTypesData);
         setPhoneBookEntries(phoneBookData || []);
+        setDepartment(departmentData || null);
         setError(null);
       } catch (err) {
         setError(`Failed to load staff: ${err.message}`);
@@ -489,7 +494,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
     setShowCoffeeModal(true);
     setLoadingCoffeeModal(true);
     setCoffeeCopied(false);
-    setCoffeeSessionFilters({ morning: true, afternoon: true, night: true });
+    setCoffeeSessionFilters({ morning: true, afternoon: false, night: false });
     try {
       const { data, error: fetchError } = await getStaffAssignmentsForDate(departmentId, new Date());
       if (fetchError) throw fetchError;
@@ -530,6 +535,38 @@ export default function StaffRosterView({ departmentId, staffId }) {
     .filter(person => person.sessionGroups.some(g => coffeeSessionFilters[g]))
     .map(person => ({ ...person, ...parseCoffeeOrder(person.coffee_order) }))
     .filter(person => person.coffeeType !== NO_COFFEE);
+
+  // One line per distinct (coffee type, milk type) combination, with a
+  // count — what actually gets ordered from the coffee place, as opposed
+  // to the per-person table above it which is for checking who's getting
+  // what.
+  const coffeeSummaryLines = (() => {
+    const counts = new Map(); // `${coffeeType}|${milkType}` -> count
+    coffeeOrdersForModal.forEach(person => {
+      const key = `${person.coffeeType}|${person.milkType || ''}`;
+      counts.set(key, (counts.get(key) || 0) + 1);
+    });
+    return Array.from(counts.entries()).map(([key, count]) => {
+      const [coffeeType, milkType] = key.split('|');
+      const milkSuffix = milkType && milkType !== NO_MILK ? ` on ${milkType}` : '';
+      return `${count} x ${coffeeType}${milkSuffix}`;
+    });
+  })();
+
+  const coffeeOrderMessage = [
+    'Good morning, the order for the hospital coffees is:',
+    '',
+    ...coffeeSummaryLines,
+    '',
+    'Thanks! Have a good day',
+  ].join('\n');
+
+  // iOS Safari and Android disagree on the separator between an sms: URI's
+  // number and its query string (& vs ?) — there's no single syntax both
+  // accept.
+  const coffeePlaceSmsHref = department?.coffee_place_phone
+    ? `sms:${encodeURIComponent(department.coffee_place_phone)}${isIOS() ? '&' : '?'}body=${encodeURIComponent(coffeeOrderMessage)}`
+    : null;
 
   const handleCopyCoffeeOrders = async () => {
     const lines = coffeeOrdersForModal.map(person =>
@@ -1360,6 +1397,23 @@ export default function StaffRosterView({ departmentId, staffId }) {
               <p className="text-sm text-gray-500 py-4">No coffee orders — nobody working today wants a coffee (or nobody's set a preference yet).</p>
             ) : (
               <>
+                <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg flex-shrink-0">
+                  <p className="text-xs font-semibold text-amber-900 uppercase mb-2">Order Summary</p>
+                  <ul className="text-sm text-gray-900 space-y-0.5 mb-3 list-disc list-inside">
+                    {coffeeSummaryLines.map((line, i) => <li key={i}>{line}</li>)}
+                  </ul>
+                  {coffeePlaceSmsHref ? (
+                    <a
+                      href={coffeePlaceSmsHref}
+                      className="block text-center px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white text-sm font-medium rounded-lg transition"
+                    >
+                      Text order to {department?.coffee_place_name || 'Coffee Place'}
+                    </a>
+                  ) : (
+                    <p className="text-xs text-gray-500">An officer can set a Coffee Place number in Settings → Phone Book to text this order directly from here.</p>
+                  )}
+                </div>
+
                 <div className="overflow-y-auto flex-1 -mx-6 px-6">
                   <table className="w-full border-collapse">
                     <thead className="sticky top-0 bg-white">

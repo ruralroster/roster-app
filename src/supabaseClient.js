@@ -2393,6 +2393,24 @@ export async function updateDepartmentPayCentreNumber(departmentId, payCentreNum
   }
 }
 
+// See migrations/2026-08-24_coffee_place.sql — the café the Coffee Orders
+// modal's "text the order" link is addressed to.
+export async function updateDepartmentCoffeePlace(departmentId, coffeePlaceName, coffeePlacePhone) {
+  console.log('updateDepartmentCoffeePlace called', departmentId, coffeePlaceName, coffeePlacePhone);
+
+  try {
+    const { error } = await supabase
+      .from('departments')
+      .update({ coffee_place_name: coffeePlaceName || null, coffee_place_phone: coffeePlacePhone || null })
+      .eq('department_id', departmentId);
+
+    return { error };
+  } catch (err) {
+    console.error('updateDepartmentCoffeePlace error:', err);
+    return { error: err };
+  }
+}
+
 // All staff_assignments for a department across a Mon-Sun week, with the
 // staff's name/payroll_number, shift start/end times, and linked activity
 // attached — the data source for the payroll Excel export, and (joined
