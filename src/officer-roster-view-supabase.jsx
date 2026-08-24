@@ -2205,14 +2205,19 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
         const byStaff = new Map();
         const getOrCreate = (staffId, name) => {
           if (!byStaff.has(staffId)) {
-            byStaff.set(staffId, { staffId, name, activityGroups: new Map(), assignmentIds: [], dutyKeys: [] });
+            byStaff.set(staffId, { staffId, name, activityGroups: new Map(), assignmentIds: [], dutyKeys: [], earliestStartTime: null });
           }
           return byStaff.get(staffId);
+        };
+        const noteStartTime = (person, startTime) => {
+          if (!startTime) return;
+          if (!person.earliestStartTime || startTime < person.earliestStartTime) person.earliestStartTime = startTime;
         };
 
         allocations.forEach(a => {
           const person = getOrCreate(a.staff_id, a.staff?.name);
           person.assignmentIds.push(a.assignment_id);
+          noteStartTime(person, a.shifts?.start_time);
           const activityKey = a.theatre_activities?.activity_id || 'none';
           if (!person.activityGroups.has(activityKey)) {
             person.activityGroups.set(activityKey, { label: activityLabelFor(a), sessions: new Set() });
@@ -2227,6 +2232,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
           person.dutyKeys.push(d.duty_type);
           const groupKey = `duty:${d.duty_type}`;
           const dutyType = dutyTypeByKey.get(d.duty_type);
+          noteStartTime(person, dutyType?.start_time);
           if (!person.activityGroups.has(groupKey)) {
             person.activityGroups.set(groupKey, { label: dutyType?.label || d.duty_type, sessions: new Set() });
           }
@@ -2236,7 +2242,11 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
           }
         });
 
-        return byStaff;
+        // Earliest shift/duty start time first, same convenience ordering
+        // as the staff view's per-location lists.
+        return new Map(
+          Array.from(byStaff.entries()).sort((a, b) => (a[1].earliestStartTime || '').localeCompare(b[1].earliestStartTime || ''))
+        );
       };
 
       const selectedStaff = refData.staff.find(s => s.staff_id === fortnightSelectedStaffId);
