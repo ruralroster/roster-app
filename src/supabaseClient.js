@@ -2329,8 +2329,16 @@ export async function getAllocationStatusForRange(departmentId, startDate, endDa
         });
       }
 
+      // "Nothing at all" means genuinely nothing has been touched for
+      // THIS date — no cards and nobody rostered on call — not that the
+      // department happens to have zero duty types configured (previously
+      // checked dutyTypes.length, which is a department-wide setting and
+      // is essentially never 0, so this branch never actually fired and
+      // every untouched date defaulted to orange instead of empty).
+      const hasAnyOnCallSetThatDate = (filledDutyKeysByDate.get(date)?.size || 0) > 0;
+
       let status;
-      if (requiredCount === 0 && dutyTypes.length === 0) status = 'none';
+      if (requiredCount === 0 && !hasAnyOnCallSetThatDate) status = 'none';
       else if (unfilledCount > 0) status = 'red';
       else if (missingOnCallAbbrevs.length > 0) status = 'orange';
       else status = 'green';
