@@ -2343,7 +2343,11 @@ export async function getAllocationStatusForRange(departmentId, startDate, endDa
       else if (missingOnCallAbbrevs.length > 0) status = 'orange';
       else status = 'green';
 
-      statusByDate[date] = { status, missingOnCallAbbrevs };
+      // An empty day hasn't been touched at all, so every duty type reads
+      // as "missing" by construction — that's not the same as a day where
+      // on-call was actually attempted and fell short, so no abbreviations
+      // show on an empty day.
+      statusByDate[date] = { status, missingOnCallAbbrevs: status === 'none' ? [] : missingOnCallAbbrevs };
     }
 
     return { data: statusByDate, error: null };
