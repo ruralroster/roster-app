@@ -58,6 +58,15 @@ import { createTheatreActivity,
   getDutyAssignmentsForRange,
   assignStaffFortnight,
   validateShiftAssignment,
+  createWeekTemplate,
+  deleteWeekTemplate,
+  getWeekTemplateEntries,
+  createWeekTemplateEntry,
+  deleteWeekTemplateEntry,
+  getWeekTemplateApplicationsForRange,
+  applyWeekTemplate,
+  getPendingSickReports,
+  resolveSickReport,
 } from './supabaseClient';
 import { downloadPayrollExcel, getMondayOfWeek } from './payrollExport';
 import { getSessionGroups, SESSION_GROUP_ORDER, SESSION_GROUP_LABELS, SESSION_DEFAULT_TIMES } from './shiftSessionUtils';
@@ -69,18 +78,11 @@ const CALENDAR_DAYS_SHOWN = CALENDAR_WEEKS_SHOWN * 7;
 const EMPTY_FATIGUE_STATUS = { postNightRestStaffIds: new Set(), nightCooldownStaffIds: new Set(), fatigueRiskStaffIds: new Set() };
 
 const ALLOCATION_STATUS_STYLES = {
-  none: { classes: 'bg-white border-gray-200 text-gray-900 hover:border-blue-500 hover:bg-blue-50', swatch: 'bg-white border-gray-300', label: 'No activities' },
-  green: { classes: 'bg-green-500 border-green-600 text-white hover:bg-green-600', swatch: 'bg-green-500 border-green-600', label: 'Fully allocated' },
-  yellow: { classes: 'bg-yellow-400 border-yellow-500 text-gray-900 hover:bg-yellow-500', swatch: 'bg-yellow-400 border-yellow-500', label: 'Partially allocated' },
-  red: { classes: 'bg-red-500 border-red-600 text-white hover:bg-red-600', swatch: 'bg-red-500 border-red-600', label: 'Unallocated activities' },
+  none: { classes: 'bg-white border-gray-200 text-gray-900 hover:border-blue-500 hover:bg-blue-50', swatch: 'bg-white border-gray-300', label: 'Nothing required' },
+  green: { classes: 'bg-green-500 border-green-600 text-white hover:bg-green-600', swatch: 'bg-green-500 border-green-600', label: 'Fully covered' },
+  orange: { classes: 'bg-orange-400 border-orange-500 text-white hover:bg-orange-500', swatch: 'bg-orange-400 border-orange-500', label: 'On-call short' },
+  red: { classes: 'bg-red-500 border-red-600 text-white hover:bg-red-600', swatch: 'bg-red-500 border-red-600', label: 'Coverage gap' },
 };
-
-function startOfWeek(date) {
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  d.setDate(d.getDate() - d.getDay());
-  return d;
-}
 
 // eslint-disable-next-line no-unused-vars -- staffId (the signed-in officer's own staff_id, now known via App.js) is threaded through for upcoming self-service/audit features; not consumed internally yet.
 export default function OfficerRosterView({ departmentId: departmentIdProp, staffId, topBarActionsRef } = {}) {
@@ -97,8 +99,29 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
 
   // UI State
   const [activeTab, setActiveTab] = useState('calendar');
-  const [calendarWeekStart, setCalendarWeekStart] = useState(() => startOfWeek(new Date()));
-  const [calendarAllocationStatus, setCalendarAllocationStatus] = useState({}); // dateStr -> 'none'|'green'|'yellow'|'red'
+  const [calendarWeekStart, setCalendarWeekStart] = useState(() => getMondayOfWeek(new Date()));
+  const [calendarAllocationStatus, setCalendarAllocationStatus] = useState({}); // dateStr -> { status: 'none'|'green'|'orange'|'red', missingOnCallAbbrevs: string[] }
+  const [weekTemplateApplications, setWeekTemplateApplications] = useState({}); // week_start_date -> { week_template_id, week_templates: { name } }
+  const [calendarRefreshKey, setCalendarRefreshKey] = useState(0);
+  const [applyTemplateId, setApplyTemplateId] = useState('');
+  const [applyingTemplateWeek, setApplyingTemplateWeek] = useState(null); // week_start_date currently being applied, for a disabled/loading button state
+  // Week Template Management State (Settings) — list itself lives in
+  // refData.weekTemplates; entries are fetched on demand per selected
+  // template, since a department could have several and there's no reason
+  // to load every template's entries up front.
+  const [newWeekTemplateName, setNewWeekTemplateName] = useState('');
+  const [editingWeekTemplateId, setEditingWeekTemplateId] = useState(null);
+  const [weekTemplateEntries, setWeekTemplateEntries] = useState([]);
+  const [loadingWeekTemplateEntries, setLoadingWeekTemplateEntries] = useState(false);
+  const [newEntryDayOfWeek, setNewEntryDayOfWeek] = useState(0);
+  const [newEntryLocationId, setNewEntryLocationId] = useState('');
+  const [newEntryActivityId, setNewEntryActivityId] = useState('');
+  const [newEntryStartTime, setNewEntryStartTime] = useState('');
+  const [newEntryEndTime, setNewEntryEndTime] = useState('');
+  const [newEntrySession, setNewEntrySession] = useState('full');
+  // Pending "Notify Sick" reports awaiting officer approval — see the Day
+  // view's approval banner.
+  const [pendingSickReports, setPendingSickReports] = useState([]);
   const [fortnightStart, setFortnightStart] = useState(() => getMondayOfWeek(new Date()));
   const [fortnightRankFilter, setFortnightRankFilter] = useState('');
   const [fortnightSelectedStaffId, setFortnightSelectedStaffId] = useState('');
@@ -134,6 +157,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     department: null,
     dutyTypes: [],
     phoneBookEntries: [],
+    weekTemplates: [],
   });
   // Bumped whenever staff are added/removed, so components that fetch their
   // own staff-derived data independently (Case Mix, Fairness, Staff Profiles,
@@ -197,12 +221,14 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   const [newDutyTypeCountsAsOnCall, setNewDutyTypeCountsAsOnCall] = useState(true);
   const [newDutyTypeStartTime, setNewDutyTypeStartTime] = useState('');
   const [newDutyTypeEndTime, setNewDutyTypeEndTime] = useState('');
+  const [newDutyTypeAbbreviation, setNewDutyTypeAbbreviation] = useState('');
   const [editingDutyTypeId, setEditingDutyTypeId] = useState(null);
   const [editDutyTypeLabel, setEditDutyTypeLabel] = useState('');
   const [editDutyTypeCountsAsOnCall, setEditDutyTypeCountsAsOnCall] = useState(true);
   const [editDutyTypeSortOrder, setEditDutyTypeSortOrder] = useState(0);
   const [editDutyTypeStartTime, setEditDutyTypeStartTime] = useState('');
   const [editDutyTypeEndTime, setEditDutyTypeEndTime] = useState('');
+  const [editDutyTypeAbbreviation, setEditDutyTypeAbbreviation] = useState('');
 
   // Phone Book Management State (list lives in refData.phoneBookEntries —
   // non-staff numbers like the nearest tertiary ED or the NUM line, shown
@@ -387,10 +413,28 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [theatreActivities]);
 
+  // Pending "Notify Sick" reports — the Day view's approval banner.
+  // Department-wide, not scoped to selectedDate, so an officer catches up
+  // on any still-undecided report whenever they're on the Day tab.
+  useEffect(() => {
+    const loadPendingSickReports = async () => {
+      if (!departmentId || activeTab !== 'day') return;
+      try {
+        const { data, error } = await getPendingSickReports(departmentId);
+        if (error) throw error;
+        setPendingSickReports(data);
+      } catch (err) {
+        console.error('Failed to load pending sick reports:', err);
+      }
+    };
+
+    loadPendingSickReports();
+  }, [departmentId, activeTab, selectedDate]);
+
   // Calendar tab allocation-status colouring — refetches whenever the visible
   // 4-week window changes, and also when returning to the calendar tab (so
   // assignments made in the Day view are reflected without needing the week
-  // itself to change).
+  // itself to change), or after applying a week template (calendarRefreshKey).
   useEffect(() => {
     const loadAllocationStatus = async () => {
       if (!departmentId || activeTab !== 'calendar') return;
@@ -399,16 +443,21 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
       rangeEnd.setDate(rangeEnd.getDate() + CALENDAR_DAYS_SHOWN - 1);
 
       try {
-        const { data, error } = await getAllocationStatusForRange(departmentId, calendarWeekStart, rangeEnd);
+        const [{ data, error }, { data: applications, error: applicationsError }] = await Promise.all([
+          getAllocationStatusForRange(departmentId, calendarWeekStart, rangeEnd),
+          getWeekTemplateApplicationsForRange(departmentId, toLocalDateStr(getMondayOfWeek(calendarWeekStart)), toLocalDateStr(getMondayOfWeek(rangeEnd))),
+        ]);
         if (error) throw error;
+        if (applicationsError) throw applicationsError;
         setCalendarAllocationStatus(data);
+        setWeekTemplateApplications(Object.fromEntries(applications.map(a => [a.week_start_date, a])));
       } catch (err) {
         console.error('Failed to load calendar allocation status:', err);
       }
     };
 
     loadAllocationStatus();
-  }, [departmentId, calendarWeekStart, activeTab]);
+  }, [departmentId, calendarWeekStart, activeTab, calendarRefreshKey]);
 
   // Fortnight tab — whole department's real staff_assignments AND
   // duty_assignments for the visible 14-day window (same data the Day view
@@ -1027,7 +1076,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
       const nextSortOrder = refData.dutyTypes.reduce((max, d) => Math.max(max, d.sort_order), -1) + 1;
       const { data, activityType, shift, error } = await createDutyType(
         departmentId, newDutyTypeLabel, newDutyTypeCountsAsOnCall, nextSortOrder,
-        newDutyTypeStartTime || null, newDutyTypeEndTime || null
+        newDutyTypeStartTime || null, newDutyTypeEndTime || null, newDutyTypeAbbreviation || null
       );
       if (error) throw error;
 
@@ -1041,6 +1090,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
       setNewDutyTypeCountsAsOnCall(true);
       setNewDutyTypeStartTime('');
       setNewDutyTypeEndTime('');
+      setNewDutyTypeAbbreviation('');
       setError(null);
     } catch (err) {
       setError(`Failed to create duty type: ${err.message}`);
@@ -1054,7 +1104,8 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
       const editingDutyType = refData.dutyTypes.find(d => d.duty_type_id === editingDutyTypeId);
       const { data, activityType, shift, error } = await updateDutyType(
         departmentId, editingDutyTypeId, editDutyTypeLabel.trim(), editDutyTypeCountsAsOnCall, editDutyTypeSortOrder,
-        editDutyTypeStartTime || null, editDutyTypeEndTime || null, editingDutyType?.activity_type_id, editingDutyType?.shift_id
+        editDutyTypeStartTime || null, editDutyTypeEndTime || null, editingDutyType?.activity_type_id, editingDutyType?.shift_id,
+        editDutyTypeAbbreviation || null
       );
       if (error) throw error;
 
@@ -1074,6 +1125,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
       setEditDutyTypeSortOrder(0);
       setEditDutyTypeStartTime('');
       setEditDutyTypeEndTime('');
+      setEditDutyTypeAbbreviation('');
       setError(null);
     } catch (err) {
       setError(`Failed to update duty type: ${err.message}`);
@@ -1115,6 +1167,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     setEditDutyTypeSortOrder(dutyType.sort_order);
     setEditDutyTypeStartTime(dutyType.start_time?.slice(0, 5) || '');
     setEditDutyTypeEndTime(dutyType.end_time?.slice(0, 5) || '');
+    setEditDutyTypeAbbreviation(dutyType.abbreviation || '');
   };
 
   const handleCreatePhoneBookEntry = async () => {
@@ -1433,6 +1486,125 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
       setError(`Failed to save coffee place: ${err.message}`);
     } finally {
       setSavingCoffeePlace(false);
+    }
+  };
+
+  // Week Template Handlers (Settings) — create/delete a template, and
+  // manage its entries once selected for editing (editingWeekTemplateId).
+  const handleCreateWeekTemplate = async () => {
+    if (!newWeekTemplateName.trim() || !departmentId) return;
+
+    try {
+      const { data, error } = await createWeekTemplate(departmentId, newWeekTemplateName);
+      if (error) throw error;
+
+      setRefData(prev => ({ ...prev, weekTemplates: [...prev.weekTemplates, data] }));
+      setNewWeekTemplateName('');
+      setError(null);
+    } catch (err) {
+      setError(`Failed to create week template: ${err.message}`);
+    }
+  };
+
+  const handleDeleteWeekTemplate = async (weekTemplateId) => {
+    if (!window.confirm('Delete this week template? Any weeks it was already applied to keep their cards — this only removes the template itself.')) return;
+
+    try {
+      const { error } = await deleteWeekTemplate(weekTemplateId);
+      if (error) throw error;
+
+      setRefData(prev => ({ ...prev, weekTemplates: prev.weekTemplates.filter(t => t.week_template_id !== weekTemplateId) }));
+      if (editingWeekTemplateId === weekTemplateId) {
+        setEditingWeekTemplateId(null);
+        setWeekTemplateEntries([]);
+      }
+      setError(null);
+    } catch (err) {
+      setError(`Failed to delete week template: ${err.message}`);
+    }
+  };
+
+  const handleSelectWeekTemplateToEdit = async (weekTemplateId) => {
+    setEditingWeekTemplateId(weekTemplateId);
+    setLoadingWeekTemplateEntries(true);
+    try {
+      const { data, error } = await getWeekTemplateEntries(weekTemplateId);
+      if (error) throw error;
+      setWeekTemplateEntries(data);
+      setError(null);
+    } catch (err) {
+      setError(`Failed to load week template entries: ${err.message}`);
+    } finally {
+      setLoadingWeekTemplateEntries(false);
+    }
+  };
+
+  const handleAddWeekTemplateEntry = async () => {
+    if (!editingWeekTemplateId || !newEntryLocationId || !newEntryActivityId || !newEntryStartTime || !newEntryEndTime) return;
+
+    try {
+      const { data, error } = await createWeekTemplateEntry(
+        editingWeekTemplateId, newEntryDayOfWeek, newEntryLocationId, newEntryActivityId, newEntryStartTime, newEntryEndTime, newEntrySession
+      );
+      if (error) throw error;
+
+      setWeekTemplateEntries(prev => [...prev, data]);
+      setNewEntryLocationId('');
+      setNewEntryActivityId('');
+      setNewEntryStartTime('');
+      setNewEntryEndTime('');
+      setError(null);
+    } catch (err) {
+      setError(`Failed to add entry: ${err.message}`);
+    }
+  };
+
+  const handleDeleteWeekTemplateEntry = async (weekTemplateEntryId) => {
+    try {
+      const { error } = await deleteWeekTemplateEntry(weekTemplateEntryId);
+      if (error) throw error;
+
+      setWeekTemplateEntries(prev => prev.filter(e => e.week_template_entry_id !== weekTemplateEntryId));
+      setError(null);
+    } catch (err) {
+      setError(`Failed to remove entry: ${err.message}`);
+    }
+  };
+
+  // Calendar tab — applies the picked template to a specific Monday-start
+  // week, creating the real (empty) cards for it (see applyWeekTemplate),
+  // then refreshes the calendar's allocation-status colouring so the
+  // change shows immediately.
+  const handleApplyTemplate = async (weekStartDate) => {
+    if (!applyTemplateId || !departmentId) return;
+    const weekStartStr = toLocalDateStr(weekStartDate);
+    const template = refData.weekTemplates.find(t => t.week_template_id === applyTemplateId);
+    if (!window.confirm(`Apply "${template?.name || 'this template'}" to the week of ${weekStartStr}? This creates the template's cards for that week — it won't touch or remove anything already there.`)) return;
+
+    setApplyingTemplateWeek(weekStartStr);
+    try {
+      const { error } = await applyWeekTemplate(departmentId, weekStartDate, applyTemplateId);
+      if (error) throw error;
+
+      setCalendarRefreshKey(k => k + 1);
+      setError(null);
+    } catch (err) {
+      setError(`Failed to apply template: ${err.message}`);
+    } finally {
+      setApplyingTemplateWeek(null);
+    }
+  };
+
+  // Sick Report Handlers (Day view approval banner)
+  const handleResolveSickReport = async (sickReportId, status) => {
+    try {
+      const { error } = await resolveSickReport(sickReportId, status, staffId || null);
+      if (error) throw error;
+
+      setPendingSickReports(prev => prev.filter(r => r.sick_report_id !== sickReportId));
+      setError(null);
+    } catch (err) {
+      setError(`Failed to ${status === 'approved' ? 'approve' : 'deny'} sick report: ${err.message}`);
     }
   };
 
@@ -1797,11 +1969,17 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   const renderContent = () => {
     if (activeTab === 'calendar') {
       const today = new Date();
-      const days = [];
-      for (let i = 0; i < CALENDAR_DAYS_SHOWN; i++) {
-        const d = new Date(calendarWeekStart);
-        d.setDate(d.getDate() + i);
-        days.push(d);
+      const weeks = [];
+      for (let w = 0; w < CALENDAR_WEEKS_SHOWN; w++) {
+        const weekStart = new Date(calendarWeekStart);
+        weekStart.setDate(weekStart.getDate() + w * 7);
+        const days = [];
+        for (let i = 0; i < 7; i++) {
+          const d = new Date(weekStart);
+          d.setDate(d.getDate() + i);
+          days.push(d);
+        }
+        weeks.push({ weekStart, weekStartStr: toLocalDateStr(weekStart), days });
       }
 
       return (
@@ -1820,9 +1998,9 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                   <ChevronLeft size={24} />
                 </button>
                 <h1 className="text-lg font-bold text-gray-900 text-center">
-                  {days[0].toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}
+                  {weeks[0].days[0].toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}
                   {' – '}
-                  {days[days.length - 1].toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}
+                  {weeks[weeks.length - 1].days[6].toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}
                 </h1>
                 <button
                   onClick={() => {
@@ -1836,48 +2014,92 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                 </button>
               </div>
 
-              <button
-                onClick={() => setShowPayrollModal(true)}
-                className="mb-6 px-4 py-2 bg-gray-800 hover:bg-gray-900 text-white font-medium rounded-lg transition text-sm"
-              >
-                Export to Payroll
-              </button>
+              <div className="flex items-center gap-2 mb-4">
+                <button
+                  onClick={() => setShowPayrollModal(true)}
+                  className="px-4 py-2 bg-gray-800 hover:bg-gray-900 text-white font-medium rounded-lg transition text-sm"
+                >
+                  Export to Payroll
+                </button>
+                {refData.weekTemplates.length > 0 && (
+                  <select
+                    value={applyTemplateId}
+                    onChange={(e) => setApplyTemplateId(e.target.value)}
+                    className="ml-auto px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  >
+                    <option value="">— Pick a template to apply —</option>
+                    {refData.weekTemplates.map(t => (
+                      <option key={t.week_template_id} value={t.week_template_id}>{t.name}</option>
+                    ))}
+                  </select>
+                )}
+              </div>
 
-              <div className="grid grid-cols-7 gap-2">
-                {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
+              <div className="grid grid-cols-7 gap-2 mb-1">
+                {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(day => (
                   <div key={day} className="text-center text-xs font-bold text-gray-600 py-2">
                     {day}
                   </div>
                 ))}
-
-                {days.map((date, idx) => {
-                  const isToday = isSameDate(date, today);
-                  const isFirstOfMonth = date.getDate() === 1;
-                  const dateStr = toLocalDateStr(date);
-                  const status = calendarAllocationStatus[dateStr] || 'none';
-                  const statusStyle = ALLOCATION_STATUS_STYLES[status];
-                  return (
-                    <button
-                      key={idx}
-                      onClick={() => {
-                        setSelectedDate(date);
-                        setActiveTab('day');
-                      }}
-                      title={statusStyle.label}
-                      className={`aspect-square p-2 rounded-lg font-semibold text-sm transition flex flex-col items-center justify-center gap-0.5 border-2 cursor-pointer ${statusStyle.classes} ${
-                        isToday ? 'ring-2 ring-blue-600 ring-offset-1' : ''
-                      }`}
-                    >
-                      {isFirstOfMonth && (
-                        <span className="text-[10px] font-medium uppercase opacity-75 leading-none">
-                          {date.toLocaleDateString('en-AU', { month: 'short' })}
-                        </span>
-                      )}
-                      {date.getDate()}
-                    </button>
-                  );
-                })}
               </div>
+
+              {weeks.map(week => {
+                const application = weekTemplateApplications[week.weekStartStr];
+                return (
+                  <div key={week.weekStartStr} className="mb-3">
+                    <div className="flex items-center justify-between mb-1 px-0.5">
+                      <p className="text-xs text-gray-500">
+                        {application && (
+                          <span className="text-purple-700 font-medium">{application.week_templates?.name} applied</span>
+                        )}
+                      </p>
+                      {refData.weekTemplates.length > 0 && (
+                        <button
+                          onClick={() => handleApplyTemplate(week.weekStart)}
+                          disabled={!applyTemplateId || applyingTemplateWeek === week.weekStartStr}
+                          className="text-xs px-2 py-0.5 bg-purple-100 hover:bg-purple-200 disabled:opacity-40 text-purple-900 font-medium rounded transition"
+                        >
+                          {applyingTemplateWeek === week.weekStartStr ? 'Applying…' : 'Apply'}
+                        </button>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-7 gap-2">
+                      {week.days.map((date, idx) => {
+                        const isToday = isSameDate(date, today);
+                        const isFirstOfMonth = date.getDate() === 1;
+                        const dateStr = toLocalDateStr(date);
+                        const dayStatus = calendarAllocationStatus[dateStr] || { status: 'none', missingOnCallAbbrevs: [] };
+                        const statusStyle = ALLOCATION_STATUS_STYLES[dayStatus.status];
+                        return (
+                          <button
+                            key={idx}
+                            onClick={() => {
+                              setSelectedDate(date);
+                              setActiveTab('day');
+                            }}
+                            title={[statusStyle.label, dayStatus.missingOnCallAbbrevs.length > 0 ? `On call short: ${dayStatus.missingOnCallAbbrevs.join(', ')}` : null].filter(Boolean).join(' — ')}
+                            className={`aspect-square p-2 rounded-lg font-semibold text-sm transition flex flex-col items-center justify-center gap-0.5 border-2 cursor-pointer ${statusStyle.classes} ${
+                              isToday ? 'ring-2 ring-blue-600 ring-offset-1' : ''
+                            }`}
+                          >
+                            {isFirstOfMonth && (
+                              <span className="text-[10px] font-medium uppercase opacity-75 leading-none">
+                                {date.toLocaleDateString('en-AU', { month: 'short' })}
+                              </span>
+                            )}
+                            {date.getDate()}
+                            {dayStatus.missingOnCallAbbrevs.length > 0 && (
+                              <span className="text-[9px] font-bold leading-none opacity-90">
+                                {dayStatus.missingOnCallAbbrevs.join('/')}
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
 
               <div className="flex flex-wrap gap-3 mt-4">
                 {Object.entries(ALLOCATION_STATUS_STYLES).map(([key, style]) => (
@@ -2453,6 +2675,35 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                 </button>
               </>,
               topBarActionsNode
+            )}
+
+            {pendingSickReports.length > 0 && (
+              <div className="mb-6 space-y-2">
+                {pendingSickReports.map(report => (
+                  <div key={report.sick_report_id} className="p-4 bg-red-50 border border-red-300 rounded-lg flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-bold text-gray-900">{report.staff?.name} reported sick</p>
+                      <p className="text-xs text-gray-600">
+                        {new Date(`${report.date}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'short', month: 'short', day: 'numeric' })}
+                      </p>
+                    </div>
+                    <div className="flex gap-2 flex-shrink-0">
+                      <button
+                        onClick={() => handleResolveSickReport(report.sick_report_id, 'approved')}
+                        className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded-lg transition"
+                      >
+                        Approve
+                      </button>
+                      <button
+                        onClick={() => handleResolveSickReport(report.sick_report_id, 'denied')}
+                        className="px-3 py-1.5 bg-gray-200 hover:bg-gray-300 text-gray-800 text-sm font-medium rounded-lg transition"
+                      >
+                        Deny
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
             )}
 
             <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
@@ -3269,6 +3520,14 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                     onChange={(e) => setNewDutyTypeLabel(e.target.value)}
                     className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
                   />
+                  <input
+                    type="text"
+                    placeholder="Abbreviation (e.g., 'A') — shown on the Calendar when this slot is short"
+                    value={newDutyTypeAbbreviation}
+                    onChange={(e) => setNewDutyTypeAbbreviation(e.target.value)}
+                    maxLength={4}
+                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  />
                   <label className="flex items-center gap-2 text-sm text-gray-700">
                     <input
                       type="checkbox"
@@ -3324,6 +3583,14 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                             title="Display order in the Duty Assignments panel — lower first"
                             className="px-2 py-1 border border-gray-300 rounded text-sm"
                           />
+                          <input
+                            type="text"
+                            placeholder="Abbreviation (e.g., 'A')"
+                            value={editDutyTypeAbbreviation}
+                            onChange={(e) => setEditDutyTypeAbbreviation(e.target.value)}
+                            maxLength={4}
+                            className="px-2 py-1 border border-gray-300 rounded text-sm col-span-2"
+                          />
                           <label className="flex items-center gap-2 text-sm text-gray-700 col-span-2">
                             <input
                               type="checkbox"
@@ -3368,7 +3635,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                       <>
                         <div className="flex-1">
                           <p className="font-semibold text-sm text-gray-900">
-                            {dutyType.label}{dutyType.active === false && <span className="ml-2 text-xs font-normal text-gray-500">(inactive)</span>}
+                            {dutyType.label}{dutyType.abbreviation && <span className="ml-2 text-xs font-normal text-orange-700">({dutyType.abbreviation})</span>}{dutyType.active === false && <span className="ml-2 text-xs font-normal text-gray-500">(inactive)</span>}
                           </p>
                           <p className="text-xs text-gray-600">
                             {dutyType.counts_as_on_call ? 'Counts as on call' : 'Not counted as on call'} • order {dutyType.sort_order}
@@ -3405,6 +3672,168 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                   </div>
                 ))}
               </div>
+            </CollapsibleSection>
+
+            {/* Week Templates Section — the "what has to happen every
+                week" skeleton (locations + activities per day-of-week, no
+                staff) applied to a specific week from the Calendar tab,
+                which then colours red if a required slot goes unfilled. */}
+            <CollapsibleSection title="Week Templates">
+              <div className="mb-6 p-4 bg-purple-50 rounded-lg">
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="Template name (e.g., 'Standard Week')"
+                    value={newWeekTemplateName}
+                    onChange={(e) => setNewWeekTemplateName(e.target.value)}
+                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  />
+                  <button
+                    onClick={handleCreateWeekTemplate}
+                    disabled={!newWeekTemplateName.trim()}
+                    className="px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white font-medium rounded-lg transition text-sm"
+                  >
+                    Add Template
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-2 mb-4">
+                {refData.weekTemplates.length === 0 && (
+                  <p className="text-sm text-gray-500">No week templates yet — add one above.</p>
+                )}
+                {refData.weekTemplates.map(template => (
+                  <div key={template.week_template_id} className={`p-3 border rounded-lg flex items-center justify-between ${editingWeekTemplateId === template.week_template_id ? 'border-purple-400 bg-purple-50' : 'border-gray-200'}`}>
+                    <p className="font-semibold text-sm text-gray-900">{template.name}</p>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => handleSelectWeekTemplateToEdit(template.week_template_id)}
+                        className="px-3 py-1 bg-blue-100 hover:bg-blue-200 text-blue-900 font-medium rounded text-xs transition"
+                      >
+                        {editingWeekTemplateId === template.week_template_id ? 'Editing…' : 'Edit'}
+                      </button>
+                      <button
+                        onClick={() => handleDeleteWeekTemplate(template.week_template_id)}
+                        className="px-3 py-1 bg-red-100 hover:bg-red-200 text-red-900 font-medium rounded text-xs transition"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {editingWeekTemplateId && (
+                <div className="border-t border-gray-200 pt-4">
+                  <p className="text-xs font-semibold text-gray-600 uppercase mb-3">
+                    Entries for {refData.weekTemplates.find(t => t.week_template_id === editingWeekTemplateId)?.name}
+                  </p>
+
+                  <div className="mb-4 p-3 bg-gray-50 rounded-lg space-y-2">
+                    <div className="grid grid-cols-2 gap-2">
+                      <select
+                        value={newEntryDayOfWeek}
+                        onChange={(e) => setNewEntryDayOfWeek(parseInt(e.target.value, 10))}
+                        className="px-2 py-1 border border-gray-300 rounded text-sm"
+                      >
+                        {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].map((label, idx) => (
+                          <option key={idx} value={idx}>{label}</option>
+                        ))}
+                      </select>
+                      <select
+                        value={newEntrySession}
+                        onChange={(e) => setNewEntrySession(e.target.value)}
+                        title="Matched against a shift with the same session at apply time, purely to satisfy the card's required shift field"
+                        className="px-2 py-1 border border-gray-300 rounded text-sm"
+                      >
+                        <option value="full">Whole Day</option>
+                        <option value="AM">Morning</option>
+                        <option value="PM">Afternoon</option>
+                        <option value="night">Night</option>
+                      </select>
+                      <select
+                        value={newEntryLocationId}
+                        onChange={(e) => { setNewEntryLocationId(e.target.value); setNewEntryActivityId(''); }}
+                        className="px-2 py-1 border border-gray-300 rounded text-sm"
+                      >
+                        <option value="">— Location —</option>
+                        {refData.locations.filter(l => l.active !== false).map(l => (
+                          <option key={l.location_id} value={l.location_id}>{l.name}</option>
+                        ))}
+                      </select>
+                      <select
+                        value={newEntryActivityId}
+                        onChange={(e) => setNewEntryActivityId(e.target.value)}
+                        disabled={!newEntryLocationId}
+                        className="px-2 py-1 border border-gray-300 rounded text-sm disabled:opacity-50"
+                      >
+                        <option value="">— Activity —</option>
+                        {activitiesAllowedAtLocation(newEntryLocationId).map(a => (
+                          <option key={a.activity_id} value={a.activity_id}>{a.name}</option>
+                        ))}
+                      </select>
+                      <input
+                        type="time"
+                        value={newEntryStartTime}
+                        onChange={(e) => setNewEntryStartTime(e.target.value)}
+                        className="px-2 py-1 border border-gray-300 rounded text-sm"
+                      />
+                      <input
+                        type="time"
+                        value={newEntryEndTime}
+                        onChange={(e) => setNewEntryEndTime(e.target.value)}
+                        className="px-2 py-1 border border-gray-300 rounded text-sm"
+                      />
+                    </div>
+                    <button
+                      onClick={handleAddWeekTemplateEntry}
+                      disabled={!newEntryLocationId || !newEntryActivityId || !newEntryStartTime || !newEntryEndTime}
+                      className="w-full px-3 py-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white font-medium rounded-lg transition text-sm"
+                    >
+                      Add Entry
+                    </button>
+                  </div>
+
+                  {loadingWeekTemplateEntries ? (
+                    <p className="text-sm text-gray-500">Loading entries…</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].map((dayLabel, dayIdx) => {
+                        const dayEntries = weekTemplateEntries.filter(e => e.day_of_week === dayIdx);
+                        if (dayEntries.length === 0) return null;
+                        return (
+                          <div key={dayIdx}>
+                            <p className="text-xs font-semibold text-gray-500 uppercase mb-1">{dayLabel}</p>
+                            <div className="space-y-1">
+                              {dayEntries.map(entry => {
+                                const location = refData.locations.find(l => l.location_id === entry.location_id);
+                                const activity = refData.activities.find(a => a.activity_id === entry.activity_id);
+                                return (
+                                  <div key={entry.week_template_entry_id} className="flex items-center justify-between px-3 py-2 border border-gray-200 rounded-lg text-sm">
+                                    <span>
+                                      {location?.name || 'Unknown location'} — {activity?.name || 'Unknown activity'}
+                                      <span className="text-gray-500"> ({entry.start_time?.slice(0, 5)}–{entry.end_time?.slice(0, 5)})</span>
+                                    </span>
+                                    <button
+                                      onClick={() => handleDeleteWeekTemplateEntry(entry.week_template_entry_id)}
+                                      className="text-xs text-red-600 hover:text-red-700 font-semibold"
+                                    >
+                                      Remove
+                                    </button>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })}
+                      {weekTemplateEntries.length === 0 && (
+                        <p className="text-sm text-gray-500">No entries yet — add one above.</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </CollapsibleSection>
 
             {/* Phone Book Section — non-staff numbers (nearest tertiary

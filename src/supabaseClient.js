@@ -2,6 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 import { DEFAULT_FTE, computeFairnessRatio } from './availabilityUtils';
 import { toLocalDateStr } from './dateUtils';
 import { getSessionGroups } from './shiftSessionUtils';
+import { getMondayOfWeek } from './payrollExport';
 
 console.log('=== supabaseClient.js LOADING ===');
 console.log('Checking environment variables...');
@@ -31,7 +32,7 @@ export async function initializeDepartment(departmentId) {
   console.log('initializeDepartment called with departmentId:', departmentId);
   
   try {
-    const [locRes, activitiesRes, shiftsRes, staffRes, leaveTypesRes, departmentRes, dutyTypesRes, phoneBookRes] = await Promise.all([
+    const [locRes, activitiesRes, shiftsRes, staffRes, leaveTypesRes, departmentRes, dutyTypesRes, phoneBookRes, weekTemplatesRes] = await Promise.all([
       supabase
         .from('locations')
         .select('*')
@@ -73,6 +74,11 @@ export async function initializeDepartment(departmentId) {
         .eq('department_id', departmentId)
         .eq('active', true)
         .order('sort_order'),
+      supabase
+        .from('week_templates')
+        .select('*')
+        .eq('department_id', departmentId)
+        .order('name'),
     ]);
 
     console.log('Locations:', locRes.data?.length || 0, locRes.error);
@@ -83,6 +89,7 @@ export async function initializeDepartment(departmentId) {
     console.log('Department:', departmentRes.data, departmentRes.error);
     console.log('Duty types:', dutyTypesRes.data?.length || 0, dutyTypesRes.error);
     console.log('Phone book entries:', phoneBookRes.data?.length || 0, phoneBookRes.error);
+    console.log('Week templates:', weekTemplatesRes.data?.length || 0, weekTemplatesRes.error);
 
     return {
       locations: locRes.data || [],
@@ -93,7 +100,8 @@ export async function initializeDepartment(departmentId) {
       department: departmentRes.data || null,
       dutyTypes: dutyTypesRes.data || [],
       phoneBookEntries: phoneBookRes.data || [],
-      errors: [locRes.error, activitiesRes.error, shiftsRes.error, staffRes.error, leaveTypesRes.error, departmentRes.error, dutyTypesRes.error, phoneBookRes.error].filter(Boolean),
+      weekTemplates: weekTemplatesRes.data || [],
+      errors: [locRes.error, activitiesRes.error, shiftsRes.error, staffRes.error, leaveTypesRes.error, departmentRes.error, dutyTypesRes.error, phoneBookRes.error, weekTemplatesRes.error].filter(Boolean),
     };
   } catch (err) {
     console.error('initializeDepartment error:', err);
@@ -357,7 +365,7 @@ function sessionForDutyTimes(startTime, endTime) {
 // was reverted; see the Duty Assignments panel's own on-call summary in
 // officer-roster-view-supabase.jsx instead), but harmless to keep and
 // still shown in Settings in case that's wanted again later.
-export async function createDutyType(departmentId, label, countsAsOnCall, sortOrder, startTime = null, endTime = null) {
+export async function createDutyType(departmentId, label, countsAsOnCall, sortOrder, startTime = null, endTime = null, abbreviation = null) {
   try {
     const key = slugifyDutyTypeKey(label);
     if (!key) throw new Error('Duty type name must contain at least one letter or number');
@@ -389,6 +397,7 @@ export async function createDutyType(departmentId, label, countsAsOnCall, sortOr
         end_time: endTime,
         activity_type_id: activityType.activity_id,
         shift_id: shift?.shift_id || null,
+        abbreviation: abbreviation?.trim() || null,
       }])
       .select()
       .single();
@@ -407,7 +416,7 @@ export async function createDutyType(departmentId, label, countsAsOnCall, sortOr
 // times and have them added later), or keeps an existing one's times in
 // sync; leaves a previously-created shift alone (unused, harmless) if
 // times are cleared back out.
-export async function updateDutyType(departmentId, dutyTypeId, label, countsAsOnCall, sortOrder, startTime, endTime, activityTypeId, shiftId) {
+export async function updateDutyType(departmentId, dutyTypeId, label, countsAsOnCall, sortOrder, startTime, endTime, activityTypeId, shiftId, abbreviation = null) {
   try {
     const trimmedLabel = label.trim();
     let activityType = null;
@@ -442,6 +451,7 @@ export async function updateDutyType(departmentId, dutyTypeId, label, countsAsOn
         start_time: startTime,
         end_time: endTime,
         shift_id: nextShiftId,
+        abbreviation: abbreviation?.trim() || null,
       })
       .eq('duty_type_id', dutyTypeId)
       .select()
@@ -1965,75 +1975,368 @@ export async function getStaffFatigueStatus(departmentId, date) {
 }
 
 // ============================================================
+// WEEK TEMPLATES — see migrations/2026-08-25_week_templates.sql. A
+// department-configured "what has to happen every week" skeleton
+// (locations + activities per day-of-week, no staff), set up in Settings
+// and applied to a specific Monday-start week from the Calendar. Applying
+// creates the real (empty) theatre_activities cards for that week — see
+// applyWeekTemplate — so Day view, Volunteer/Variation opportunities and
+// Fortnight all just work against them like any other card.
+// ============================================================
+
+export async function getWeekTemplates(departmentId) {
+  console.log('getWeekTemplates called', departmentId);
+
+  try {
+    const { data, error } = await supabase
+      .from('week_templates')
+      .select('*')
+      .eq('department_id', departmentId)
+      .order('name');
+
+    return { data: data || [], error };
+  } catch (err) {
+    console.error('getWeekTemplates error:', err);
+    return { data: [], error: err };
+  }
+}
+
+export async function createWeekTemplate(departmentId, name) {
+  console.log('createWeekTemplate called', departmentId, name);
+
+  try {
+    const { data, error } = await supabase
+      .from('week_templates')
+      .insert([{ department_id: departmentId, name: name.trim() }])
+      .select()
+      .single();
+
+    return { data, error };
+  } catch (err) {
+    return { data: null, error: err };
+  }
+}
+
+// Entries cascade-delete with the template (ON DELETE CASCADE) — no
+// separate cleanup needed. Any theatre_activities cards a past application
+// of this template already created are untouched — deleting a template
+// doesn't retroactively unstaff/remove real roster data.
+export async function deleteWeekTemplate(weekTemplateId) {
+  console.log('deleteWeekTemplate called', weekTemplateId);
+
+  try {
+    const { error } = await supabase
+      .from('week_templates')
+      .delete()
+      .eq('week_template_id', weekTemplateId);
+
+    return { error };
+  } catch (err) {
+    return { error: err };
+  }
+}
+
+export async function getWeekTemplateEntries(weekTemplateId) {
+  console.log('getWeekTemplateEntries called', weekTemplateId);
+
+  try {
+    const { data, error } = await supabase
+      .from('week_template_entries')
+      .select('*')
+      .eq('week_template_id', weekTemplateId)
+      .order('day_of_week');
+
+    return { data: data || [], error };
+  } catch (err) {
+    console.error('getWeekTemplateEntries error:', err);
+    return { data: [], error: err };
+  }
+}
+
+export async function createWeekTemplateEntry(weekTemplateId, dayOfWeek, locationId, activityId, startTime, endTime, session) {
+  console.log('createWeekTemplateEntry called', { weekTemplateId, dayOfWeek, locationId, activityId, startTime, endTime, session });
+
+  try {
+    const { data, error } = await supabase
+      .from('week_template_entries')
+      .insert([{
+        week_template_id: weekTemplateId,
+        day_of_week: dayOfWeek,
+        location_id: locationId,
+        activity_id: activityId,
+        start_time: startTime,
+        end_time: endTime,
+        session: session || null,
+      }])
+      .select()
+      .single();
+
+    return { data, error };
+  } catch (err) {
+    return { data: null, error: err };
+  }
+}
+
+export async function deleteWeekTemplateEntry(weekTemplateEntryId) {
+  console.log('deleteWeekTemplateEntry called', weekTemplateEntryId);
+
+  try {
+    const { error } = await supabase
+      .from('week_template_entries')
+      .delete()
+      .eq('week_template_entry_id', weekTemplateEntryId);
+
+    return { error };
+  } catch (err) {
+    return { error: err };
+  }
+}
+
+// Which template (if any) is applied to each Monday-start week in range —
+// the Calendar's own display, and what getAllocationStatusForRange checks
+// against to decide whether a day's required set is the template's or just
+// whatever cards exist.
+export async function getWeekTemplateApplicationsForRange(departmentId, startWeekStr, endWeekStr) {
+  console.log('getWeekTemplateApplicationsForRange called', departmentId, startWeekStr, endWeekStr);
+
+  try {
+    const { data, error } = await supabase
+      .from('week_template_applications')
+      .select('*, week_templates(name)')
+      .eq('department_id', departmentId)
+      .gte('week_start_date', startWeekStr)
+      .lte('week_start_date', endWeekStr);
+
+    return { data: data || [], error };
+  } catch (err) {
+    console.error('getWeekTemplateApplicationsForRange error:', err);
+    return { data: [], error: err };
+  }
+}
+
+// Creates the real (empty) theatre_activities card for every entry in the
+// template, across the 7 dates of weekStartDate's week — skipping any date/
+// location/activity combination that already has a card (so applying
+// doesn't duplicate or disturb an already-staffed slot), then records the
+// application so the Calendar/allocation-status can see it. shift_id is
+// NOT NULL on theatre_activities, so each entry's own `session` is matched
+// against an active shift the same way the Day view's Add Activity already
+// does (falling back to any active shift) purely to satisfy that column —
+// the card's actual times come from the entry's start_time/end_time.
+export async function applyWeekTemplate(departmentId, weekStartDate, weekTemplateId) {
+  console.log('applyWeekTemplate called', departmentId, weekStartDate, weekTemplateId);
+  const weekStartStr = toLocalDateStr(weekStartDate);
+
+  try {
+    const [{ data: entries, error: entriesError }, { data: shifts, error: shiftsError }] = await Promise.all([
+      supabase.from('week_template_entries').select('*').eq('week_template_id', weekTemplateId),
+      supabase.from('shifts').select('shift_id, session, active').eq('department_id', departmentId),
+    ]);
+    if (entriesError) throw entriesError;
+    if (shiftsError) throw shiftsError;
+
+    const activeShifts = (shifts || []).filter(s => s.active !== false);
+
+    for (const entry of entries || []) {
+      const date = new Date(weekStartDate);
+      date.setDate(date.getDate() + entry.day_of_week);
+      const dateStr = toLocalDateStr(date);
+
+      const { data: existing, error: findError } = await supabase
+        .from('theatre_activities')
+        .select('theatre_activity_id')
+        .eq('department_id', departmentId)
+        .eq('date', dateStr)
+        .eq('location_id', entry.location_id)
+        .eq('activity_id', entry.activity_id)
+        .limit(1);
+      if (findError) throw findError;
+      if (existing && existing.length > 0) continue;
+
+      const matchedShift = activeShifts.find(s => s.session === entry.session) || activeShifts[0];
+      if (!matchedShift) continue; // no shifts configured at all — nothing to satisfy shift_id with
+
+      const { error: insertError } = await supabase
+        .from('theatre_activities')
+        .insert([{
+          department_id: departmentId,
+          date: dateStr,
+          location_id: entry.location_id,
+          shift_id: matchedShift.shift_id,
+          activity_id: entry.activity_id,
+          start_time: entry.start_time,
+          end_time: entry.end_time,
+        }]);
+      if (insertError) throw insertError;
+    }
+
+    const { data, error } = await supabase
+      .from('week_template_applications')
+      .upsert(
+        [{ department_id: departmentId, week_start_date: weekStartStr, week_template_id: weekTemplateId }],
+        { onConflict: 'department_id,week_start_date' }
+      )
+      .select()
+      .single();
+    if (error) throw error;
+
+    return { data, error: null };
+  } catch (err) {
+    console.error('applyWeekTemplate error:', err);
+    return { data: null, error: err };
+  }
+}
+
+// ============================================================
 // CALENDAR ALLOCATION STATUS
 // ============================================================
 
-// For each date in range, classifies staffing coverage across that day's
-// theatre activities. A registrar/junior is optional — a consultant-only
-// activity (solo, or several consultants with nobody junior) counts as
-// fully staffed; what actually matters is whether a consultant (present or
-// on-call) is rostered at all, same rule Complete Allocation warns on:
-//   'none'   - no theatre activities exist for that date at all
-//   'red'    - at least one activity has nobody assigned at all
-//   'yellow' - every activity has someone, but at least one has no consultant
-//   'green'  - every activity has a consultant (present or on-call)
+// For each date in range, classifies staffing coverage against two
+// independent things:
+//
+//   - on-call: every active duty_types slot needs someone rostered
+//     (duty_assignments with a staff_id) that date, regardless of whether
+//     a week template is involved at all. missingOnCallAbbrevs carries
+//     each unfilled slot's abbreviation (e.g. "A" for Anaesthetics On
+//     Call), shown directly on the Calendar cell.
+//   - required activities: if the date's Monday-start week has a week
+//     template applied (see week_template_applications), every one of the
+//     template's entries for that day-of-week needs a matching card with
+//     at least one person on it. If no template is applied to that week,
+//     this falls back to the pre-existing rule: every theatre_activities
+//     card that already exists that date needs at least one person on it
+//     (a location/activity nobody's created a card for at all just isn't
+//     part of the requirement).
+//
+// The two combine into a single status per date:
+//   'none'   - nothing required at all (no template, no cards, no active
+//              duty types) — there's nothing to be green or red about
+//   'red'    - a required activity has nobody assigned
+//   'orange' - every required activity is covered, but on-call is short
+//   'green'  - everything required is covered
+//
+// missingOnCallAbbrevs is populated whenever on-call is short, even on a
+// red day — the abbreviation is about on-call specifically, independent of
+// which color the day ends up.
 export async function getAllocationStatusForRange(departmentId, startDate, endDate) {
   console.log('getAllocationStatusForRange called', departmentId, startDate, endDate);
 
   try {
     const startStr = toLocalDateStr(startDate);
     const endStr = toLocalDateStr(endDate);
+    const startWeekStr = toLocalDateStr(getMondayOfWeek(startDate));
+    const endWeekStr = toLocalDateStr(getMondayOfWeek(endDate));
 
-    const [theatreRes, assignRes] = await Promise.all([
+    const [theatreRes, assignRes, dutyTypesRes, dutyAssignRes, applicationsRes] = await Promise.all([
       supabase
         .from('theatre_activities')
-        .select('date, location_id')
+        .select('theatre_activity_id, date, location_id, activity_id')
         .eq('department_id', departmentId)
         .gte('date', startStr)
         .lte('date', endStr),
       supabase
         .from('staff_assignments')
-        .select('date, location_id, role')
+        .select('date, theatre_activity_id')
         .eq('department_id', departmentId)
         .gte('date', startStr)
         .lte('date', endStr),
+      supabase
+        .from('duty_types')
+        .select('key, label, abbreviation')
+        .eq('department_id', departmentId)
+        .eq('active', true),
+      supabase
+        .from('duty_assignments')
+        .select('date, duty_type, staff_id')
+        .eq('department_id', departmentId)
+        .gte('date', startStr)
+        .lte('date', endStr),
+      supabase
+        .from('week_template_applications')
+        .select('week_start_date, week_template_id')
+        .eq('department_id', departmentId)
+        .gte('week_start_date', startWeekStr)
+        .lte('week_start_date', endWeekStr),
     ]);
 
     if (theatreRes.error) throw theatreRes.error;
     if (assignRes.error) throw assignRes.error;
+    if (dutyTypesRes.error) throw dutyTypesRes.error;
+    if (dutyAssignRes.error) throw dutyAssignRes.error;
+    if (applicationsRes.error) throw applicationsRes.error;
 
-    const locationsByDate = new Map(); // date -> Set(location_id)
+    const applicationByWeek = new Map(); // week_start_date -> week_template_id
+    (applicationsRes.data || []).forEach(a => applicationByWeek.set(a.week_start_date, a.week_template_id));
+
+    const templateIds = [...new Set(Array.from(applicationByWeek.values()))];
+    const entriesByTemplate = new Map(); // week_template_id -> entries[]
+    if (templateIds.length > 0) {
+      const { data: entries, error: entriesError } = await supabase
+        .from('week_template_entries')
+        .select('*')
+        .in('week_template_id', templateIds);
+      if (entriesError) throw entriesError;
+      (entries || []).forEach(e => {
+        if (!entriesByTemplate.has(e.week_template_id)) entriesByTemplate.set(e.week_template_id, []);
+        entriesByTemplate.get(e.week_template_id).push(e);
+      });
+    }
+
+    const cardsByDate = new Map(); // date -> theatre_activities[]
     (theatreRes.data || []).forEach(ta => {
-      if (!locationsByDate.has(ta.date)) locationsByDate.set(ta.date, new Set());
-      locationsByDate.get(ta.date).add(ta.location_id);
+      if (!cardsByDate.has(ta.date)) cardsByDate.set(ta.date, []);
+      cardsByDate.get(ta.date).push(ta);
     });
 
-    const rolesByDateLocation = new Map(); // `${date}|${location_id}` -> Set(role)
+    const filledCardIds = new Set();
     (assignRes.data || []).forEach(a => {
-      const key = `${a.date}|${a.location_id}`;
-      if (!rolesByDateLocation.has(key)) rolesByDateLocation.set(key, new Set());
-      rolesByDateLocation.get(key).add(a.role);
+      if (a.theatre_activity_id) filledCardIds.add(a.theatre_activity_id);
+    });
+
+    const dutyTypes = dutyTypesRes.data || [];
+    const filledDutyKeysByDate = new Map(); // date -> Set(duty_type key)
+    (dutyAssignRes.data || []).forEach(d => {
+      if (!d.staff_id) return;
+      if (!filledDutyKeysByDate.has(d.date)) filledDutyKeysByDate.set(d.date, new Set());
+      filledDutyKeysByDate.get(d.date).add(d.duty_type);
     });
 
     const statusByDate = {};
-    locationsByDate.forEach((locationIds, date) => {
-      let hasEmptyActivity = false;
-      let hasIncompleteActivity = false;
+    for (let d = new Date(startDate); toLocalDateStr(d) <= endStr; d.setDate(d.getDate() + 1)) {
+      const date = toLocalDateStr(d);
+      const weekStart = toLocalDateStr(getMondayOfWeek(d));
+      const dayOfWeek = (d.getDay() + 6) % 7; // 0 = Monday, matching week_template_entries
 
-      locationIds.forEach(locationId => {
-        const roles = rolesByDateLocation.get(`${date}|${locationId}`) || new Set();
-        // A junior is optional — a consultant covering solo (or several
-        // consultants with no registrar) is a legitimate, complete roster.
-        // What actually matters, same as Complete Allocation's own check, is
-        // whether a consultant (present or on-call) is rostered at all.
-        if (roles.size === 0) hasEmptyActivity = true;
-        else if (!roles.has('consultant')) hasIncompleteActivity = true;
-      });
+      const missingOnCall = dutyTypes.filter(dt => !(filledDutyKeysByDate.get(date) || new Set()).has(dt.key));
+      const missingOnCallAbbrevs = missingOnCall.map(dt => dt.abbreviation || dt.label);
 
-      if (hasEmptyActivity) statusByDate[date] = 'red';
-      else if (hasIncompleteActivity) statusByDate[date] = 'yellow';
-      else statusByDate[date] = 'green';
-    });
+      const appliedTemplateId = applicationByWeek.get(weekStart);
+      let requiredCount = 0;
+      let unfilledCount = 0;
+
+      if (appliedTemplateId) {
+        const entries = (entriesByTemplate.get(appliedTemplateId) || []).filter(e => e.day_of_week === dayOfWeek);
+        entries.forEach(entry => {
+          requiredCount += 1;
+          const matchingCard = (cardsByDate.get(date) || []).find(ta => ta.location_id === entry.location_id && ta.activity_id === entry.activity_id);
+          if (!matchingCard || !filledCardIds.has(matchingCard.theatre_activity_id)) unfilledCount += 1;
+        });
+      } else {
+        const cards = cardsByDate.get(date) || [];
+        cards.forEach(ta => {
+          requiredCount += 1;
+          if (!filledCardIds.has(ta.theatre_activity_id)) unfilledCount += 1;
+        });
+      }
+
+      let status;
+      if (requiredCount === 0 && dutyTypes.length === 0) status = 'none';
+      else if (unfilledCount > 0) status = 'red';
+      else if (missingOnCallAbbrevs.length > 0) status = 'orange';
+      else status = 'green';
+
+      statusByDate[date] = { status, missingOnCallAbbrevs };
+    }
 
     return { data: statusByDate, error: null };
   } catch (err) {
@@ -2216,6 +2519,93 @@ export async function clearVolunteerRequestsForRole(theatreActivityId, role) {
     return { error };
   } catch (err) {
     return { error: err };
+  }
+}
+
+// ============================================================
+// SICK REPORTS — see migrations/2026-08-25_sick_reports.sql. A staff
+// member with a shift today can flag themselves sick from the Variation
+// tab; an officer approves or denies it. Approval is meant to alert
+// whoever's on call at the time, but real push notifications aren't wired
+// up yet (see push-notifications-deferred in project memory) — for now,
+// an approved report just needs to be visible in the app.
+// ============================================================
+
+// Whether staffId already has a pending/approved sick report for date —
+// drives the "Notify Sick" button's own state (already sent / already
+// approved) in staffRosterView.jsx.
+export async function getMySickReportForDate(staffId, date) {
+  console.log('getMySickReportForDate called', staffId, date);
+  const dateStr = toLocalDateStr(date);
+
+  try {
+    const { data, error } = await supabase
+      .from('sick_reports')
+      .select('*')
+      .eq('staff_id', staffId)
+      .eq('date', dateStr)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    return { data, error };
+  } catch (err) {
+    console.error('getMySickReportForDate error:', err);
+    return { data: null, error: err };
+  }
+}
+
+export async function createSickReport(departmentId, staffId, date) {
+  console.log('createSickReport called', departmentId, staffId, date);
+  const dateStr = toLocalDateStr(date);
+
+  try {
+    const { data, error } = await supabase
+      .from('sick_reports')
+      .insert([{ department_id: departmentId, staff_id: staffId, date: dateStr }])
+      .select()
+      .single();
+
+    return { data, error };
+  } catch (err) {
+    return { data: null, error: err };
+  }
+}
+
+// Pending sick reports for a department, most recent first — the officer
+// Day view's approval banner.
+export async function getPendingSickReports(departmentId) {
+  console.log('getPendingSickReports called', departmentId);
+
+  try {
+    const { data, error } = await supabase
+      .from('sick_reports')
+      .select('*, staff(name)')
+      .eq('department_id', departmentId)
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false });
+
+    return { data: data || [], error };
+  } catch (err) {
+    console.error('getPendingSickReports error:', err);
+    return { data: [], error: err };
+  }
+}
+
+export async function resolveSickReport(sickReportId, status, resolvedByStaffId) {
+  console.log('resolveSickReport called', sickReportId, status, resolvedByStaffId);
+
+  try {
+    const { data, error } = await supabase
+      .from('sick_reports')
+      .update({ status, resolved_at: new Date().toISOString(), resolved_by: resolvedByStaffId })
+      .eq('sick_report_id', sickReportId)
+      .select()
+      .single();
+
+    return { data, error };
+  } catch (err) {
+    return { data: null, error: err };
   }
 }
 

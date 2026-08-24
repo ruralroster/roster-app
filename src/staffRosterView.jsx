@@ -16,6 +16,8 @@ import {
   getStaffWeekScheduleForExport,
   getAvailableShiftsForStaff,
   createVolunteerRequest,
+  getMySickReportForDate,
+  createSickReport,
   updateMyCoffeeOrder,
   getActivityTypes,
   updateMyActivityRestrictions,
@@ -97,11 +99,17 @@ export default function StaffRosterView({ departmentId, staffId }) {
   const [phoneBookEntries, setPhoneBookEntries] = useState([]);
   const [department, setDepartment] = useState(null); // for coffee_place_name/coffee_place_phone — see the Coffee Orders modal
 
-  // Volunteer tab state
+  // Volunteer tab state (nav label "Variation" — this tab covers both
+  // picking up unfilled shifts and reporting sick, the two ways someone's
+  // day can vary from the roster)
   const [volunteerOpportunities, setVolunteerOpportunities] = useState([]);
   const [loadingVolunteer, setLoadingVolunteer] = useState(false);
   const [volunteeringKey, setVolunteeringKey] = useState(null); // theatre_activity_id currently being submitted
   const [volunteerError, setVolunteerError] = useState(null);
+  // Notify Sick — only enabled if this staff member has a shift today.
+  const [todayHasShift, setTodayHasShift] = useState(false);
+  const [mySickReportToday, setMySickReportToday] = useState(null); // { status: 'pending'|'approved'|'denied' } | null
+  const [submittingSickReport, setSubmittingSickReport] = useState(false);
 
   // Search state
   const [searchQuery, setSearchQuery] = useState('');
@@ -259,6 +267,46 @@ export default function StaffRosterView({ departmentId, staffId }) {
 
     loadVolunteerOpportunities();
   }, [activeTab, staffId, departmentId]);
+
+  // Whether "Notify Sick" should be enabled (a shift today) and whether a
+  // report's already been sent for today.
+  useEffect(() => {
+    if (activeTab !== 'volunteer' || !staffId || !departmentId) return;
+
+    const loadSickReportState = async () => {
+      try {
+        const [{ data: todayAssignmentsData, error: assignError }, { data: sickReport, error: sickError }] = await Promise.all([
+          getStaffAssignmentsForStaffDate(staffId, new Date()),
+          getMySickReportForDate(staffId, new Date()),
+        ]);
+        if (assignError) throw assignError;
+        if (sickError) throw sickError;
+        setTodayHasShift((todayAssignmentsData || []).length > 0);
+        setMySickReportToday(sickReport);
+      } catch (err) {
+        console.error('Failed to load sick report state:', err);
+      }
+    };
+
+    loadSickReportState();
+  }, [activeTab, staffId, departmentId]);
+
+  const handleNotifySick = async () => {
+    if (!staffId || !departmentId || !todayHasShift || mySickReportToday) return;
+    if (!window.confirm("Report yourself sick for today? An officer will need to approve this.")) return;
+
+    setSubmittingSickReport(true);
+    try {
+      const { data, error: sickErr } = await createSickReport(departmentId, staffId, new Date());
+      if (sickErr) throw sickErr;
+      setMySickReportToday(data);
+      setVolunteerError(null);
+    } catch (err) {
+      setVolunteerError(`Failed to send sick report: ${err.message}`);
+    } finally {
+      setSubmittingSickReport(false);
+    }
+  };
 
   const handleVolunteer = async (opportunity) => {
     if (!staffId || !departmentId) return;
@@ -1055,6 +1103,34 @@ export default function StaffRosterView({ departmentId, staffId }) {
                 ))}
               </div>
             )}
+
+            <div className="bg-white rounded-lg shadow-sm p-6 mt-6">
+              <h2 className="text-lg font-bold text-gray-900 mb-1">Notify Sick</h2>
+              <p className="text-sm text-gray-500 mb-4">
+                {todayHasShift
+                  ? "Let your officer know you can't make today's shift."
+                  : "You don't have a shift scheduled today."}
+              </p>
+              {mySickReportToday ? (
+                <p className={`text-sm font-medium text-center py-2 rounded-lg ${
+                  mySickReportToday.status === 'approved' ? 'bg-green-50 text-green-800'
+                  : mySickReportToday.status === 'denied' ? 'bg-red-50 text-red-800'
+                  : 'bg-orange-50 text-orange-800'
+                }`}>
+                  {mySickReportToday.status === 'approved' && 'Approved — the on-call team has been let know.'}
+                  {mySickReportToday.status === 'denied' && 'Your officer denied this report — get in touch with them directly.'}
+                  {mySickReportToday.status === 'pending' && "Sent — waiting on your officer's approval."}
+                </p>
+              ) : (
+                <button
+                  onClick={handleNotifySick}
+                  disabled={!todayHasShift || submittingSickReport}
+                  className="w-full bg-red-600 hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-medium py-2 rounded-lg transition"
+                >
+                  {submittingSickReport ? 'Sending…' : 'Notify Sick'}
+                </button>
+              )}
+            </div>
           </div>
         </div>
       );
@@ -1567,7 +1643,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
             }`}
           >
             <Hand size={20} className="mx-auto" />
-            <div className="text-[10px] font-semibold mt-0.5">Volunteer</div>
+            <div className="text-[10px] font-semibold mt-0.5">Variation</div>
           </button>
           <button
             onClick={() => setActiveTab('settings')}
