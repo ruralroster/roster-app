@@ -2977,8 +2977,10 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                   );
                 };
 
+                const hasNobodyAssigned = entries.length === 0;
+
                 return (
-                <div key={`${ta.theatre_activity_id}-${groupKey}`} className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-blue-500">
+                <div key={`${ta.theatre_activity_id}-${groupKey}`} className={`rounded-lg shadow-sm p-6 border-l-4 ${hasNobodyAssigned ? 'bg-red-50 border-red-300' : 'bg-white border-blue-500'}`}>
                   <div className="flex items-start justify-between gap-3 mb-4">
                     <div className="flex-1">
                       <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Activity</label>
