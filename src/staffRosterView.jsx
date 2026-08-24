@@ -364,9 +364,14 @@ export default function StaffRosterView({ departmentId, staffId }) {
     loadAvailability();
   }, [activeTab, staffId, departmentId, settingsWeekStart]);
 
-  // Load activity types for the Activity Restrictions sub-tab
+  // Load activity types — for the Activity Restrictions sub-tab, and for
+  // the Day tab's location cards (to tell apart two different activities
+  // sharing the same location, and to merge cards that are really the same
+  // location+activity split across more than one underlying record).
   useEffect(() => {
-    if (activeTab !== 'settings' || settingsSubTab !== 'restrictions' || !departmentId) return;
+    const dayTabNeedsIt = activeTab === 'day';
+    const restrictionsTabNeedsIt = activeTab === 'settings' && settingsSubTab === 'restrictions';
+    if ((!dayTabNeedsIt && !restrictionsTabNeedsIt) || !departmentId) return;
 
     const loadActivityTypes = async () => {
       setLoadingActivityTypes(true);
@@ -736,7 +741,11 @@ export default function StaffRosterView({ departmentId, staffId }) {
                               new Map(
                                 sessions
                                   .flatMap(g => groupedAssignments[g])
-                                  .filter(a => a.staff_id !== staffId && a.location_id === assignment.location_id)
+                                  .filter(a =>
+                                    a.staff_id !== staffId
+                                    && a.location_id === assignment.location_id
+                                    && a.theatre_activities?.activity_id === assignment.theatre_activities?.activity_id
+                                  )
                                   .map(a => [a.staff_id, a])
                               ).values()
                             ).sort((a, b) => (a.shifts?.start_time || '').localeCompare(b.shifts?.start_time || ''))
@@ -790,34 +799,52 @@ export default function StaffRosterView({ departmentId, staffId }) {
                 </div>
 
                 {SESSION_GROUP_ORDER.map(groupKey => {
-                  // One card per location (not per assignment), so e.g. OT9's
-                  // consultant and registrar show together instead of as two
-                  // separate, identical-looking cards.
-                  const byLocation = [];
-                  const byLocationIndex = new Map();
+                  // One card per location+activity (not per assignment, and
+                  // not per underlying card) — a location can have more
+                  // than one activity going at once, and the same
+                  // location+activity can be split across more than one
+                  // theatre_activities record within a session (e.g. a
+                  // long shift's cascade onto a sibling card), so grouping
+                  // by location alone either mixed unrelated activities
+                  // together or showed the same activity twice. Everyone
+                  // on ANY card matching that location+activity within
+                  // this session is merged into the one entry.
+                  const byLocationActivity = [];
+                  const byLocationActivityIndex = new Map();
                   groupedAssignments[groupKey].forEach(assignment => {
                     const locationId = assignment.location_id;
-                    if (!byLocationIndex.has(locationId)) {
-                      byLocationIndex.set(locationId, byLocation.length);
-                      byLocation.push({ locationId, locationName: assignment.locations?.name, assignments: [] });
+                    const activityId = assignment.theatre_activities?.activity_id || null;
+                    const key = `${locationId}|${activityId}`;
+                    if (!byLocationActivityIndex.has(key)) {
+                      byLocationActivityIndex.set(key, byLocationActivity.length);
+                      const activity = activityTypes.find(a => a.activity_id === activityId);
+                      byLocationActivity.push({
+                        key,
+                        locationId,
+                        locationName: assignment.locations?.name,
+                        activityLabel: activity ? (activity.abbreviation ? `${activity.name} (${activity.abbreviation})` : activity.name) : null,
+                        assignments: [],
+                      });
                     }
-                    byLocation[byLocationIndex.get(locationId)].assignments.push(assignment);
+                    byLocationActivity[byLocationActivityIndex.get(key)].assignments.push(assignment);
                   });
-                  // Earliest shift first within each location, for a quick
+                  // Earliest shift first within each card, for a quick
                   // read of who's arriving when.
-                  byLocation.forEach(loc => loc.assignments.sort((a, b) => (a.shifts?.start_time || '').localeCompare(b.shifts?.start_time || '')));
+                  byLocationActivity.forEach(loc => loc.assignments.sort((a, b) => (a.shifts?.start_time || '').localeCompare(b.shifts?.start_time || '')));
 
                   return (
                     <CollapsibleSection key={groupKey} title={SESSION_GROUP_LABELS[groupKey]}>
-                      {byLocation.length === 0 ? (
+                      {byLocationActivity.length === 0 ? (
                         <p className="text-sm text-gray-500">No assignments.</p>
                       ) : (
                         <div className="space-y-4">
-                          {byLocation.map(({ locationId, locationName, assignments }) => {
+                          {byLocationActivity.map(({ key, locationName, activityLabel, assignments }) => {
                             const cardHasYou = assignments.some(a => a.staff_id === staffId);
                             return (
-                              <div key={`${locationId}-${groupKey}`} className={`border-l-4 rounded-lg p-4 ${cardHasYou ? 'border-blue-500 bg-blue-50' : 'border-gray-300 bg-gray-50'}`}>
-                                <h3 className="text-lg font-bold text-gray-900 mb-2">{locationName}</h3>
+                              <div key={key} className={`border-l-4 rounded-lg p-4 ${cardHasYou ? 'border-blue-500 bg-blue-50' : 'border-gray-300 bg-gray-50'}`}>
+                                <h3 className="text-lg font-bold text-gray-900 mb-2">
+                                  {locationName}{activityLabel && <span className="text-sm font-medium text-gray-500"> — {activityLabel}</span>}
+                                </h3>
                                 <div className="space-y-2">
                                   {assignments.map(assignment => {
                                     const isYou = assignment.staff_id === staffId;
