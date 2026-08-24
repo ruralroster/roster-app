@@ -3348,6 +3348,9 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
               <p className="text-xs text-gray-500 mt-2">Printed in the header row of the payroll Excel export.</p>
             </CollapsibleSection>
 
+            {/* Shift Properties Group — Shifts, Shift Pattern Rules, Duty
+                Types, Leave Types */}
+            <CollapsibleSection title="Shift Properties">
             {/* Shifts Section */}
             <CollapsibleSection title="Shifts">
               <div className="mb-6 p-4 bg-blue-50 rounded-lg">
@@ -3674,6 +3677,92 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
               </div>
             </CollapsibleSection>
 
+            {/* Leave Types Section */}
+            <CollapsibleSection title="Leave Types">
+              <div className="grid grid-cols-2 gap-2 mb-4">
+                <input
+                  type="text"
+                  placeholder="Name (e.g., 'Cairns Leave')"
+                  value={newLeaveTypeName}
+                  onChange={(e) => setNewLeaveTypeName(e.target.value)}
+                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                />
+                <input
+                  type="text"
+                  placeholder="Code (e.g., 'Cairns Leave')"
+                  value={newLeaveTypeCode}
+                  onChange={(e) => setNewLeaveTypeCode(e.target.value)}
+                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                />
+                <button
+                  onClick={handleCreateLeaveType}
+                  className="col-span-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition text-sm"
+                >
+                  Add Leave Type
+                </button>
+              </div>
+
+              <div className="space-y-2">
+                {refData.leaveTypes.map(lt => (
+                  <div key={lt.leave_type_id} className="p-3 border border-gray-200 rounded-lg flex items-center justify-between gap-2">
+                    {editingLeaveTypeId === lt.leave_type_id ? (
+                      <div className="flex gap-2 items-center flex-1">
+                        <input
+                          type="text"
+                          value={editLeaveTypeName}
+                          onChange={(e) => setEditLeaveTypeName(e.target.value)}
+                          className="flex-1 px-2 py-1 border border-gray-300 rounded text-sm"
+                        />
+                        <input
+                          type="text"
+                          value={editLeaveTypeCode}
+                          onChange={(e) => setEditLeaveTypeCode(e.target.value)}
+                          className="flex-1 px-2 py-1 border border-gray-300 rounded text-sm"
+                        />
+                        <button
+                          onClick={handleUpdateLeaveType}
+                          className="px-3 py-1 bg-green-600 hover:bg-green-700 text-white font-medium rounded text-xs transition"
+                        >
+                          Save
+                        </button>
+                        <button
+                          onClick={() => setEditingLeaveTypeId(null)}
+                          className="px-3 py-1 bg-gray-400 hover:bg-gray-500 text-white font-medium rounded text-xs transition"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="flex-1">
+                          <p className="font-semibold text-sm text-gray-900">{lt.name}</p>
+                          <p className="text-xs text-gray-600">Code: {lt.code}</p>
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleStartEditLeaveType(lt)}
+                            className="px-3 py-1 bg-blue-100 hover:bg-blue-200 text-blue-900 font-medium rounded text-xs transition"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => handleDeleteLeaveType(lt.leave_type_id)}
+                            className="px-3 py-1 bg-red-100 hover:bg-red-200 text-red-900 font-medium rounded text-xs transition"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                ))}
+                {refData.leaveTypes.length === 0 && (
+                  <p className="text-sm text-gray-500">No leave types yet — add one above.</p>
+                )}
+              </div>
+            </CollapsibleSection>
+            </CollapsibleSection>
+
             {/* Week Templates Section — the "what has to happen every
                 week" skeleton (locations + activities per day-of-week, no
                 staff) applied to a specific week from the Calendar tab,
@@ -3957,6 +4046,8 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
               </div>
             </CollapsibleSection>
 
+            {/* Card Properties Group — Locations, Activities */}
+            <CollapsibleSection title="Card Properties">
             {/* Locations Section */}
             <CollapsibleSection title="Locations">
               <div className="mb-4 p-3 border border-gray-200 rounded-lg space-y-2">
@@ -4161,92 +4252,11 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                 ))}
               </div>
             </CollapsibleSection>
-
-            {/* Leave Types Section */}
-            <CollapsibleSection title="Leave Types">
-              <div className="grid grid-cols-2 gap-2 mb-4">
-                <input
-                  type="text"
-                  placeholder="Name (e.g., 'Cairns Leave')"
-                  value={newLeaveTypeName}
-                  onChange={(e) => setNewLeaveTypeName(e.target.value)}
-                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                />
-                <input
-                  type="text"
-                  placeholder="Code (e.g., 'Cairns Leave')"
-                  value={newLeaveTypeCode}
-                  onChange={(e) => setNewLeaveTypeCode(e.target.value)}
-                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                />
-                <button
-                  onClick={handleCreateLeaveType}
-                  className="col-span-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition text-sm"
-                >
-                  Add Leave Type
-                </button>
-              </div>
-
-              <div className="space-y-2">
-                {refData.leaveTypes.map(lt => (
-                  <div key={lt.leave_type_id} className="p-3 border border-gray-200 rounded-lg flex items-center justify-between gap-2">
-                    {editingLeaveTypeId === lt.leave_type_id ? (
-                      <div className="flex gap-2 items-center flex-1">
-                        <input
-                          type="text"
-                          value={editLeaveTypeName}
-                          onChange={(e) => setEditLeaveTypeName(e.target.value)}
-                          className="flex-1 px-2 py-1 border border-gray-300 rounded text-sm"
-                        />
-                        <input
-                          type="text"
-                          value={editLeaveTypeCode}
-                          onChange={(e) => setEditLeaveTypeCode(e.target.value)}
-                          className="flex-1 px-2 py-1 border border-gray-300 rounded text-sm"
-                        />
-                        <button
-                          onClick={handleUpdateLeaveType}
-                          className="px-3 py-1 bg-green-600 hover:bg-green-700 text-white font-medium rounded text-xs transition"
-                        >
-                          Save
-                        </button>
-                        <button
-                          onClick={() => setEditingLeaveTypeId(null)}
-                          className="px-3 py-1 bg-gray-400 hover:bg-gray-500 text-white font-medium rounded text-xs transition"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    ) : (
-                      <>
-                        <div className="flex-1">
-                          <p className="font-semibold text-sm text-gray-900">{lt.name}</p>
-                          <p className="text-xs text-gray-600">Code: {lt.code}</p>
-                        </div>
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => handleStartEditLeaveType(lt)}
-                            className="px-3 py-1 bg-blue-100 hover:bg-blue-200 text-blue-900 font-medium rounded text-xs transition"
-                          >
-                            Edit
-                          </button>
-                          <button
-                            onClick={() => handleDeleteLeaveType(lt.leave_type_id)}
-                            className="px-3 py-1 bg-red-100 hover:bg-red-200 text-red-900 font-medium rounded text-xs transition"
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                ))}
-                {refData.leaveTypes.length === 0 && (
-                  <p className="text-sm text-gray-500">No leave types yet — add one above.</p>
-                )}
-              </div>
             </CollapsibleSection>
 
+            {/* Audit Balance Group — Case Mix Report, On-Call & Weekend
+                Fairness */}
+            <CollapsibleSection title="Audit Balance">
             {/* Case Mix Report Section */}
             <CollapsibleSection title="Case Mix Report">
               <CaseMixReport departmentId={departmentId} refreshKey={staffVersion} />
@@ -4256,7 +4266,11 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
             <CollapsibleSection title="On-Call & Weekend Fairness">
               <FairnessReport departmentId={departmentId} refreshKey={staffVersion} />
             </CollapsibleSection>
+            </CollapsibleSection>
 
+            {/* Staff Settings Group — Staff and Availability, Staff
+                Activity Profiles, Staff Accounts */}
+            <CollapsibleSection title="Staff Settings">
             {/* Staff and Availability Section */}
             <CollapsibleSection title="Staff and Availability">
               <StaffAvailabilityTab departmentId={departmentId} staffList={refData.staff} leaveTypes={refData.leaveTypes} onStaffChanged={refreshStaffList} />
@@ -4270,6 +4284,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
             {/* Staff Accounts Section */}
             <CollapsibleSection title="Staff Accounts">
               <StaffAccountsTab departmentId={departmentId} refreshKey={staffVersion} />
+            </CollapsibleSection>
             </CollapsibleSection>
           </div>
         </div>
