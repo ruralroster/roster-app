@@ -2514,18 +2514,26 @@ export async function assignStaffFortnight(departmentId, date, staffId, shiftId,
       return { data: null, error: null };
     }
 
-    const [{ data: existingTa, error: findError }, { data: shift, error: shiftError }, { data: staffRow, error: staffError }] = await Promise.all([
+    const [{ data: existingTaRows, error: findError }, { data: shift, error: shiftError }, { data: staffRow, error: staffError }] = await Promise.all([
       theatreActivityIdOverride
-        ? { data: { theatre_activity_id: theatreActivityIdOverride }, error: null }
+        ? { data: [{ theatre_activity_id: theatreActivityIdOverride }], error: null }
         : supabase
             .from('theatre_activities')
+            // No unique constraint on (date, location_id, activity_id,
+            // shift_id) any more (dropped so a location can host more than
+            // one activity per shift) — so this exact combination can now
+            // legitimately match more than one row. .maybeSingle() would
+            // throw "multiple (or no) rows returned" in that case, so this
+            // takes the earliest-created match instead of asserting
+            // there's exactly one.
             .select('theatre_activity_id')
             .eq('department_id', departmentId)
             .eq('date', dateStr)
             .eq('location_id', locationId)
             .eq('activity_id', activityId)
             .eq('shift_id', shiftId)
-            .maybeSingle(),
+            .order('theatre_activity_id')
+            .limit(1),
       supabase.from('shifts').select('start_time, end_time').eq('shift_id', shiftId).single(),
       supabase.from('staff').select('rank').eq('staff_id', staffId).single(),
     ]);
@@ -2533,7 +2541,7 @@ export async function assignStaffFortnight(departmentId, date, staffId, shiftId,
     if (shiftError) throw shiftError;
     if (staffError) throw staffError;
 
-    let theatreActivityId = existingTa?.theatre_activity_id;
+    let theatreActivityId = existingTaRows?.[0]?.theatre_activity_id;
     let alreadyOnCard = false;
     if (!theatreActivityId) {
       const { data: newTa, error: createError } = await supabase
