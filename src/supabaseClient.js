@@ -3,6 +3,7 @@ import { DEFAULT_FTE, computeFairnessRatio } from './availabilityUtils';
 import { toLocalDateStr } from './dateUtils';
 import { getSessionGroups } from './shiftSessionUtils';
 import { getMondayOfWeek } from './payrollExport';
+import { matchStaffName } from './rosterExcelImport';
 
 console.log('=== supabaseClient.js LOADING ===');
 console.log('Checking environment variables...');
@@ -3052,6 +3053,148 @@ export async function assignStaffFortnight(departmentId, date, staffId, shiftId,
     console.error('assignStaffFortnight error:', err);
     return { data: null, error: err };
   }
+}
+
+// ============================================================
+// ROSTER EXCEL IMPORT — WRITE
+// ============================================================
+//
+// Takes the already-parsed output of parseConsultantWeek/parseRmoWeek/
+// parseInternWeek (src/rosterExcelImport.js) and writes it into
+// Supabase. Deliberately defaults to a dry run (dryRun: true) — this
+// writes real roster data, so every call reports exactly what it would
+// do (or did) per person/day, rather than silently succeeding or
+// failing partway through with no record of what happened.
+//
+// Resolution order per segment: staff name -> location name -> activity
+// name -> an exact-matching (or newly created) shift -> a card via
+// assignStaffFortnight, which already handles finding-or-joining an
+// existing card by session overlap, deriving consultant/registrar from
+// rank, and cascading across sessions for a shift spanning more than
+// one — none of that needed rebuilding. A leave code writes no
+// assignment at all (the "day off is the absence of a row" convention
+// already used throughout this schema) and instead marks
+// staff_availability unavailable for that date.
+//
+// Deliberately does NOT create missing locations/activities — those are
+// structural and the department sets them up in Settings themselves; a
+// segment naming one that doesn't exist is reported as a per-entry
+// error, never silently invented.
+
+// DD/MM/YYYY (as Excel displays it, and as extractConsultantWeek/
+// extractRmoWeek/extractInternWeek's date row comes through) -> Date.
+function parseExcelDate(ddmmyyyy) {
+  const [d, m, y] = (ddmmyyyy || '').split('/').map(Number);
+  if (!d || !m || !y) return null;
+  return new Date(y, m - 1, d);
+}
+
+// Exact-time match only (not nearest/session-bucket) — these times are
+// real working hours that matter for fatigue tracking and payroll, so a
+// 10:30-20:30 shift should never get silently folded into an existing
+// 10:30-21:00 one just because they're close.
+export async function findOrCreateShift(departmentId, startTime, endTime) {
+  if (!startTime || !endTime) {
+    return { data: null, error: new Error('Cannot resolve a shift without both a start and end time') };
+  }
+
+  try {
+    const { data: existing, error: findError } = await supabase
+      .from('shifts')
+      .select('shift_id')
+      .eq('department_id', departmentId)
+      .eq('start_time', startTime)
+      .eq('end_time', endTime)
+      .eq('active', true)
+      .limit(1);
+    if (findError) throw findError;
+    if (existing && existing.length > 0) return { data: existing[0].shift_id, error: null };
+
+    const session = sessionForDutyTimes(startTime, endTime);
+    const { data: newShift, error: createError } = await createShift(
+      departmentId, `Imported ${startTime}–${endTime}`, 'weekday', startTime, endTime, session
+    );
+    if (createError) throw createError;
+    return { data: newShift.shift_id, error: null };
+  } catch (err) {
+    return { data: null, error: err };
+  }
+}
+
+// people: the array returned by parseConsultantWeek/parseRmoWeek/
+// parseInternWeek. refLists: { staffList, locations, activities,
+// leaveTypes } — already-loaded department reference data (e.g.
+// officer-roster-view-supabase.jsx's refData), passed in rather than
+// fetched again.
+export async function importRosterWeek(departmentId, people, refLists, { dryRun = true } = {}) {
+  const { staffList, locations, activities, leaveTypes } = refLists;
+  const results = [];
+
+  for (const person of people) {
+    const staff = matchStaffName(person.rawLabel, staffList);
+    if (!staff) {
+      results.push({ rawLabel: person.rawLabel, ok: false, reason: 'No matching staff record' });
+      continue;
+    }
+
+    for (const day of person.days) {
+      if (!day.rawShift || !day.resolvedShift) continue;
+      const resolved = day.resolvedShift;
+      const entry = { rawLabel: person.rawLabel, staffId: staff.staff_id, staffName: staff.name, date: day.date, rawShift: day.rawShift };
+
+      if (resolved.unmapped) {
+        results.push({ ...entry, ok: false, reason: `Unmapped code: "${resolved.unmapped}"` });
+        continue;
+      }
+
+      const date = parseExcelDate(day.date);
+      if (!date) {
+        results.push({ ...entry, ok: false, reason: `Could not parse date "${day.date}"` });
+        continue;
+      }
+
+      if (resolved.leaveCode) {
+        const leaveType = leaveTypes.find(lt => lt.code === resolved.leaveCode);
+        if (dryRun) {
+          results.push({ ...entry, ok: true, action: 'mark unavailable', leaveCode: resolved.leaveCode, leaveTypeId: leaveType?.leave_type_id ?? null });
+          continue;
+        }
+        const { error } = await bulkSetStaffAvailability(departmentId, staff.staff_id, [date], false, leaveType?.leave_type_id ?? null);
+        results.push({ ...entry, ok: !error, action: 'mark unavailable', leaveCode: resolved.leaveCode, error: error?.message });
+        continue;
+      }
+
+      for (const segment of resolved.segments || []) {
+        const location = locations.find(l => l.name.trim().toLowerCase() === segment.location.toLowerCase());
+        const activity = activities.find(a => a.name.trim().toLowerCase() === segment.activity.toLowerCase());
+        if (!location || !activity) {
+          const missing = [!location ? `location "${segment.location}"` : null, !activity ? `activity "${segment.activity}"` : null].filter(Boolean).join(' and ');
+          results.push({ ...entry, ok: false, reason: `Not found: ${missing}` });
+          continue;
+        }
+        if (!segment.start || !segment.end) {
+          results.push({ ...entry, ok: false, reason: `No fixed time for ${segment.location}/${segment.activity} — can't resolve a shift` });
+          continue;
+        }
+
+        if (dryRun) {
+          results.push({ ...entry, ok: true, action: 'assign', location: location.name, activity: activity.name, start: segment.start, end: segment.end });
+          continue;
+        }
+
+        const { data: shiftId, error: shiftError } = await findOrCreateShift(departmentId, segment.start, segment.end);
+        if (shiftError) {
+          results.push({ ...entry, ok: false, reason: `Failed to resolve shift: ${shiftError.message}` });
+          continue;
+        }
+
+        const { error: assignError } = await assignStaffFortnight(departmentId, date, staff.staff_id, shiftId, location.location_id, activity.activity_id);
+        results.push({ ...entry, ok: !assignError, action: 'assign', location: location.name, activity: activity.name, start: segment.start, end: segment.end, error: assignError?.message });
+      }
+    }
+  }
+
+  return { data: results, error: null };
 }
 
 // ============================================================

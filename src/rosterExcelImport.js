@@ -381,3 +381,31 @@ export function parseInternWeek(workbook, weekIndex, sheetName = 'Sheet1') {
   const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
   return extractInternWeek(rows, INTERN_SECTION_START_ROW, mondayCol);
 }
+
+// ============================================================
+// STAFF NAME MATCHING
+// ============================================================
+//
+// Matches a raw Excel label (e.g. "James Boland Anaesthetics",
+// "Medical Registrar - Sam Cherian") against a real staff list by name.
+// A raw label is always "<real name>" optionally followed by trailing
+// speciality words ("Anaesthetics", "Endo/Anaesthetics", "ED", ...) or
+// preceded by a "Medical Registrar - " prefix — never anything that
+// changes the name itself — so matching is: strip the known prefix, then
+// find the longest staff name that the remaining text starts with.
+// Deliberately doesn't fuzzy-match beyond that (e.g. no edit-distance
+// scoring) — a wrong staff match on roster data is a patient-safety
+// issue, not a cosmetic one, so anything that isn't a clean prefix match
+// comes back null for a human to resolve, never a best-effort guess.
+export function matchStaffName(rawLabel, staffList) {
+  const cleaned = (rawLabel || '').replace(/^Medical Registrar\s*-\s*/i, '').trim();
+  if (!cleaned) return null;
+
+  const exact = staffList.find(s => s.name.trim().toLowerCase() === cleaned.toLowerCase());
+  if (exact) return exact;
+
+  const prefixMatches = staffList
+    .filter(s => cleaned.toLowerCase().startsWith(s.name.trim().toLowerCase()))
+    .sort((a, b) => b.name.length - a.name.length);
+  return prefixMatches[0] || null;
+}
