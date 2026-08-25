@@ -45,9 +45,15 @@ function clinicalSegment(location, activity, start, end) {
   return { segments: [{ location, activity, start: start || null, end: end || null }] };
 }
 
-// Confirmed with the department (2026-08-25) — see conversation history
-// for the reasoning behind each mapping. Keys are matched case-sensitively
-// against the trimmed cell text (or half of an "X/Y" split code).
+// Confirmed with the department (2026-08-25, revised 2026-08-26 against
+// the department's actual locations/activities — several early guesses
+// didn't match: there's no "Theatre" location, "General Theatre" isn't an
+// activity, "Ward (1&2)" isn't an activity, and "Chemo" doesn't exist at
+// all) — see conversation history for the reasoning behind each mapping.
+// Keys are matched case-sensitively against the trimmed cell text (or
+// half of an "X/Y" split code). The department only actively uses the
+// generic "Clinic" location — "Clinic (Anaes/Med/Obs)" all exist but are
+// disabled, so every clinic-ish code maps to plain "Clinic".
 const SINGLE_CODE_MAP = {
   'AL': { leaveCode: 'AL' },
   'S/L': { leaveCode: 'SL' }, // Study Leave, not Sick Leave
@@ -55,12 +61,12 @@ const SINGLE_CODE_MAP = {
   'EDL + OC': clinicalSegment('Emergency', 'Emergency Department Cover', '10:30', '21:00'),
   'Ward 1': clinicalSegment('Ward 1', 'Ward Care Cover', '08:00', '18:00'),
   'Ward 2': clinicalSegment('Ward 2', 'Ward Care Cover', '08:00', '18:00'),
-  'WARD (1&2)': clinicalSegment('Ward 1 and 2 (Weekend Cover)', 'Ward (1&2)', '08:00', '18:00'),
+  'WARD (1&2)': clinicalSegment('Ward 1 and 2 (Weekend Cover)', 'Ward Care Cover', '08:00', '18:00'),
   'Maternity': clinicalSegment('Maternity', 'Ward Care Cover', '08:00', '18:00'),
   'Admin': clinicalSegment('Non-clinical', 'Admin', null, null),
   'DMS': clinicalSegment('Non-clinical', 'Admin', null, null),
-  'Endo': clinicalSegment('Theatre', 'Endoscopy', null, null),
-  'OT': clinicalSegment('Theatre', 'General Theatre', null, null),
+  'Endo': clinicalSegment('Endoscopy', 'Endoscopy', null, null),
+  'OT': clinicalSegment('General Theatre', 'General Surgery', null, null),
   'Obs Clinic': clinicalSegment('Clinic', 'Obstetrics', null, null),
   'ANC': clinicalSegment('Clinic', 'Obstetrics', null, null),
   'ObsC': clinicalSegment('Clinic', 'Obstetrics', null, null),
@@ -208,13 +214,15 @@ const RMO_DAY_LOCATION_TOKEN_MAP = {
   'WARD 1': { location: 'Ward 1', activity: 'Ward Care Cover' },
 };
 
-// Codes with no time component at all.
+// Codes with no time component at all. "Chemo" isn't its own activity in
+// this department — confirmed (2026-08-26) it maps to the same "Medical
+// Clinic" activity as bare "Clinic".
 const RMO_BARE_CODE_MAP = {
   'A/L': { leaveCode: 'AL' },
   'GP': { leaveCode: 'GP' },
   'Day Shift': clinicalSegment('Ward 1', 'Ward Care Cover', '08:00', '18:00'),
   'Clinic': clinicalSegment('Clinic', 'Medical Clinic', null, null),
-  'Chemo': clinicalSegment('Clinic', 'Chemo', null, null),
+  'Chemo': clinicalSegment('Clinic', 'Medical Clinic', null, null),
 };
 
 export function resolveRmoShiftCode(rawCode) {
