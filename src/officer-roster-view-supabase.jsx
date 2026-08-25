@@ -7,6 +7,7 @@ import ShiftPatternRulesUI from './ShiftPatternRulesUI';
 import CaseMixReport from './CaseMixReport';
 import FairnessReport from './FairnessReport';
 import RosterExcelImportTab from './RosterExcelImportTab';
+import RosterExcelExportTab from './RosterExcelExportTab';
 import CollapsibleSection from './CollapsibleSection';
 import { toLocalDateStr } from './dateUtils';
 import { ChevronLeft, ChevronRight, X, AlertCircle, Loader, Hand, Settings } from 'lucide-react';
@@ -3978,6 +3979,21 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                 what's deliberately not (Locums, the Standby/AF summary). */}
             <CollapsibleSection title="Excel Roster Import">
               <RosterExcelImportTab
+                departmentId={departmentId}
+                staffList={refData.staff}
+                locations={refData.locations}
+                activities={refData.activities}
+                leaveTypes={refData.leaveTypes}
+              />
+            </CollapsibleSection>
+
+            {/* Excel Roster Export — the reverse direction: downloads one
+                or more consecutive weeks of the live roster as an .xlsx.
+                See RosterExcelExportTab.jsx / rosterExcelExport.js /
+                fetchRosterExportWeek for what it does and doesn't try to
+                reproduce from the original source file's layout. */}
+            <CollapsibleSection title="Excel Roster Export">
+              <RosterExcelExportTab
                 departmentId={departmentId}
                 staffList={refData.staff}
                 locations={refData.locations}

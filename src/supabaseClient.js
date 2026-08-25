@@ -3214,6 +3214,135 @@ export async function importRosterWeek(departmentId, people, refLists, { dryRun 
 }
 
 // ============================================================
+// ROSTER EXCEL EXPORT — READ
+// ============================================================
+//
+// The reverse of the import above: reads one week's real staff_assignments
+// (+theatre_activities+shifts+locations), staff_availability (leave), and
+// duty_assignments (on-call) out of Supabase and shapes it into the
+// per-person-per-day form src/rosterExcelExport.js turns into worksheet
+// rows.
+//
+// Deliberately renders each clinical segment as plain "Location / Activity
+// HH:MM-HH:MM" text (done in rosterExcelExport.js) rather than trying to
+// reconstruct the import's terse shorthand (ED, OT, Endo...) — several of
+// those codes collapse multiple distinct activities onto one abbreviation
+// (e.g. "Obs Clinic"/"ANC"/"ObsC"/"Obs" all mean the same thing on the way
+// in), so there's no single correct code to reverse to. Leave is the one
+// place a short code survives round-trip cleanly, since leave_types.code
+// (AL/SL/GP/PDL) is now the authoritative source rather than something to
+// guess at.
+//
+// Note: the Excel import never writes CALL OBLIGATION notes into
+// duty_assignments (see importRosterWeek above — it only handles
+// leaveCode and segments), so the "Call Obligation" row this produces only
+// reflects on-call assigned through the app itself (Fortnight/Day view),
+// not whatever was in a CALL OBLIGATION cell of an originally-imported
+// week.
+const DAY_LABELS_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+export async function fetchRosterExportWeek(departmentId, weekStartDate, refLists) {
+  const { activities, leaveTypes, staffList } = refLists;
+
+  const weekStart = new Date(weekStartDate);
+  weekStart.setHours(0, 0, 0, 0);
+  const dates = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(weekStart);
+    d.setDate(d.getDate() + i);
+    return d;
+  });
+  const dateStrs = dates.map(toLocalDateStr);
+
+  try {
+    const [
+      { data: assignments, error: aErr },
+      { data: availability, error: avErr },
+      { data: duties, error: dErr },
+      { data: dutyTypes, error: dtErr },
+    ] = await Promise.all([
+      getAllStaffAssignmentsForRange(departmentId, weekStart, 7),
+      getStaffAvailability(departmentId, weekStart),
+      getDutyAssignmentsForRange(departmentId, weekStart, 7),
+      getDutyTypes(departmentId),
+    ]);
+    if (aErr) throw aErr;
+    if (avErr) throw avErr;
+    if (dErr) throw dErr;
+    if (dtErr) throw dtErr;
+
+    const activityNameById = new Map((activities || []).map(a => [a.activity_id, a.name]));
+    const leaveTypeById = new Map((leaveTypes || []).map(lt => [lt.leave_type_id, lt]));
+    const dutyLabelByKey = new Map((dutyTypes || []).map(dt => [dt.key, dt.label]));
+
+    const byStaff = new Map(); // staff_id -> { name, rank, byDate: Map(dateStr -> day) }
+
+    function ensurePerson(staffId, name, rank) {
+      if (!byStaff.has(staffId)) byStaff.set(staffId, { name, rank, byDate: new Map() });
+      return byStaff.get(staffId);
+    }
+    function ensureDay(person, dateStr) {
+      if (!person.byDate.has(dateStr)) person.byDate.set(dateStr, { segments: [], leaveCode: null, dutyLabels: [] });
+      return person.byDate.get(dateStr);
+    }
+
+    for (const a of assignments || []) {
+      if (!a.staff || !a.shifts) continue; // defensive — every real clinical row has both
+      const activityName = activityNameById.get(a.theatre_activities?.activity_id);
+      const locationName = a.locations?.name;
+      if (!activityName || !locationName) continue; // duty-type picks never reach here (see assignStaffFortnight)
+      const person = ensurePerson(a.staff_id, a.staff.name, a.staff.rank);
+      const day = ensureDay(person, a.date);
+      day.segments.push({
+        location: locationName,
+        activity: activityName,
+        start: (a.shifts.start_time || '').slice(0, 5),
+        end: (a.shifts.end_time || '').slice(0, 5),
+      });
+    }
+
+    for (const av of availability || []) {
+      if (av.available !== false) continue;
+      const staffRow = (staffList || []).find(s => s.staff_id === av.staff_id);
+      if (!staffRow) continue;
+      const person = ensurePerson(av.staff_id, staffRow.name, staffRow.rank);
+      const day = ensureDay(person, av.date);
+      day.leaveCode = leaveTypeById.get(av.leave_type_id)?.code || 'Leave';
+    }
+
+    for (const d of duties || []) {
+      if (!d.staff) continue;
+      const person = ensurePerson(d.staff_id, d.staff.name, d.staff.rank);
+      const day = ensureDay(person, d.date);
+      day.dutyLabels.push(dutyLabelByKey.get(d.duty_type) || d.duty_type);
+    }
+
+    const dateLabels = dates.map(d => `${DAY_LABELS_SHORT[d.getDay()]} ${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`);
+
+    const section = (rankFilter) => Array.from(byStaff.values())
+      .filter(p => rankFilter(p.rank))
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map(p => ({
+        name: p.name,
+        days: dateStrs.map(ds => p.byDate.get(ds) || { segments: [], leaveCode: null, dutyLabels: [] }),
+      }));
+
+    return {
+      data: {
+        weekStart: dateStrs[0],
+        weekEnd: dateStrs[6],
+        dateLabels,
+        consultants: section(r => r === 'consultant' || r === 'fellow'),
+        rmo: section(r => r === 'advanced_trainee' || r === 'basic_trainee'),
+        interns: section(r => r === 'intern'),
+      },
+      error: null,
+    };
+  } catch (err) {
+    return { data: null, error: err };
+  }
+}
+
+// ============================================================
 // SHIFT PATTERN RULES
 // ============================================================
 // A rule occupies a fixed 7-day window ending on the day a shift is being
