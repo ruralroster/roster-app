@@ -2956,19 +2956,35 @@ export async function assignStaffFortnight(departmentId, date, staffId, shiftId,
 
     // Same location+activity, an overlapping session — not an exact
     // shift_id match — is what makes two picks "the same card": two
-    // people picking different shifts that both land in the same session
-    // (e.g. "Day" and "Long Day" both covering Morning) still means one
-    // card, same as Add Activity's own duplicate check. Earliest match
-    // wins if more than one overlaps (no unique constraint on this
-    // combination any more, so that's possible).
+    // people picking different shifts that both land in the same
+    // session(s) (e.g. "Day" and "Long Day" both covering Morning) still
+    // means one card, same as Add Activity's own duplicate check.
+    //
+    // The candidate has to cover EVERY session the picked shift spans,
+    // not just overlap one of them — a card's session grouping on read
+    // comes from ITS OWN stored start/end, not each person's real shift,
+    // so joining a card that only partially covers this shift would
+    // silently drop the uncovered part from display (e.g. an ED card
+    // already exists at 08:00-18:00, and this person's own shift is
+    // 10:30-20:30 — spanning into Night too; matching on "any" overlap
+    // joined the day card and their Night hours never showed up
+    // anywhere). Requiring full coverage means that case creates its own
+    // card instead, using this shift's own times, so it naturally spans
+    // every session it should — the cascade below still joins them onto
+    // the pre-existing day card too, so they don't disappear from
+    // Morning/Afternoon either.
+    //
+    // Earliest match wins if more than one fully covers it (no unique
+    // constraint on this combination any more, so that's possible).
     let theatreActivityId;
     if (theatreActivityIdOverride) {
       theatreActivityId = theatreActivityIdOverride;
     } else {
       const pickedShiftGroups = getSessionGroups(shift);
-      const match = (candidateTaRows || []).find(ta =>
-        getSessionGroups({ start_time: ta.start_time, end_time: ta.end_time }).some(g => pickedShiftGroups.includes(g))
-      );
+      const match = (candidateTaRows || []).find(ta => {
+        const taGroups = getSessionGroups({ start_time: ta.start_time, end_time: ta.end_time });
+        return pickedShiftGroups.every(g => taGroups.includes(g));
+      });
       theatreActivityId = match?.theatre_activity_id;
     }
     let alreadyOnCard = false;
