@@ -10,11 +10,14 @@ import { SESSION_DEFAULT_TIMES } from './shiftSessionUtils';
 // on-call shape the rest of the app already uses.
 //
 // The file has no clean tabular schema — it's a stack of manually
-// laid-out sections with a different row pattern per staff group. Two
-// sections are covered so far: SMO/Consultant (below) and Registrar/RMO
-// (further down). Locums and the Standby summary still need their own
-// investigation before they can be parsed safely — see the conversation
-// history this was built from.
+// laid-out sections with a different row pattern per staff group. Three
+// sections are covered so far: SMO/Consultant (below), Registrar/RMO,
+// and Intern (further down). Locums are deliberately skipped — the
+// department confirmed that's fine — and the Standby/AF summary panel
+// still needs its own investigation before it can be parsed safely (it's
+// a backup-contact lookup table, not a per-person roster, so it doesn't
+// fit this module's shape at all) — see the conversation history this
+// was built from.
 //
 // The anchor: every consultant's block is the literal text
 // "CALL OBLIGATION" in column A, always laid out as:
@@ -287,4 +290,86 @@ export function parseRmoWeek(workbook, weekIndex, sheetName = 'Sheet1') {
   const ws = workbook.Sheets[sheetName];
   const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
   return extractRmoWeek(rows, RMO_SECTION_START_ROW, mondayCol);
+}
+
+// ============================================================
+// ROSTER EXCEL IMPORT — Intern section
+// ============================================================
+//
+// A close cousin of the Registrar/RMO shape, but with an FTE/hours row
+// two rows below each name row (like the consultant section, minus the
+// CALL OBLIGATION row in between), and shift codes written the other way
+// around — location first, then time ("ED 1030-2030", "Ward 0800-1800")
+// rather than "Day/Night/Evening HHMM-HHMM \nLOCATION". Section starts
+// at its own "Week 1" header (row 158 in the current DRAFT file, under
+// "Interns") and ends at the validation/summary panel below it
+// ("On Call Correct?" onwards — headcounts and staffing-check rows, not
+// roster data, so explicitly excluded rather than accidentally parsed
+// as more people).
+export const INTERN_SECTION_START_ROW = 158;
+
+// Confirmed with the department (2026-08-25) — bare "Ward" (no number)
+// means Ward 1.
+const INTERN_LOCATION_TOKEN_MAP = {
+  'ED': { location: 'Emergency', activity: 'Emergency Department Cover' },
+  'WARD': { location: 'Ward 1', activity: 'Ward Care Cover' },
+};
+
+export function resolveInternShiftCode(rawCode) {
+  const code = (rawCode || '').replace(/\s+/g, ' ').trim();
+  if (!code) return null;
+
+  const timeMatch = code.match(TIME_RANGE_RE);
+  if (timeMatch) {
+    const locationToken = code.replace(TIME_RANGE_RE, '').trim().toUpperCase();
+    const mapped = INTERN_LOCATION_TOKEN_MAP[locationToken];
+    if (mapped) return clinicalSegment(mapped.location, mapped.activity, normalizeHHMM(timeMatch[1]), normalizeHHMM(timeMatch[2]));
+  }
+
+  // Falls back to the RMO resolver (which itself falls back to the
+  // consultant map) in case an intern's cell uses the same shorthand —
+  // leave codes in particular are shared across every section.
+  const viaRmo = resolveRmoShiftCode(code);
+  if (!viaRmo.unmapped) return viaRmo;
+
+  return { unmapped: code };
+}
+
+export function extractInternWeek(rows, sectionStartRow, mondayCol) {
+  const dateRowIndex = sectionStartRow + 1;
+  const dates = DAY_LABELS.map((_, i) => (rows[dateRowIndex]?.[mondayCol + i] || '').toString().trim());
+
+  const people = [];
+  for (let r = sectionStartRow + 2; r < rows.length; r++) {
+    const col0 = (rows[r][0] || '').toString().trim();
+    if (/^Week\s+\d/i.test(col0)) break;
+    if (col0 === 'On Call Correct?') break; // start of the validation/summary panel
+    if (!col0) continue;
+    if (/^\d+(\.\d+)?$/.test(col0)) continue; // FTE/hours row for the person just above, not a new person
+
+    const days = DAY_LABELS.map((label, i) => {
+      const col = mondayCol + i;
+      const rawShift = (rows[r][col] || '').toString().trim();
+      return {
+        label,
+        date: dates[i],
+        rawShift,
+        resolvedShift: rawShift ? resolveInternShiftCode(rawShift) : null,
+      };
+    });
+
+    people.push({ rawLabel: col0, days });
+  }
+
+  return people;
+}
+
+export function parseInternWeek(workbook, weekIndex, sheetName = 'Sheet1') {
+  const mondayCol = WEEK_BLOCK_MONDAY_COLUMNS[weekIndex];
+  if (mondayCol === undefined) {
+    throw new Error(`No week block configured for weekIndex ${weekIndex} — this file only has ${WEEK_BLOCK_MONDAY_COLUMNS.length} week blocks`);
+  }
+  const ws = workbook.Sheets[sheetName];
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
+  return extractInternWeek(rows, INTERN_SECTION_START_ROW, mondayCol);
 }
