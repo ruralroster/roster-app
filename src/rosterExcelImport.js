@@ -57,6 +57,8 @@ function clinicalSegment(location, activity, start, end) {
 const SINGLE_CODE_MAP = {
   'AL': { leaveCode: 'AL' },
   'S/L': { leaveCode: 'SL' }, // Study Leave, not Sick Leave
+  'PDL': { leaveCode: 'PDL' }, // Professional Development Leave
+  'OFF': { segments: [] }, // not a leave type — just means nothing rostered, same as a blank cell
   'ED': clinicalSegment('Emergency', 'Emergency Department Cover', '08:00', '18:00'),
   'EDL + OC': clinicalSegment('Emergency', 'Emergency Department Cover', '10:30', '21:00'),
   'Ward 1': clinicalSegment('Ward 1', 'Ward Care Cover', '08:00', '18:00'),
@@ -65,6 +67,7 @@ const SINGLE_CODE_MAP = {
   'Maternity': clinicalSegment('Maternity', 'Ward Care Cover', '08:00', '18:00'),
   'Admin': clinicalSegment('Non-clinical', 'Admin', '08:00', '18:00'),
   'DMS': clinicalSegment('Non-clinical', 'Admin', '08:00', '18:00'),
+  'Concessional Day': clinicalSegment('Non-clinical', 'Admin', '08:00', '18:00'),
   'Endo': clinicalSegment('Endoscopy', 'Endoscopy', '08:00', '18:00'),
   'OT': clinicalSegment('General Theatre', 'General Surgery', '08:00', '18:00'),
   'Obs Clinic': clinicalSegment('Clinic', 'Obstetrics', '08:00', '18:00'),
@@ -204,9 +207,10 @@ function normalizeHHMM(raw) {
   return `${digits.slice(0, 2)}:${digits.slice(2)}`;
 }
 
-// Confirmed with the department (2026-08-25):
-//   - "Night ####-####" / "Evening ####-####" have no location suffix —
-//     both are always Emergency / Emergency Department Cover.
+// Confirmed with the department (2026-08-25, extended 2026-08-27):
+//   - "Night ####-####" / "Evening ####-####" / "Afternoon ####-####"
+//     have no location suffix — all three are always Emergency /
+//     Emergency Department Cover (the EDL on-call shift).
 //   - "Day ####-####" always carries an explicit location suffix after
 //     the newline (e.g. "ED", "WARD 1"), resolved via this table.
 const RMO_DAY_LOCATION_TOKEN_MAP = {
@@ -223,6 +227,7 @@ const RMO_BARE_CODE_MAP = {
   'Day Shift': clinicalSegment('Ward 1', 'Ward Care Cover', '08:00', '18:00'),
   'Clinic': clinicalSegment('Clinic', 'Medical Clinic', '08:00', '18:00'),
   'Chemo': clinicalSegment('Clinic', 'Medical Clinic', '08:00', '18:00'),
+  'OFF': { segments: [] }, // not a leave type — just means nothing rostered, same as a blank cell
 };
 
 export function resolveRmoShiftCode(rawCode) {
@@ -243,7 +248,7 @@ export function resolveRmoShiftCode(rawCode) {
     const start = normalizeHHMM(timeMatch[1]);
     const end = normalizeHHMM(timeMatch[2]);
 
-    if (/^Night/i.test(code) || /^Evening/i.test(code)) {
+    if (/^Night/i.test(code) || /^Evening/i.test(code) || /^Afternoon/i.test(code)) {
       return clinicalSegment('Emergency', 'Emergency Department Cover', start, end);
     }
 
