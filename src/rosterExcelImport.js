@@ -409,3 +409,24 @@ export function matchStaffName(rawLabel, staffList) {
     .sort((a, b) => b.name.length - a.name.length);
   return prefixMatches[0] || null;
 }
+
+// The real Mon/Sun dates for each of the file's week blocks — lets a
+// picker show "Week 2 (24/08–30/08)" instead of an opaque index.
+export function getWeekDateRanges(workbook, sheetName = 'Sheet1') {
+  const ws = workbook.Sheets[sheetName];
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
+  return WEEK_BLOCK_MONDAY_COLUMNS.map(mondayCol => ({
+    start: (rows[DATE_ROW_INDEX]?.[mondayCol] || '').toString().trim(),
+    end: (rows[DATE_ROW_INDEX]?.[mondayCol + 6] || '').toString().trim(),
+  }));
+}
+
+// Runs all three section parsers for one week and concatenates them —
+// the whole-week input importRosterWeek expects.
+export function parseRosterWeek(workbook, weekIndex, sheetName = 'Sheet1') {
+  return [
+    ...parseConsultantWeek(workbook, weekIndex, sheetName),
+    ...parseRmoWeek(workbook, weekIndex, sheetName),
+    ...parseInternWeek(workbook, weekIndex, sheetName),
+  ];
+}

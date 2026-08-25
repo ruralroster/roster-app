@@ -6,6 +6,7 @@ import StaffAvailabilityTab, { RANK_OPTIONS } from './StaffAvailabilityTab';
 import ShiftPatternRulesUI from './ShiftPatternRulesUI';
 import CaseMixReport from './CaseMixReport';
 import FairnessReport from './FairnessReport';
+import RosterExcelImportTab from './RosterExcelImportTab';
 import CollapsibleSection from './CollapsibleSection';
 import { toLocalDateStr } from './dateUtils';
 import { ChevronLeft, ChevronRight, X, AlertCircle, Loader, Hand, Settings } from 'lucide-react';
@@ -3970,6 +3971,19 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                   )}
                 </div>
               )}
+            </CollapsibleSection>
+
+            {/* Excel Roster Import Section — see rosterExcelImport.js for
+                what's covered (SMO/Consultant, Registrar/RMO, Intern) and
+                what's deliberately not (Locums, the Standby/AF summary). */}
+            <CollapsibleSection title="Excel Roster Import">
+              <RosterExcelImportTab
+                departmentId={departmentId}
+                staffList={refData.staff}
+                locations={refData.locations}
+                activities={refData.activities}
+                leaveTypes={refData.leaveTypes}
+              />
             </CollapsibleSection>
 
             {/* Phone Book Section — non-staff numbers (nearest tertiary
