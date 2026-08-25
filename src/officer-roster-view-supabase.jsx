@@ -931,6 +931,29 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
       return;
     }
 
+    // Same location + same activity + an overlapping time window already
+    // has a card — join it instead of creating a second, duplicate one.
+    // Two theatre_activities rows for what's really the same slot just
+    // splits who's assigned across both, showing the same location and
+    // activity twice in the same session instead of one card with
+    // everyone on it.
+    const newGroups = getSessionGroups({ start_time: newActivityStartTime, end_time: newActivityEndTime });
+    const existingCard = theatreActivities.find(ta =>
+      ta.location_id === newActivityLocation
+      && ta.activity_id === activityId
+      && getSessionGroups({ start_time: ta.start_time, end_time: ta.end_time }).some(g => newGroups.includes(g))
+    );
+    if (existingCard) {
+      setError('This activity is already on this location for this session — assign staff on the existing card instead of adding it again.');
+      setShowAddActivity(false);
+      setNewActivityLocation('');
+      setNewActivityType('');
+      setNewActivitySession('full');
+      setNewActivityStartTime('');
+      setNewActivityEndTime('');
+      return;
+    }
+
     try {
       const { error: addError } = await createTheatreActivity(
         departmentId,
