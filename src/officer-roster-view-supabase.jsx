@@ -2850,6 +2850,18 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
               theatreActivities.forEach(ta => {
                 getSessionGroups({ start_time: ta.start_time, end_time: ta.end_time }).forEach(group => groupedActivities[group].push(ta));
               });
+              // Location, then activity, within each session — so two cards
+              // for the same location+activity (e.g. ED's staggered Day/Late
+              // shifts) land next to each other instead of wherever creation
+              // order happened to put them, without changing that they're
+              // still genuinely separate, independently-editable cards.
+              const activityNameFor = (ta) => refData.activities.find(a => a.activity_id === ta.activity_id)?.name || '';
+              Object.values(groupedActivities).forEach(list => {
+                list.sort((a, b) =>
+                  (a.locations?.name || '').localeCompare(b.locations?.name || '')
+                  || activityNameFor(a).localeCompare(activityNameFor(b))
+                );
+              });
 
               const renderActivityCard = (ta, groupKey) => {
                 const entries = getDraftEntries(ta.theatre_activity_id, ta.location_id);
