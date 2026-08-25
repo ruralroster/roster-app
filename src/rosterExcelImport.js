@@ -220,6 +220,7 @@ function normalizeHHMM(raw) {
 const RMO_DAY_LOCATION_TOKEN_MAP = {
   'ED': { location: 'Emergency', activity: 'Emergency Department Cover' },
   'WARD 1': { location: 'Ward 1', activity: 'Ward Care Cover' },
+  'MATERNITY': { location: 'Maternity', activity: 'Ward Care Cover' },
 };
 
 // "Chemo" isn't its own activity in this department — confirmed
@@ -228,6 +229,7 @@ const RMO_DAY_LOCATION_TOKEN_MAP = {
 const RMO_BARE_CODE_MAP = {
   'A/L': { leaveCode: 'AL' },
   'GP': { leaveCode: 'GP' },
+  'PDL': { leaveCode: 'PDL' }, // Professional Development Leave
   'Day Shift': clinicalSegment('Ward 1', 'Ward Care Cover', '08:00', '18:00'),
   'Clinic': clinicalSegment('Clinic', 'Medical Clinic', '08:00', '18:00'),
   'Chemo': clinicalSegment('Clinic', 'Medical Clinic', '08:00', '18:00'),
