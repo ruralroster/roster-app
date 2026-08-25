@@ -70,6 +70,7 @@ const SINGLE_CODE_MAP = {
   'Concessional Day': clinicalSegment('Non-clinical', 'Admin', '08:00', '18:00'),
   'Endo': clinicalSegment('Endoscopy', 'Endoscopy', '08:00', '18:00'),
   'OT': clinicalSegment('General Theatre', 'General Surgery', '08:00', '18:00'),
+  'Dental': clinicalSegment('General Theatre', 'Paediatric Dental', '08:00', '18:00'),
   'Obs Clinic': clinicalSegment('Clinic', 'Obstetrics', '08:00', '18:00'),
   'ANC': clinicalSegment('Clinic', 'Obstetrics', '08:00', '18:00'),
   'ObsC': clinicalSegment('Clinic', 'Obstetrics', '08:00', '18:00'),
