@@ -66,11 +66,11 @@ const SINGLE_CODE_MAP = {
   'Admin': clinicalSegment('Non-clinical', 'Admin', null, null),
   'DMS': clinicalSegment('Non-clinical', 'Admin', null, null),
   'Endo': clinicalSegment('Endoscopy', 'Endoscopy', '08:00', '18:00'),
-  'OT': clinicalSegment('General Theatre', 'General Surgery', null, null),
-  'Obs Clinic': clinicalSegment('Clinic', 'Obstetrics', null, null),
-  'ANC': clinicalSegment('Clinic', 'Obstetrics', null, null),
-  'ObsC': clinicalSegment('Clinic', 'Obstetrics', null, null),
-  'Obs': clinicalSegment('Clinic', 'Obstetrics', null, null),
+  'OT': clinicalSegment('General Theatre', 'General Surgery', '08:00', '18:00'),
+  'Obs Clinic': clinicalSegment('Clinic', 'Obstetrics', '08:00', '18:00'),
+  'ANC': clinicalSegment('Clinic', 'Obstetrics', '08:00', '18:00'),
+  'ObsC': clinicalSegment('Clinic', 'Obstetrics', '08:00', '18:00'),
+  'Obs': clinicalSegment('Clinic', 'Obstetrics', '08:00', '18:00'),
 };
 
 // Resolves one day's shift-cell text. A plain code looks itself up
