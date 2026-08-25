@@ -22,3 +22,7 @@
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# Real roster exports — contain staff phone numbers and provider numbers,
+# shouldn't go into version control.
+/exelRosters
