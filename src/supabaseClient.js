@@ -2893,12 +2893,13 @@ export async function getDutyAssignmentsForRange(departmentId, rangeStartDate, n
 // would show as an ordinary card grouped into Morning/Afternoon/Night,
 // which is the exact bug this was built to avoid.
 //
-// Otherwise, finds an existing theatre_activities card for this exact
-// (date, location, activity, shift) combination and joins it if one
-// already exists — e.g. a second person picking the same AM Endoscopy
-// slot lands on the same card — otherwise creates a new one using the
-// shift's own times, same as a location's activity card always being
-// time-scoped to match whichever shift it was created for.
+// Otherwise, finds an existing theatre_activities card for this
+// (date, location, activity) with a session overlapping the picked
+// shift's own and joins it if one exists — e.g. a second person picking
+// the same AM Endoscopy slot, even on a different shift that also covers
+// the morning, lands on the same card — otherwise creates a new one
+// using the shift's own times, same as a location's activity card always
+// being time-scoped to match whichever shift it was created for.
 //
 // onCall marks the resulting staff_assignments row the same way the Day
 // view's on-call checkbox does.
@@ -2934,26 +2935,17 @@ export async function assignStaffFortnight(departmentId, date, staffId, shiftId,
       return { data: null, error: null };
     }
 
-    const [{ data: existingTaRows, error: findError }, { data: shift, error: shiftError }, { data: staffRow, error: staffError }] = await Promise.all([
+    const [{ data: candidateTaRows, error: findError }, { data: shift, error: shiftError }, { data: staffRow, error: staffError }] = await Promise.all([
       theatreActivityIdOverride
-        ? { data: [{ theatre_activity_id: theatreActivityIdOverride }], error: null }
+        ? { data: null, error: null }
         : supabase
             .from('theatre_activities')
-            // No unique constraint on (date, location_id, activity_id,
-            // shift_id) any more (dropped so a location can host more than
-            // one activity per shift) — so this exact combination can now
-            // legitimately match more than one row. .maybeSingle() would
-            // throw "multiple (or no) rows returned" in that case, so this
-            // takes the earliest-created match instead of asserting
-            // there's exactly one.
-            .select('theatre_activity_id')
+            .select('theatre_activity_id, start_time, end_time')
             .eq('department_id', departmentId)
             .eq('date', dateStr)
             .eq('location_id', locationId)
             .eq('activity_id', activityId)
-            .eq('shift_id', shiftId)
-            .order('theatre_activity_id')
-            .limit(1),
+            .order('theatre_activity_id'),
       supabase.from('shifts').select('start_time, end_time').eq('shift_id', shiftId).single(),
       supabase.from('staff').select('rank').eq('staff_id', staffId).single(),
     ]);
@@ -2961,7 +2953,23 @@ export async function assignStaffFortnight(departmentId, date, staffId, shiftId,
     if (shiftError) throw shiftError;
     if (staffError) throw staffError;
 
-    let theatreActivityId = existingTaRows?.[0]?.theatre_activity_id;
+    // Same location+activity, an overlapping session — not an exact
+    // shift_id match — is what makes two picks "the same card": two
+    // people picking different shifts that both land in the same session
+    // (e.g. "Day" and "Long Day" both covering Morning) still means one
+    // card, same as Add Activity's own duplicate check. Earliest match
+    // wins if more than one overlaps (no unique constraint on this
+    // combination any more, so that's possible).
+    let theatreActivityId;
+    if (theatreActivityIdOverride) {
+      theatreActivityId = theatreActivityIdOverride;
+    } else {
+      const pickedShiftGroups = getSessionGroups(shift);
+      const match = (candidateTaRows || []).find(ta =>
+        getSessionGroups({ start_time: ta.start_time, end_time: ta.end_time }).some(g => pickedShiftGroups.includes(g))
+      );
+      theatreActivityId = match?.theatre_activity_id;
+    }
     let alreadyOnCard = false;
     if (!theatreActivityId) {
       const { data: newTa, error: createError } = await supabase
