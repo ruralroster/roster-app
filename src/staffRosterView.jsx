@@ -809,6 +809,15 @@ export default function StaffRosterView({ departmentId, staffId }) {
                   // together or showed the same activity twice. Everyone
                   // on ANY card matching that location+activity within
                   // this session is merged into the one entry.
+                  //
+                  // One row per staff_id within that entry, not one row per
+                  // assignment — the same person can genuinely have more
+                  // than one staff_assignments row here (one per
+                  // duplicate/sibling card), which used to list them twice
+                  // even though it's one person doing one thing. Where a
+                  // person has more than one such row, the earliest-starting
+                  // one is kept, consistent with the earliest-first sort
+                  // below.
                   const byLocationActivity = [];
                   const byLocationActivityIndex = new Map();
                   groupedAssignments[groupKey].forEach(assignment => {
@@ -823,14 +832,21 @@ export default function StaffRosterView({ departmentId, staffId }) {
                         locationId,
                         locationName: assignment.locations?.name,
                         activityLabel: activity ? (activity.abbreviation ? `${activity.name} (${activity.abbreviation})` : activity.name) : null,
-                        assignments: [],
+                        assignmentsByStaff: new Map(),
                       });
                     }
-                    byLocationActivity[byLocationActivityIndex.get(key)].assignments.push(assignment);
+                    const bucket = byLocationActivity[byLocationActivityIndex.get(key)];
+                    const existing = bucket.assignmentsByStaff.get(assignment.staff_id);
+                    if (!existing || (assignment.shifts?.start_time || '') < (existing.shifts?.start_time || '')) {
+                      bucket.assignmentsByStaff.set(assignment.staff_id, assignment);
+                    }
                   });
                   // Earliest shift first within each card, for a quick
                   // read of who's arriving when.
-                  byLocationActivity.forEach(loc => loc.assignments.sort((a, b) => (a.shifts?.start_time || '').localeCompare(b.shifts?.start_time || '')));
+                  byLocationActivity.forEach(loc => {
+                    loc.assignments = Array.from(loc.assignmentsByStaff.values())
+                      .sort((a, b) => (a.shifts?.start_time || '').localeCompare(b.shifts?.start_time || ''));
+                  });
 
                   return (
                     <CollapsibleSection key={groupKey} title={SESSION_GROUP_LABELS[groupKey]}>
