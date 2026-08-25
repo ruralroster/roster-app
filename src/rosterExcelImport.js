@@ -65,7 +65,7 @@ const SINGLE_CODE_MAP = {
   'Maternity': clinicalSegment('Maternity', 'Ward Care Cover', '08:00', '18:00'),
   'Admin': clinicalSegment('Non-clinical', 'Admin', null, null),
   'DMS': clinicalSegment('Non-clinical', 'Admin', null, null),
-  'Endo': clinicalSegment('Endoscopy', 'Endoscopy', null, null),
+  'Endo': clinicalSegment('Endoscopy', 'Endoscopy', '08:00', '18:00'),
   'OT': clinicalSegment('General Theatre', 'General Surgery', null, null),
   'Obs Clinic': clinicalSegment('Clinic', 'Obstetrics', null, null),
   'ANC': clinicalSegment('Clinic', 'Obstetrics', null, null),
@@ -214,15 +214,15 @@ const RMO_DAY_LOCATION_TOKEN_MAP = {
   'WARD 1': { location: 'Ward 1', activity: 'Ward Care Cover' },
 };
 
-// Codes with no time component at all. "Chemo" isn't its own activity in
-// this department — confirmed (2026-08-26) it maps to the same "Medical
-// Clinic" activity as bare "Clinic".
+// "Chemo" isn't its own activity in this department — confirmed
+// (2026-08-26) it maps to the same "Medical Clinic" activity as bare
+// "Clinic", and both are 08:00-18:00 (confirmed 2026-08-26).
 const RMO_BARE_CODE_MAP = {
   'A/L': { leaveCode: 'AL' },
   'GP': { leaveCode: 'GP' },
   'Day Shift': clinicalSegment('Ward 1', 'Ward Care Cover', '08:00', '18:00'),
-  'Clinic': clinicalSegment('Clinic', 'Medical Clinic', null, null),
-  'Chemo': clinicalSegment('Clinic', 'Medical Clinic', null, null),
+  'Clinic': clinicalSegment('Clinic', 'Medical Clinic', '08:00', '18:00'),
+  'Chemo': clinicalSegment('Clinic', 'Medical Clinic', '08:00', '18:00'),
 };
 
 export function resolveRmoShiftCode(rawCode) {
@@ -397,17 +397,44 @@ export function parseInternWeek(workbook, weekIndex, sheetName = 'Sheet1') {
 // scoring) — a wrong staff match on roster data is a patient-safety
 // issue, not a cosmetic one, so anything that isn't a clean prefix match
 // comes back null for a human to resolve, never a best-effort guess.
+//
+// The one deliberate exception: known nicknames the spreadsheet uses
+// that don't prefix-match the staff record's real first name (e.g.
+// "Becky" for "Rebecca" Coxon). This isn't a spreadsheet typo to fix at
+// the source and it isn't something to rename in the database either —
+// "Rebecca" is her correct name and the spreadsheet will keep saying
+// "Becky" every week — so the alias lives here instead. Add to this list
+// as new ones turn up; each one confirmed against a real person, never
+// guessed.
+const NICKNAME_ALIASES = {
+  'becky': 'rebecca',
+};
+
+function applyNicknameAlias(text) {
+  const [first, ...rest] = text.split(/\s+/);
+  const alias = NICKNAME_ALIASES[first.toLowerCase()];
+  return alias ? [alias, ...rest].join(' ') : text;
+}
+
 export function matchStaffName(rawLabel, staffList) {
   const cleaned = (rawLabel || '').replace(/^Medical Registrar\s*-\s*/i, '').trim();
   if (!cleaned) return null;
 
-  const exact = staffList.find(s => s.name.trim().toLowerCase() === cleaned.toLowerCase());
-  if (exact) return exact;
+  const candidates = [cleaned, applyNicknameAlias(cleaned)];
 
-  const prefixMatches = staffList
-    .filter(s => cleaned.toLowerCase().startsWith(s.name.trim().toLowerCase()))
-    .sort((a, b) => b.name.length - a.name.length);
-  return prefixMatches[0] || null;
+  for (const candidate of candidates) {
+    const exact = staffList.find(s => s.name.trim().toLowerCase() === candidate.toLowerCase());
+    if (exact) return exact;
+  }
+
+  for (const candidate of candidates) {
+    const prefixMatches = staffList
+      .filter(s => candidate.toLowerCase().startsWith(s.name.trim().toLowerCase()))
+      .sort((a, b) => b.name.length - a.name.length);
+    if (prefixMatches[0]) return prefixMatches[0];
+  }
+
+  return null;
 }
 
 // The real Mon/Sun dates for each of the file's week blocks — lets a
