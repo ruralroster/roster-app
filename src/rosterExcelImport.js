@@ -47,7 +47,7 @@ function clinicalSegment(location, activity, start, end) {
 // against the trimmed cell text (or half of an "X/Y" split code).
 const SINGLE_CODE_MAP = {
   'AL': { leaveCode: 'AL' },
-  'S/L': { leaveCode: 'SL' },
+  'S/L': { leaveCode: 'SL' }, // Study Leave, not Sick Leave
   'ED': clinicalSegment('Emergency', 'Emergency Department Cover', '08:00', '18:00'),
   'EDL + OC': clinicalSegment('Emergency', 'Emergency Department Cover', '10:30', '21:00'),
   'Ward 1': clinicalSegment('Ward 1', 'Ward Care Cover', '08:00', '18:00'),
