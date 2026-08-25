@@ -78,12 +78,15 @@ const SINGLE_CODE_MAP = {
 };
 
 // Resolves one day's shift-cell text. A plain code looks itself up
-// directly; an "X/Y" code splits into an AM half and a PM half at the
-// confirmed session-border times (09:00–12:00 / 12:30–18:00), unless
-// that half already carries its own fixed time (e.g. ED's real
-// 08:00–18:00). Anything not in SINGLE_CODE_MAP comes back tagged
-// `unmapped` rather than silently guessed at, so nothing goes missing
-// without being visible to whoever reviews the output.
+// directly; an "X/Y" code always splits into an AM half (the part
+// before the slash) and a PM half (the part after) at the confirmed
+// session-border times (09:00–12:00 / 12:30–18:00) — confirmed
+// 2026-08-27: this overrides whatever fixed time that half's own
+// standalone code carries (e.g. ED's real 08:00–18:00) since the slash
+// specifically means "this half only, split at the session border," not
+// "both halves, full day." Anything not in SINGLE_CODE_MAP comes back
+// tagged `unmapped` rather than silently guessed at, so nothing goes
+// missing without being visible to whoever reviews the output.
 export function resolveShiftCode(rawCode) {
   const code = (rawCode || '').trim();
   if (!code) return null;
@@ -99,8 +102,8 @@ export function resolveShiftCode(rawCode) {
       const pmSeg = pmMatch.segments[0];
       return {
         segments: [
-          { ...amSeg, start: amSeg.start || AM.start, end: amSeg.end || AM.end },
-          { ...pmSeg, start: pmSeg.start || PM.start, end: pmSeg.end || PM.end },
+          { ...amSeg, start: AM.start, end: AM.end },
+          { ...pmSeg, start: PM.start, end: PM.end },
         ],
       };
     }
