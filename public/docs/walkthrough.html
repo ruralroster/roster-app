@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Roster Walkthrough</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Public+Sans:wght@400;500;600;700&display=swap">
+<style>
+  :root {
+    --ink: #12181b;
+    --paper: #f4f6f5;
+    --surface: #ffffff;
+    --line: #d9dfdd;
+    --muted: #5c6b68;
+    --accent: #0d6e6b;
+    --accent-ink: #ffffff;
+    --accent-soft: #e4f1f0;
+    --warn: #b5690a;
+    --warn-soft: #fbeedd;
+    --radius: 12px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ink: #edf2f1;
+      --paper: #10161a;
+      --surface: #171f23;
+      --line: #2b3538;
+      --muted: #9fb0ac;
+      --accent: #4fd1c8;
+      --accent-ink: #0a1614;
+      --accent-soft: #163431;
+      --warn: #e3a34e;
+      --warn-soft: #3a2a14;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ink: #edf2f1;
+    --paper: #10161a;
+    --surface: #171f23;
+    --line: #2b3538;
+    --muted: #9fb0ac;
+    --accent: #4fd1c8;
+    --accent-ink: #0a1614;
+    --accent-soft: #163431;
+    --warn: #e3a34e;
+    --warn-soft: #3a2a14;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Public Sans", ui-sans-serif, system-ui, sans-serif;
+    font-size: 16px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .eyebrow {
+    font-family: "Barlow Semi Condensed", sans-serif;
+    font-weight: 600;
+    font-size: 0.78rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+
+  h1, h2, h3 {
+    font-family: "Barlow Semi Condensed", sans-serif;
+    font-weight: 700;
+    line-height: 1.1;
+    text-wrap: balance;
+    color: var(--ink);
+    margin: 0;
+  }
+
+  .masthead {
+    padding: 3.2rem 1.5rem 2.6rem;
+    border-bottom: 1px solid var(--line);
+  }
+  .masthead-inner { max-width: 720px; margin: 0 auto; }
+  .masthead h1 { font-size: clamp(2.2rem, 5vw, 3.2rem); margin-top: 0.5rem; }
+  .masthead p.dek { max-width: 52ch; color: var(--muted); font-size: 1.08rem; margin-top: 0.9rem; }
+  .masthead .who {
+    display: flex;
+    gap: 1.4rem;
+    margin-top: 1.6rem;
+    font-size: 0.9rem;
+    flex-wrap: wrap;
+  }
+  .who-item { display: flex; align-items: center; gap: 0.5rem; color: var(--muted); }
+  .who-swatch { width: 0.85rem; height: 0.85rem; border-radius: 3px; flex-shrink: 0; }
+  .who-swatch.officer { background: var(--accent); }
+  .who-swatch.staff { background: var(--surface); border: 1.5px solid var(--ink); }
+
+  .timeline {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 3rem 1.5rem 5rem;
+    position: relative;
+  }
+  .timeline::before {
+    content: "";
+    position: absolute;
+    left: calc(1.5rem + 17px);
+    top: 3rem;
+    bottom: 5rem;
+    width: 1px;
+    background: var(--line);
+  }
+  @media (max-width: 560px) {
+    .timeline::before { left: calc(1.5rem + 13px); }
+  }
+
+  .step {
+    position: relative;
+    padding-left: 3.1rem;
+    margin-bottom: 2.2rem;
+    scroll-margin-top: 1.5rem;
+  }
+  @media (max-width: 560px) {
+    .step { padding-left: 2.5rem; }
+  }
+  .step-num {
+    position: absolute;
+    left: 0;
+    top: 0.1rem;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: var(--surface);
+    border: 1.5px solid var(--line);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: "Barlow Semi Condensed", sans-serif;
+    font-weight: 700;
+    font-size: 1.05rem;
+    color: var(--muted);
+    z-index: 1;
+  }
+  @media (max-width: 560px) {
+    .step-num { width: 28px; height: 28px; font-size: 0.9rem; }
+  }
+  .step.officer .step-num { border-color: var(--accent); color: var(--accent); }
+
+  .role-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-family: "Barlow Semi Condensed", sans-serif;
+    font-weight: 600;
+    font-size: 0.76rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 0.2rem 0.6rem 0.22rem;
+    border-radius: 999px;
+    margin-bottom: 0.6rem;
+  }
+  .role-pill.officer { background: var(--accent); color: var(--accent-ink); }
+  .role-pill.staff { background: transparent; color: var(--ink); border: 1.5px solid var(--ink); }
+
+  .step h2 { font-size: 1.42rem; margin-bottom: 0.6rem; }
+  .step p { margin: 0.5rem 0; max-width: 58ch; color: var(--ink); }
+  .step p.sub { color: var(--muted); font-size: 0.95rem; }
+
+  .callout {
+    display: flex;
+    gap: 0.6rem;
+    padding: 0.75rem 0.95rem;
+    border-radius: var(--radius);
+    background: var(--warn-soft);
+    border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent);
+    margin: 0.75rem 0;
+    max-width: 58ch;
+  }
+  .callout .mark { font-family: "Barlow Semi Condensed", sans-serif; font-weight: 700; color: var(--warn); flex-shrink: 0; }
+  .callout p { margin: 0; color: var(--ink); font-size: 0.92rem; }
+
+  .divider-label {
+    position: relative;
+    margin: 3rem 0 1.6rem -3.1rem;
+    padding-left: 3.1rem;
+  }
+  @media (max-width: 560px) { .divider-label { margin-left: -2.5rem; padding-left: 2.5rem; } }
+  .divider-label span {
+    font-family: "Barlow Semi Condensed", sans-serif;
+    font-weight: 600;
+    font-size: 0.78rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--muted);
+    background: var(--paper);
+    padding-right: 0.6rem;
+    position: relative;
+    z-index: 1;
+  }
+
+  footer {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 0 1.5rem 4rem;
+    color: var(--muted);
+    font-size: 0.85rem;
+    border-top: 1px solid var(--line);
+    padding-top: 2rem;
+  }
+</style>
+
+</head>
+<body>
+<div class="masthead">
+  <div class="masthead-inner">
+    <span class="eyebrow">Guided tour</span>
+    <h1>A Week on the Roster</h1>
+    <p class="dek">One realistic pass through the app, start to finish — from an officer opening the week to a staff member texting the coffee order. Follow it start to end, or use it to show someone else how the pieces fit together.</p>
+    <div class="who">
+      <span class="who-item"><span class="who-swatch officer"></span>Officer step</span>
+      <span class="who-item"><span class="who-swatch staff"></span>Staff step</span>
+    </div>
+  </div>
+</div>
+
+<div class="timeline">
+
+  <div class="divider-label"><span>Setting up the week</span></div>
+
+  <div class="step officer" id="step-1">
+    <div class="step-num">1</div>
+    <span class="role-pill officer">Officer</span>
+    <h2>Open the Calendar and check coverage</h2>
+    <p>Four weeks are on screen at once, coloured by how well each day is covered. A run of red or orange days is where to start.</p>
+    <p class="sub">Green = fully covered · Orange = on-call short · Red = a required activity has nobody on it.</p>
+  </div>
+
+  <div class="step officer" id="step-2">
+    <div class="step-num">2</div>
+    <span class="role-pill officer">Officer</span>
+    <h2>Apply the Week Template</h2>
+    <p>Pick the standard template from the dropdown above the grid and hit <strong>Apply</strong> on the week that needs it. This creates the empty cards for everything that has to happen — nobody's assigned yet, but the Calendar can now correctly flag what's missing.</p>
+    <div class="callout">
+      <span class="mark">Once only</span>
+      <p>A template only needs applying once per week. Skip this step entirely if the roster's already built by hand for that week.</p>
+    </div>
+  </div>
+
+  <div class="step officer" id="step-3">
+    <div class="step-num">3</div>
+    <span class="role-pill officer">Officer</span>
+    <h2>Fill in Day view</h2>
+    <p>Tap a red day to jump into it. For each card, open the Consultant and Registrar dropdowns — names are ranked by who's done that activity least, so working down the list keeps experience spread fairly.</p>
+    <div class="callout">
+      <span class="mark">Some slots are locked down</span>
+      <p>If an activity has a required Advanced Skill set (e.g. Endoscopy needing Anaesthetics or Endoscopy), only staff holding that skill appear in its dropdown at all — set who holds what under Settings → Staff Settings → Staff and Availability, and what each activity requires under Settings → Card Properties.</p>
+    </div>
+  </div>
+
+  <div class="step officer" id="step-4">
+    <div class="step-num">4</div>
+    <span class="role-pill officer">Officer</span>
+    <h2>Set who's on call</h2>
+    <p>In the Duty Assignments panel at the top of Day view, pick a name for each on-call slot — First On Call, Obs On Call, whatever your department runs. This is what turns an orange day green. A slot with a required Advanced Skill (e.g. Anaesthetics for an Anaesthetics on-call) only offers staff who hold it, the same as the activity cards above.</p>
+  </div>
+
+  <div class="step officer" id="step-5">
+    <div class="step-num">5</div>
+    <span class="role-pill officer">Officer</span>
+    <h2>Slot in a junior doctor from Fortnight view</h2>
+    <p>Switch to Fortnight, pick the junior from the staff list, and click their day. Choosing a shift shows everything already happening in that session — pick a card to join it as registrar. If nothing's there yet but someone's on call, you're offered them as supervising cover instead, and a fresh card gets built with both of them on it.</p>
+  </div>
+
+  <div class="divider-label"><span>Through the week — staff side</span></div>
+
+  <div class="step staff" id="step-6">
+    <div class="step-num">6</div>
+    <span class="role-pill staff">Staff</span>
+    <h2>Check today, see who's with you</h2>
+    <p>The Day tab leads with today's own allocation, then Morning/Afternoon/Night sections below it. Tap the arrow on your allocation to see who else is at your location for that session.</p>
+  </div>
+
+  <div class="step staff" id="step-7">
+    <div class="step-num">7</div>
+    <span class="role-pill staff">Staff</span>
+    <h2>Look up who's on call</h2>
+    <p>The Phone Book tab lists the week's on-call roster by type. Tap a name to open their contact card, then tap the phone number to call directly — no need to look anything up elsewhere.</p>
+  </div>
+
+  <div class="step staff" id="step-8">
+    <div class="step-num">8</div>
+    <span class="role-pill staff">Staff</span>
+    <h2>Pick up an unfilled shift</h2>
+    <p>Something short-staffed shows up under Variation. Hit <strong>Volunteer</strong> to send a request.</p>
+  </div>
+
+  <div class="step officer" id="step-9">
+    <div class="step-num">9</div>
+    <span class="role-pill officer">Officer</span>
+    <h2>Approve the request</h2>
+    <p>Back in Day view, the volunteer shows up as a clickable name right inside that card's dropdown — pick them the same way you'd pick anyone else, and the request is resolved.</p>
+  </div>
+
+  <div class="divider-label"><span>When plans change</span></div>
+
+  <div class="step staff" id="step-10">
+    <div class="step-num">10</div>
+    <span class="role-pill staff">Staff</span>
+    <h2>Report sick</h2>
+    <p>On the Variation tab, <strong>Notify Sick</strong> is enabled whenever there's a shift on today. One tap sends the report.</p>
+  </div>
+
+  <div class="step officer" id="step-11">
+    <div class="step-num">11</div>
+    <span class="role-pill officer">Officer</span>
+    <h2>Approve it from Day view</h2>
+    <p>A red banner appears at the top of Day view with the name and <strong>Approve</strong> / <strong>Deny</strong> buttons. Approving is what lets whoever's on call know cover is needed.</p>
+  </div>
+
+  <div class="divider-label"><span>The small stuff</span></div>
+
+  <div class="step staff" id="step-12">
+    <div class="step-num">12</div>
+    <span class="role-pill staff">Staff</span>
+    <h2>Sort the coffee order</h2>
+    <p>Whoever's got the coffee run opens the <strong>Coffee</strong> button, checks the Order Summary at the top, and taps <strong>Text order to [Coffee Place]</strong> — it opens messages with the whole order typed out, ready to send.</p>
+  </div>
+
+</div>
+
+<footer>
+  That's the whole loop. For anything not covered here, the How-To Guide has the full reference, screen by screen.
+</footer>
+</body>
+</html>

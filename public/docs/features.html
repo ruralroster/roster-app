@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Roster Features</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Public+Sans:wght@400;500;600;700&display=swap">
+<style>
+  :root {
+    --ink: #12181b;
+    --paper: #f4f6f5;
+    --surface: #ffffff;
+    --line: #d9dfdd;
+    --muted: #5c6b68;
+    --accent: #0d6e6b;
+    --accent-ink: #ffffff;
+    --accent-soft: #e4f1f0;
+    --officer: #0d6e6b;
+    --staff: #7a5a12;
+    --staff-soft: #f6ecd6;
+    --radius: 10px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ink: #edf2f1;
+      --paper: #10161a;
+      --surface: #171f23;
+      --line: #2b3538;
+      --muted: #9fb0ac;
+      --accent: #4fd1c8;
+      --accent-ink: #0a1614;
+      --accent-soft: #163431;
+      --officer: #4fd1c8;
+      --staff: #e3b45e;
+      --staff-soft: #3a2f16;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ink: #edf2f1;
+    --paper: #10161a;
+    --surface: #171f23;
+    --line: #2b3538;
+    --muted: #9fb0ac;
+    --accent: #4fd1c8;
+    --accent-ink: #0a1614;
+    --accent-soft: #163431;
+    --officer: #4fd1c8;
+    --staff: #e3b45e;
+    --staff-soft: #3a2f16;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Public Sans", ui-sans-serif, system-ui, sans-serif;
+    font-size: 16px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1, h2, h3 {
+    font-family: "Barlow Semi Condensed", ui-sans-serif, sans-serif;
+    font-weight: 700;
+    line-height: 1.08;
+    text-wrap: balance;
+    color: var(--ink);
+    margin: 0;
+  }
+  .eyebrow {
+    font-family: "Barlow Semi Condensed", sans-serif;
+    font-weight: 600;
+    font-size: 0.78rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+
+  .masthead {
+    padding: 3.2rem 1.5rem 2.4rem;
+    border-bottom: 1px solid var(--line);
+  }
+  .masthead-inner { max-width: 1180px; margin: 0 auto; }
+  .masthead h1 { font-size: clamp(2.2rem, 4.5vw, 3.4rem); margin-top: 0.5rem; }
+  .masthead p.dek { max-width: 52ch; color: var(--muted); font-size: 1.08rem; margin-top: 0.9rem; }
+  .masthead-meta {
+    display: flex;
+    gap: 1.6rem;
+    flex-wrap: wrap;
+    margin-top: 1.6rem;
+    font-size: 0.88rem;
+    color: var(--muted);
+  }
+
+  .legend {
+    display: flex;
+    gap: 1.2rem;
+    flex-wrap: wrap;
+    margin-top: 1.4rem;
+    font-size: 0.85rem;
+  }
+  .legend-item { display: flex; align-items: center; gap: 0.45rem; color: var(--muted); }
+  .legend .tag { margin: 0; }
+
+  .grid {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 2.6rem 1.5rem 5rem;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1.5rem;
+  }
+  @media (max-width: 780px) {
+    .grid { grid-template-columns: 1fr; }
+  }
+
+  .category {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 1.6rem 1.7rem;
+  }
+  .category h2 {
+    font-size: 1.3rem;
+    margin-bottom: 0.3rem;
+  }
+  .category .cat-dek {
+    color: var(--muted);
+    font-size: 0.9rem;
+    margin: 0 0 1.1rem;
+    max-width: 44ch;
+  }
+
+  .feature {
+    padding: 0.85rem 0;
+    border-top: 1px solid var(--line);
+  }
+  .feature:first-of-type { border-top: none; padding-top: 0; }
+  .feature-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.6rem;
+  }
+  .feature-name {
+    font-weight: 600;
+    font-size: 0.98rem;
+  }
+  .feature p {
+    margin: 0.3rem 0 0;
+    color: var(--muted);
+    font-size: 0.9rem;
+    max-width: 46ch;
+  }
+
+  .tag {
+    display: inline-flex;
+    align-items: center;
+    font-family: "Barlow Semi Condensed", sans-serif;
+    font-weight: 600;
+    font-size: 0.66rem;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    padding: 0.16rem 0.5rem;
+    border-radius: 999px;
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+  .tag.officer { background: var(--accent-soft); color: var(--officer); }
+  .tag.staff { background: var(--staff-soft); color: var(--staff); }
+  .tag.both { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+
+  footer {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 0 1.5rem 4rem;
+    color: var(--muted);
+    font-size: 0.85rem;
+    border-top: 1px solid var(--line);
+    padding-top: 2rem;
+  }
+</style>
+
+</head>
+<body>
+<div class="masthead">
+  <div class="masthead-inner">
+    <span class="eyebrow">At a glance</span>
+    <h1>What the Roster does</h1>
+    <p class="dek">Every capability in the app, grouped by what it's for rather than which screen it's on. For step-by-step instructions, see the How-To Guide; for a guided tour, see the Walkthrough.</p>
+    <div class="legend">
+      <span class="legend-item"><span class="tag officer">Officer</span> builds and manages the roster</span>
+      <span class="legend-item"><span class="tag staff">Staff</span> checks it and manages their own day</span>
+      <span class="legend-item"><span class="tag both">Both</span> either role uses this</span>
+    </div>
+  </div>
+</div>
+
+<div class="grid">
+
+  <div class="category">
+    <h2>Building the roster</h2>
+    <p class="cat-dek">Turning a blank week into a fully staffed one.</p>
+
+    <div class="feature">
+      <div class="feature-head"><span class="feature-name">Calendar coverage map</span><span class="tag officer">Officer</span></div>
+      <p>Four weeks at a glance, colour-coded green/orange/red/grey. Short on-call slots are called out with a letter code even on an otherwise red day.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-head"><span class="feature-name">Week Templates</span><span class="tag officer">Officer</span></div>
+      <p>Apply a saved coverage skeleton to any week in one tap. Only ever fills gaps — never overwrites what's already on the roster.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-head"><span class="feature-name">Day view assignment</span><span class="tag officer">Officer</span></div>
+      <p>Build the day activity by activity, with Consultant/Registrar dropdowns ranked by who's done that activity least.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-head"><span class="feature-name">Duty Assignments</span><span class="tag officer">Officer</span></div>
+      <p>A configurable set of on-call slots (First On Call, Obs On Call, and however many more a department needs) alongside the day's activity cards.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-head"><span class="feature-name">Fortnight view</span><span class="tag officer">Officer</span></div>
+      <p>Assign person-first instead of slot-first, with an automatic supervising-consultant fallback when slotting in a junior doctor.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-head"><span class="feature-name">Excel roster import &amp; export</span><span class="tag officer">Officer</span></div>
+      <p>Bring an externally built roster in from Excel, or export the department's roster back out — the same code mapping, both directions.</p>
+    </div>
+  </div>
+
+  <div class="category">
+    <h2>Keeping it fair &amp; safe</h2>
+    <p class="cat-dek">The rules that stop the same few people carrying every hard shift.</p>
+
+    <div class="feature">
+      <div class="feature-head"><span class="feature-name">Advanced Skills</span><span class="tag officer">Officer</span></div>
+      <p>Tag staff with skills like Anaesthetics, Obstetrics, or Endoscopy, then require one on an Activity or Duty Type — staff missing it don't appear in that slot's picker at all.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-head"><span class="feature-name">Staff Activity Profiles</span><span class="tag both">Both</span></div>
+      <p>Staff flag activities they can't or won't do; officers still see and can pick them, just clearly marked.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-head"><span class="feature-name">Shift Pattern Rules</span><span class="tag officer">Officer</span></div>
+      <p>Configurable fatigue rules — like mandatory rest after a night shift — enforced with a required override reason whenever one has to be broken.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-head"><span class="feature-name">On-Call &amp; Weekend Fairness Report</span><span class="tag officer">Officer</span></div>
+      <p>Tallies on-call and weekend load per person, so it stays visibly even across the department.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-head"><span class="feature-name">Case Mix Report</span><span class="tag officer">Officer</span></div>
+      <p>Tracks each staff member's exposure by activity — the same ranking that powers the Consultant/Registrar dropdowns.</p>
+    </div>
+  </div>
+
+  <div class="category">
+    <h2>Staff self-service</h2>
+    <p class="cat-dek">Everything a staff member needs without calling the office.</p>
+
+    <div class="feature">
+      <div class="feature-head"><span class="feature-name">Day &amp; Week views</span><span class="tag staff">Staff</span></div>
+      <p>Today's allocation front and centre, plus the whole week at a glance, one card per day.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-head"><span class="feature-name">Phone Book</span><span class="tag staff">Staff</span></div>
+      <p>The week's on-call roster and every other department number, all tap-to-call.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-head"><span class="feature-name">Variation</span><span class="tag staff">Staff</span></div>
+      <p>Volunteer for an unfilled shift, or notify sick with one tap — an officer approves either straight from Day view.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-head"><span class="feature-name">Coffee</span><span class="tag staff">Staff</span></div>
+      <p>One tap texts the whole department's coffee order, totalled by drink and milk, to the coffee place.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-head"><span class="feature-name">Availability calendar</span><span class="tag staff">Staff</span></div>
+      <p>Mark available/unavailable day by day, including standing days off, fortnightly patterns, and blocks of leave.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-head"><span class="feature-name">Install as an app</span><span class="tag both">Both</span></div>
+      <p>Adds to the home screen on iOS or Android like a native app — no app store needed.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-head"><span class="feature-name">Two-factor authentication</span><span class="tag both">Both</span></div>
+      <p>Optional, per person: add an authenticator-app code to sign-in on top of your password, toggled on or off any time in Settings → Security.</p>
+    </div>
+  </div>
+
+  <div class="category">
+    <h2>Officer administration</h2>
+    <p class="cat-dek">The configuration behind everything above.</p>
+
+    <div class="feature">
+      <div class="feature-head"><span class="feature-name">Staff Accounts</span><span class="tag officer">Officer</span></div>
+      <p>Invite staff by email, set officer vs staff permission, and correct rank.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-head"><span class="feature-name">Payroll Export</span><span class="tag officer">Officer</span></div>
+      <p>Download any fortnight's whole-department roster as an Excel file, ready for pay processing.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-head"><span class="feature-name">Approvals</span><span class="tag officer">Officer</span></div>
+      <p>Sick reports and shift-volunteer requests both surface in Day view for a one-tap approve or deny.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-head"><span class="feature-name">Reference data</span><span class="tag officer">Officer</span></div>
+      <p>Shifts, Locations, Activities, Duty Types, Leave Types, and Phone Book entries — every list the rest of the app draws from, editable in Settings.</p>
+    </div>
+  </div>
+
+</div>
+
+<footer>
+  Roster Features — a living summary. If the app has grown a capability that isn't listed here yet, the app is right and this page is due an update.
+</footer>
+</body>
+</html>

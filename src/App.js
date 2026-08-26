@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Loader, Plus, X, AlertCircle } from 'lucide-react';
+import { Loader, Plus, X, AlertCircle, HelpCircle, ExternalLink } from 'lucide-react';
 import OfficerRosterView from './officer-roster-view-supabase';
 import StaffApp from './StaffApp';
 import Login from './Login';
 import SetPassword from './SetPassword';
+import MfaChallenge from './MfaChallenge';
 import DepartmentSwitcher from './DepartmentSwitcher';
-import { supabase, getMyMemberships, signOut, updateMyPreferredView, createDepartment } from './supabaseClient';
+import { supabase, getMyMemberships, getMfaAssuranceLevel, signOut, updateMyPreferredView, createDepartment } from './supabaseClient';
 
 // Supabase redirects invite/password-recovery links back here with
 // ?type=invite / ?type=recovery (or, on older/implicit-flow projects,
@@ -31,8 +32,16 @@ function App() {
   // department's own saved preference.
   const [viewOverride, setViewOverride] = useState(null);
   const [needsPasswordSetup, setNeedsPasswordSetup] = useState(needsPasswordSetupFromUrl);
+  // Whether this session still needs to answer a 2FA challenge before
+  // seeing anything else. null = not checked yet for the current session
+  // (renders the loader, same as `session === undefined`); true/false once
+  // getMfaAssuranceLevel has answered. Re-checked from scratch whenever
+  // `session` changes, since signing out and back in as someone else must
+  // not reuse the previous person's answer.
+  const [needsMfaChallenge, setNeedsMfaChallenge] = useState(null);
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const [showAddDepartment, setShowAddDepartment] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
   // Lets OfficerRosterView portal its Day-tab action buttons (Copy Last
   // Week / Add Activity) into this top bar, so they stay visible while
   // scrolled down the page instead of only living next to the date header.
@@ -46,11 +55,32 @@ function App() {
       if (!s) {
         setMemberships(null);
         setActiveMembership(null);
+        setNeedsMfaChallenge(null);
       }
     });
 
     return () => subscription.unsubscribe();
   }, []);
+
+  // A plain password sign-in only ever reaches 'aal1'. Someone with 2FA
+  // turned on (see TwoFactorSettings) needs a step up to 'aal2' before
+  // going any further — skipped entirely for someone who's never enabled
+  // it, since then currentLevel and nextLevel are already equal.
+  //
+  // Guarded on needsMfaChallenge still being null so this resolves once per
+  // sign-in, not on every `session` change — onAuthStateChange fires a new
+  // session object on routine token refreshes too (roughly hourly), and
+  // re-running the check then would flash the app back to a loading screen
+  // for no reason. Signing out resets it to null again, above.
+  useEffect(() => {
+    if (!session || needsPasswordSetup || needsMfaChallenge !== null) return;
+    let cancelled = false;
+    getMfaAssuranceLevel().then(({ data, error }) => {
+      if (cancelled) return;
+      setNeedsMfaChallenge(!error && data && data.nextLevel === 'aal2' && data.currentLevel !== 'aal2');
+    });
+    return () => { cancelled = true; };
+  }, [session, needsPasswordSetup, needsMfaChallenge]);
 
   const loadMemberships = useCallback(async () => {
     setMembershipsLoading(true);
@@ -94,6 +124,14 @@ function App() {
 
   if (needsPasswordSetup) {
     return <SetPassword onDone={handlePasswordSet} />;
+  }
+
+  if (needsMfaChallenge === null) {
+    return <FullScreenLoader />;
+  }
+
+  if (needsMfaChallenge) {
+    return <MfaChallenge onVerified={() => setNeedsMfaChallenge(false)} />;
   }
 
   if (memberships === null || membershipsLoading) {
@@ -153,6 +191,15 @@ function App() {
               View: {effectiveView === 'officer' ? 'Officer' : 'Staff'}
             </button>
           )}
+          {role === 'officer' && (
+            <button
+              onClick={() => setShowHelp(true)}
+              className="px-3 py-2 bg-gray-600 hover:bg-gray-700 text-white font-medium rounded text-sm transition flex items-center gap-1.5"
+            >
+              <HelpCircle size={16} />
+              Help
+            </button>
+          )}
           {isSuperAdmin && (
             <button
               onClick={() => setShowAddDepartment(true)}
@@ -182,6 +229,7 @@ function App() {
       {showAddDepartment && (
         <AddDepartmentModal onClose={() => setShowAddDepartment(false)} onCreated={handleDepartmentAdded} />
       )}
+      {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
     </div>
   );
 }
@@ -264,6 +312,50 @@ function AddDepartmentModal({ onClose, onCreated }) {
         <p className="text-xs text-gray-500 mt-4">
           Starts empty — no staff, activities, or shift patterns until you add them.
         </p>
+      </div>
+    </div>
+  );
+}
+
+// The three guides live as static pages under public/docs (see
+// public/docs/*.html) — plain, self-contained HTML rather than a PDF or a
+// claude.ai artifact link, so they open instantly in a new tab with no
+// external account or viewer needed, and are versioned in this repo right
+// alongside the app they document.
+const HELP_GUIDES = [
+  { href: 'docs/walkthrough.html', label: 'Walkthrough', description: 'A guided, start-to-finish tour of a week on the roster.' },
+  { href: 'docs/how-to-guide.html', label: 'How-To Guide', description: 'Full reference for every screen, organised by role.' },
+  { href: 'docs/features.html', label: 'Features', description: 'A one-page summary of everything the app does.' },
+];
+
+function HelpModal({ onClose }) {
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+      <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-sm">
+        <div className="flex justify-between items-start mb-4">
+          <h2 className="text-xl font-bold text-gray-900">Help</h2>
+          <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded-lg">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="space-y-2">
+          {HELP_GUIDES.map(guide => (
+            <a
+              key={guide.href}
+              href={`${process.env.PUBLIC_URL}/${guide.href}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-start justify-between gap-3 p-3 border border-gray-200 rounded-lg hover:bg-gray-50 hover:border-blue-300 transition"
+            >
+              <div>
+                <p className="text-sm font-semibold text-gray-900">{guide.label}</p>
+                <p className="text-xs text-gray-500 mt-0.5">{guide.description}</p>
+              </div>
+              <ExternalLink size={16} className="text-gray-400 flex-shrink-0 mt-0.5" />
+            </a>
+          ))}
+        </div>
       </div>
     </div>
   );

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { ChevronLeft, ChevronRight, ChevronDown, X, AlertCircle, Loader, Search, Download, Coffee, Copy, Check, Hand, Settings, Phone } from 'lucide-react';
+import TwoFactorSettings from './TwoFactorSettings';
 import {
   getStaffById,
   getStaffAssignmentsForStaffDate,
@@ -1188,6 +1189,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
         { key: 'restrictions', label: 'Activity Restrictions' },
         { key: 'coffee', label: 'Coffee Preferences' },
         { key: 'availability', label: 'Availability' },
+        { key: 'security', label: 'Security' },
       ];
 
       const settingsDays = [];
@@ -1317,6 +1319,8 @@ export default function StaffRosterView({ departmentId, staffId }) {
                 />
               </div>
             )}
+
+            {settingsSubTab === 'security' && <TwoFactorSettings />}
 
             {settingsSubTab === 'availability' && (
               <>

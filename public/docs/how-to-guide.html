@@ -1,0 +1,527 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Roster How-To Guide</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Public+Sans:wght@400;500;600;700&display=swap">
+<style>
+  :root {
+    --ink: #12181b;
+    --paper: #f4f6f5;
+    --surface: #ffffff;
+    --line: #d9dfdd;
+    --muted: #5c6b68;
+    --accent: #0d6e6b;
+    --accent-ink: #ffffff;
+    --accent-soft: #e4f1f0;
+    --warn: #b5690a;
+    --warn-soft: #fbeedd;
+    --radius: 10px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ink: #edf2f1;
+      --paper: #10161a;
+      --surface: #171f23;
+      --line: #2b3538;
+      --muted: #9fb0ac;
+      --accent: #4fd1c8;
+      --accent-ink: #0a1614;
+      --accent-soft: #163431;
+      --warn: #e3a34e;
+      --warn-soft: #3a2a14;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ink: #edf2f1;
+    --paper: #10161a;
+    --surface: #171f23;
+    --line: #2b3538;
+    --muted: #9fb0ac;
+    --accent: #4fd1c8;
+    --accent-ink: #0a1614;
+    --accent-soft: #163431;
+    --warn: #e3a34e;
+    --warn-soft: #3a2a14;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Public Sans", ui-sans-serif, system-ui, sans-serif;
+    font-size: 16px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .eyebrow {
+    font-family: "Barlow Semi Condensed", ui-sans-serif, sans-serif;
+    font-weight: 600;
+    font-size: 0.78rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+
+  h1, h2, h3 {
+    font-family: "Barlow Semi Condensed", ui-sans-serif, sans-serif;
+    font-weight: 700;
+    line-height: 1.08;
+    text-wrap: balance;
+    color: var(--ink);
+    margin: 0;
+  }
+
+  /* ---------- masthead ---------- */
+  .masthead {
+    padding: 3.2rem 1.5rem 2.4rem;
+    border-bottom: 1px solid var(--line);
+  }
+  .masthead-inner {
+    max-width: 1180px;
+    margin: 0 auto;
+  }
+  .masthead h1 {
+    font-size: clamp(2.2rem, 4.5vw, 3.4rem);
+    margin-top: 0.5rem;
+  }
+  .masthead p.dek {
+    max-width: 46ch;
+    color: var(--muted);
+    font-size: 1.08rem;
+    margin-top: 0.9rem;
+  }
+  .masthead-meta {
+    display: flex;
+    gap: 1.6rem;
+    flex-wrap: wrap;
+    margin-top: 1.6rem;
+    font-size: 0.88rem;
+    color: var(--muted);
+  }
+  .masthead-meta strong { color: var(--ink); font-weight: 600; }
+
+  /* ---------- layout ---------- */
+  .layout {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 2.4rem 1.5rem 5rem;
+    display: grid;
+    grid-template-columns: 232px minmax(0, 1fr);
+    gap: 3rem;
+    align-items: start;
+  }
+  @media (max-width: 860px) {
+    .layout { grid-template-columns: 1fr; }
+  }
+
+  /* ---------- nav ---------- */
+  nav.index {
+    position: sticky;
+    top: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.6rem;
+  }
+  @media (max-width: 860px) {
+    nav.index { position: static; }
+  }
+  nav.index .group-label {
+    font-family: "Barlow Semi Condensed", sans-serif;
+    font-weight: 600;
+    font-size: 0.72rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 0.5rem;
+    display: block;
+  }
+  nav.index ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    border-left: 1px solid var(--line);
+  }
+  nav.index li a {
+    display: block;
+    padding: 0.3rem 0 0.3rem 0.85rem;
+    margin-left: -1px;
+    border-left: 2px solid transparent;
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 0.92rem;
+  }
+  nav.index li a:hover,
+  nav.index li a:focus-visible {
+    color: var(--ink);
+    border-left-color: var(--accent);
+  }
+  nav.index li a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* ---------- content ---------- */
+  main { min-width: 0; }
+
+  section.role {
+    margin-bottom: 3.2rem;
+  }
+  .role-banner {
+    display: flex;
+    align-items: baseline;
+    gap: 0.7rem;
+    padding-bottom: 0.6rem;
+    border-bottom: 2px solid var(--ink);
+    margin-bottom: 1.8rem;
+  }
+  .role-banner h2 { font-size: 1.9rem; }
+  .role-banner .tag {
+    font-family: "Barlow Semi Condensed", sans-serif;
+    font-size: 0.78rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  article.topic {
+    padding: 1.6rem 0;
+    border-bottom: 1px solid var(--line);
+    scroll-margin-top: 1.5rem;
+  }
+  article.topic:last-child { border-bottom: none; }
+  article.topic h3 {
+    font-size: 1.32rem;
+    margin-bottom: 0.7rem;
+  }
+  article.topic > .eyebrow { display: block; margin-bottom: 0.35rem; }
+
+  article.topic p { margin: 0.55rem 0; max-width: 66ch; }
+  article.topic ul, article.topic ol {
+    margin: 0.6rem 0;
+    padding-left: 1.3rem;
+    max-width: 66ch;
+  }
+  article.topic li { margin: 0.35rem 0; }
+  article.topic strong { font-weight: 600; }
+
+  code, .kbd {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 0.86em;
+    background: var(--accent-soft);
+    color: var(--accent);
+    padding: 0.1em 0.4em;
+    border-radius: 4px;
+  }
+
+  .callout {
+    display: flex;
+    gap: 0.7rem;
+    padding: 0.85rem 1rem;
+    border-radius: var(--radius);
+    background: var(--warn-soft);
+    border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent);
+    margin: 0.9rem 0;
+    max-width: 66ch;
+  }
+  .callout .mark {
+    font-family: "Barlow Semi Condensed", sans-serif;
+    font-weight: 700;
+    color: var(--warn);
+    flex-shrink: 0;
+  }
+  .callout p { margin: 0; color: var(--ink); font-size: 0.94rem; }
+
+  .status-row {
+    display: flex;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+    margin: 0.8rem 0;
+  }
+  .status-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.84rem;
+    padding: 0.3rem 0.65rem;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+  }
+  .status-chip .dot { width: 0.6rem; height: 0.6rem; border-radius: 50%; flex-shrink: 0; }
+  .dot.green { background: #2f9e58; }
+  .dot.orange { background: #d97f1c; }
+  .dot.red { background: #d33a3a; }
+  .dot.none { background: var(--line); border: 1px solid var(--muted); }
+
+  .skill-chip {
+    display: inline-flex;
+    align-items: center;
+    font-size: 0.84rem;
+    padding: 0.2rem 0.6rem;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .example-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+    margin: 0.5rem 0;
+    font-size: 0.92rem;
+  }
+  .example-row .arrow { color: var(--muted); }
+
+  footer {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 2rem 1.5rem 3rem;
+    color: var(--muted);
+    font-size: 0.85rem;
+    border-top: 1px solid var(--line);
+  }
+</style>
+
+</head>
+<body>
+<div class="masthead">
+  <div class="masthead-inner">
+    <span class="eyebrow">Reference</span>
+    <h1>Roster How-To Guide</h1>
+    <p class="dek">Every screen in the rostering app, what it's for, and how to use it — organised by role so you can jump straight to what you need.</p>
+    <div class="masthead-meta">
+      <span><strong>Two roles:</strong> Officer and Staff</span>
+      <span><strong>Format:</strong> reference — jump to a topic, not a tour</span>
+      <span>Looking for a guided tour instead? See the companion Walkthrough.</span>
+    </div>
+  </div>
+</div>
+
+<div class="layout">
+  <nav class="index" aria-label="Table of contents">
+    <div>
+      <span class="group-label">Officer</span>
+      <ul>
+        <li><a href="#officer-calendar">Calendar</a></li>
+        <li><a href="#officer-day">Day view</a></li>
+        <li><a href="#officer-fortnight">Fortnight view</a></li>
+        <li><a href="#officer-settings">Settings</a></li>
+        <li><a href="#officer-skills">Advanced Skills</a></li>
+        <li><a href="#officer-payroll">Payroll export</a></li>
+      </ul>
+    </div>
+    <div>
+      <span class="group-label">Staff</span>
+      <ul>
+        <li><a href="#staff-day">Day &amp; Week</a></li>
+        <li><a href="#staff-phonebook">Phone Book</a></li>
+        <li><a href="#staff-variation">Variation</a></li>
+        <li><a href="#staff-coffee">Coffee</a></li>
+        <li><a href="#staff-settings">Settings</a></li>
+        <li><a href="#staff-2fa">Two-Factor Auth</a></li>
+        <li><a href="#staff-install">Installing the app</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <main>
+
+    <section class="role" id="officer">
+      <div class="role-banner">
+        <h2>Officer</h2>
+        <span class="tag">Builds and manages the roster</span>
+      </div>
+
+      <article class="topic" id="officer-calendar">
+        <span class="eyebrow">Calendar</span>
+        <h3>Reading the coverage colours</h3>
+        <p>The Calendar tab shows four weeks at a time, Monday to Sunday. Each day is coloured by whether it's actually covered:</p>
+        <div class="status-row">
+          <span class="status-chip"><span class="dot green"></span>Green — fully covered</span>
+          <span class="status-chip"><span class="dot orange"></span>Orange — on-call short</span>
+          <span class="status-chip"><span class="dot red"></span>Red — a required activity has nobody on it</span>
+          <span class="status-chip"><span class="dot none"></span>Grey — nothing required that day</span>
+        </div>
+        <p>A day can carry small letters on it (e.g. <strong>A/O</strong>) — that's the abbreviation of whichever on-call slot(s) are unfilled (Anaesthetics, Obstetrics, and so on). It shows whenever on-call is short, even on a red day, so you always know at a glance which on-call slot needs chasing regardless of what else is going on that day.</p>
+        <p>Tap any day to jump straight into <strong>Day view</strong> for it.</p>
+      </article>
+
+      <article class="topic" id="officer-calendar-templates">
+        <span class="eyebrow">Calendar</span>
+        <h3>Applying a Week Template</h3>
+        <p>If you've set up a Week Template in Settings (see below), pick it from the dropdown above the grid, then hit <strong>Apply</strong> on whichever week row needs it. This creates the empty cards for that template's locations and activities across the week — nobody's assigned yet, but red will now correctly flag anything the template says must be covered.</p>
+        <p>Applying never touches or removes anything already on the roster — it only fills in gaps the template expects and nothing's been created for yet.</p>
+      </article>
+
+      <article class="topic" id="officer-day">
+        <span class="eyebrow">Day view</span>
+        <h3>Adding an activity and assigning staff</h3>
+        <ol>
+          <li>Use <strong>+ Add Activity</strong> (top bar) to create a location/activity card for the day, or <strong>Copy Last Week's Activities</strong> to bring across last week's same-day cards as a starting point.</li>
+          <li>On a card, open the <strong>Consultant</strong> dropdown. Names are ranked by exposure — whoever's done that activity <em>least</em> relative to their own total shifts sits at the top, so picking down the list keeps experience spread fairly.</li>
+          <li>Do the same for <strong>Registrar</strong>. Fellows count as consultants for this purpose; trainees and interns count as registrars.</li>
+          <li>Tick <strong>On Call</strong> next to a name if they're covering by phone rather than physically present.</li>
+        </ol>
+        <div class="callout">
+          <span class="mark">Note</span>
+          <p>A name greyed out in a dropdown means that person isn't confirmed available, or is resting after a night shift — you can still pick them, but you'll be asked to confirm first.</p>
+        </div>
+        <p>If the activity has a required Advanced Skill configured (see below), the dropdown goes further than greying someone out — anyone without the skill isn't offered at all. See <a href="#officer-skills">Advanced Skills</a>.</p>
+      </article>
+
+      <article class="topic" id="officer-day-duty">
+        <span class="eyebrow">Day view</span>
+        <h3>Duty Assignments (on-call)</h3>
+        <p>The panel at the top of Day view lists every on-call slot your department has configured (e.g. First On Call, Obs On Call). Pick a name from each dropdown to set who's on call that day — this is entirely separate from the location cards below it. A slot with a required Advanced Skill only offers staff who hold it, same as an activity card.</p>
+      </article>
+
+      <article class="topic" id="officer-day-volunteers">
+        <span class="eyebrow">Day view</span>
+        <h3>Volunteers and sick reports</h3>
+        <p>A card with a <span aria-hidden="true">🤚</span> badge has one or more staff who've volunteered for an unfilled slot on it — they'll appear as clickable entries right inside the Consultant/Registrar dropdown; picking one assigns them and clears any other pending requests for that slot.</p>
+        <p>If someone's reported themselves sick for today, a red banner appears at the top of Day view with <strong>Approve</strong> / <strong>Deny</strong> buttons.</p>
+      </article>
+
+      <article class="topic" id="officer-fortnight">
+        <span class="eyebrow">Fortnight view</span>
+        <h3>Assigning person-first</h3>
+        <p>Fortnight view works the other way round from Day view: pick a <strong>person</strong> first, then click a day to assign them.</p>
+        <ol>
+          <li>Filter by rank (optional) and select a staff member. Their FTE counter shows how many shifts they're expected to do this fortnight and how many they've already got.</li>
+          <li>Click any day cell to open the assignment wizard.</li>
+          <li>Choose a shift, then a location, then an activity. Long shifts that cross a session boundary (e.g. Morning into Afternoon) automatically fill the matching card in the next session too.</li>
+        </ol>
+      </article>
+
+      <article class="topic" id="officer-fortnight-junior">
+        <span class="eyebrow">Fortnight view</span>
+        <h3>Assigning a junior doctor</h3>
+        <p>A junior (not a consultant or fellow) needs a supervising consultant, so their wizard works a little differently:</p>
+        <ul>
+          <li>After picking a shift, you'll see <strong>everything already happening in that session</strong> — pick one to join it as registrar.</li>
+          <li>If nothing's on that session yet, but someone's on call, you'll be offered a fallback: pick the on-call consultant, then choose a location and activity to build a fresh card. That card gets both the junior and the on-call consultant (ticked on-call) automatically.</li>
+        </ul>
+      </article>
+
+      <article class="topic" id="officer-settings">
+        <span class="eyebrow">Settings</span>
+        <h3>Where everything lives</h3>
+        <p>Settings is grouped into collapsed sections — tap a heading to open it:</p>
+        <ul>
+          <li><strong>Department Settings</strong> — pay centre number.</li>
+          <li><strong>Shift Properties</strong> — Shifts, Shift Pattern Rules (fatigue rules), Duty Types (on-call slots, their abbreviations, and which Advanced Skill each one requires), Leave Types.</li>
+          <li><strong>Week Templates</strong> — the recurring coverage skeleton (see Calendar, above).</li>
+          <li><strong>Phone Book</strong> — the Coffee Place number, plus any other numbers staff should be able to tap-to-call (nearest tertiary ED, NUM, etc.).</li>
+          <li><strong>Card Properties</strong> — Locations and Activities: which activities are allowed at which location, and (via each one's <strong>Skills</strong> button) which Advanced Skill an activity requires.</li>
+          <li><strong>Audit Balance</strong> — Case Mix Report and On-Call &amp; Weekend Fairness, for checking the roster is spreading load evenly.</li>
+          <li><strong>Staff Settings</strong> — Staff and Availability (day-by-day availability, rank, FTE, and which Advanced Skills each person holds), Staff Activity Profiles, and Staff Accounts (inviting people, setting officer vs staff permission, correcting rank).</li>
+          <li><strong>Staff Filters</strong> — the Advanced Skill list itself (e.g. Anaesthetics, Obstetrics, Endoscopy) — add, rename, or remove the skills the two sections above reference.</li>
+        </ul>
+      </article>
+
+      <article class="topic" id="officer-skills">
+        <span class="eyebrow">Staff Filters + Card Properties</span>
+        <h3>Advanced Skills</h3>
+        <p>An Advanced Skill is a tag (e.g. <span class="skill-chip">Anaesthetics</span>) an officer puts on a staff member, and can then require — one-of-a-set — on an Activity or Duty Type to limit who's offered for it. Unlike Staff Activity Profiles (below), which only <em>warns</em> that someone marked themselves unable to do an activity, a required Advanced Skill is a hard rule: without it, that person doesn't appear in the dropdown at all.</p>
+        <ol>
+          <li>Add skills to the department's list under <strong>Settings → Staff Filters → Advanced Skill</strong>. New departments start with just <strong>Emergency</strong>.</li>
+          <li>Tag each staff member under <strong>Settings → Staff Settings → Staff and Availability</strong> — the <strong>Adv Skill</strong> row of toggles on their profile. Most junior doctors, and some fellows, will rightly have none checked.</li>
+          <li>Require a skill on an Activity from either place — whichever's more convenient at the time:
+            <ul>
+              <li>the <strong>Skills</strong> button next to the activity itself, under <strong>Card Properties → Activities</strong>; or</li>
+              <li>the <strong>Skills</strong> button next to a location, under <strong>Card Properties → Locations</strong>, which shows a table of every activity used at that location so you can set several at once. Either one edits the same setting — an activity's requirement is the same wherever it's used, not specific to one location.</li>
+            </ul>
+          </li>
+          <li>Require a skill on an on-call slot the same way, from its own <strong>Skills</strong> button under <strong>Shift Properties → Duty Types</strong>.</li>
+        </ol>
+        <p>Leaving an activity or duty type with nothing checked means it's open to anyone, exactly as before — this is opt-in per slot, nothing changes until you set one.</p>
+        <div class="example-row"><span class="skill-chip">Anaesthetics</span><span class="arrow">or</span><span class="skill-chip">Endoscopy</span><span class="arrow">→</span>Endoscopy consultant slot</div>
+        <div class="example-row"><span class="skill-chip">Anaesthetics</span><span class="arrow">or</span><span class="skill-chip">Obstetrics</span><span class="arrow">→</span>Obs Surgery</div>
+        <div class="example-row"><span class="skill-chip">Anaesthetics</span><span class="arrow">→</span>overnight Anaesthetics on-call</div>
+        <div class="callout">
+          <span class="mark">Existing assignments stay put</span>
+          <p>Adding or changing a required skill only affects who's offered <em>next</em> time — someone already assigned before the requirement existed isn't removed from the card.</p>
+        </div>
+      </article>
+
+      <article class="topic" id="officer-payroll">
+        <span class="eyebrow">Export</span>
+        <h3>Payroll export</h3>
+        <p>From the Calendar tab, <strong>Export to Payroll</strong> lets you pick any fortnight and download an Excel file of the whole department's roster for it.</p>
+      </article>
+    </section>
+
+    <section class="role" id="staff">
+      <div class="role-banner">
+        <h2>Staff</h2>
+        <span class="tag">Checks the roster and manages their own day</span>
+      </div>
+
+      <article class="topic" id="staff-day">
+        <span class="eyebrow">Day &amp; Week</span>
+        <h3>Your roster</h3>
+        <p><strong>Day</strong> shows today's allocation front and centre, then Morning/Afternoon/Night sections (collapsed until tapped) for who else is working. Tap the arrow on your own allocation to see who else is at your location for that session.</p>
+        <p><strong>Week</strong> lists the current week (Monday to Sunday) as one card per day, with each shift and activity underneath.</p>
+      </article>
+
+      <article class="topic" id="staff-phonebook">
+        <span class="eyebrow">Phone Book</span>
+        <h3>On-call roster and important numbers</h3>
+        <p>Shows the week's on-call roster by type (First On Call, Obs On Call, etc.) — tap a name to see their contact card; tap the phone number or email inside it to call or email directly. Below that, a <strong>Phone Book</strong> section lists any other numbers your officer has added — nearest tertiary ED, the on-site ED SMO line, and so on — each one tap-to-call.</p>
+      </article>
+
+      <article class="topic" id="staff-variation">
+        <span class="eyebrow">Variation</span>
+        <h3>Picking up a shift, or reporting sick</h3>
+        <p>The Variation tab covers the two ways your day can change from what's rostered:</p>
+        <ul>
+          <li><strong>Available shifts</strong> — unfilled slots you're eligible for over the next 30 days. Hit <strong>Volunteer</strong> to send a request; your officer approves it from Day view.</li>
+          <li><strong>Notify Sick</strong>, at the bottom — only enabled if you have a shift today. Sends a report to your officer for approval.</li>
+        </ul>
+      </article>
+
+      <article class="topic" id="staff-coffee">
+        <span class="eyebrow">Coffee</span>
+        <h3>Ordering, and sending the order</h3>
+        <p>Set your usual order in Settings → Profile. The <strong>Coffee</strong> button (bottom bar) opens today's orders, defaulted to the morning shift. At the top, an <strong>Order Summary</strong> totals everyone's order by type and milk (e.g. "3 x Flat White on Oat Milk") — tap <strong>Text order to [Coffee Place]</strong> to open your messages app with the order pre-filled, ready to check over and send.</p>
+      </article>
+
+      <article class="topic" id="staff-settings">
+        <span class="eyebrow">Settings</span>
+        <h3>Availability and profile</h3>
+        <p>Mark yourself available or unavailable day by day — this is what the roster and Variation opportunities check against. Your profile lets you set phone, email, coffee order, and opt out of activities you can't or won't do. Advanced Skills are different: an officer tags those on your behalf, so if a slot you'd expect to see isn't offered to you, check with them about what it requires.</p>
+        <p>The <strong>Security</strong> sub-tab is where you turn two-factor authentication on or off for your own login — see below. An officer sees the same screen when they switch their own view to Staff.</p>
+      </article>
+
+      <article class="topic" id="staff-2fa">
+        <span class="eyebrow">Settings → Security</span>
+        <h3>Two-factor authentication</h3>
+        <p>Optional, per person, off by default. Turning it on adds a code from an authenticator app (Google Authenticator, Authy, or similar) to signing in, alongside your password.</p>
+        <ol>
+          <li>Under Settings → Security, tap <strong>Turn on</strong>.</li>
+          <li>Scan the QR code with your authenticator app (or type in the manual key underneath it if you can't scan).</li>
+          <li>Enter the 6-digit code it shows you, then tap <strong>Verify &amp; enable</strong>.</li>
+        </ol>
+        <p>From your next sign-in on, entering your password correctly leads to one more screen asking for that code. <strong>Turn off</strong>, on the same Security screen, removes the requirement again.</p>
+        <div class="callout">
+          <span class="mark">Lost your phone?</span>
+          <p>There's no backup-code or recovery flow yet — losing the device your authenticator app is on means asking whoever manages your Supabase project to clear the factor for you directly. Worth knowing before you turn this on.</p>
+        </div>
+      </article>
+
+      <article class="topic" id="staff-install">
+        <span class="eyebrow">Install</span>
+        <h3>Installing the app</h3>
+        <p>On the sign-in screen, tap <strong>Install App</strong> to add it to your home screen like a normal app. On iPhone, use Safari's Share menu → Add to Home Screen instead — iOS doesn't allow apps to trigger this themselves.</p>
+      </article>
+    </section>
+
+  </main>
+</div>
+
+<footer>
+  Roster How-To Guide — a living reference. If something in the app doesn't match what's described here, the app is right and this page is due an update.
+</footer>
+</body>
+</html>

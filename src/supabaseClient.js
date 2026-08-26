@@ -33,7 +33,7 @@ export async function initializeDepartment(departmentId) {
   console.log('initializeDepartment called with departmentId:', departmentId);
   
   try {
-    const [locRes, activitiesRes, shiftsRes, staffRes, leaveTypesRes, departmentRes, dutyTypesRes, phoneBookRes, weekTemplatesRes] = await Promise.all([
+    const [locRes, activitiesRes, shiftsRes, staffRes, leaveTypesRes, departmentRes, dutyTypesRes, phoneBookRes, weekTemplatesRes, advancedSkillsRes] = await Promise.all([
       supabase
         .from('locations')
         .select('*')
@@ -80,6 +80,11 @@ export async function initializeDepartment(departmentId) {
         .select('*')
         .eq('department_id', departmentId)
         .order('name'),
+      supabase
+        .from('advanced_skills')
+        .select('*')
+        .eq('department_id', departmentId)
+        .order('sort_order'),
     ]);
 
     console.log('Locations:', locRes.data?.length || 0, locRes.error);
@@ -91,6 +96,7 @@ export async function initializeDepartment(departmentId) {
     console.log('Duty types:', dutyTypesRes.data?.length || 0, dutyTypesRes.error);
     console.log('Phone book entries:', phoneBookRes.data?.length || 0, phoneBookRes.error);
     console.log('Week templates:', weekTemplatesRes.data?.length || 0, weekTemplatesRes.error);
+    console.log('Advanced skills:', advancedSkillsRes.data?.length || 0, advancedSkillsRes.error);
 
     return {
       locations: locRes.data || [],
@@ -102,7 +108,8 @@ export async function initializeDepartment(departmentId) {
       dutyTypes: dutyTypesRes.data || [],
       phoneBookEntries: phoneBookRes.data || [],
       weekTemplates: weekTemplatesRes.data || [],
-      errors: [locRes.error, activitiesRes.error, shiftsRes.error, staffRes.error, leaveTypesRes.error, departmentRes.error, dutyTypesRes.error, phoneBookRes.error, weekTemplatesRes.error].filter(Boolean),
+      advancedSkills: advancedSkillsRes.data || [],
+      errors: [locRes.error, activitiesRes.error, shiftsRes.error, staffRes.error, leaveTypesRes.error, departmentRes.error, dutyTypesRes.error, phoneBookRes.error, weekTemplatesRes.error, advancedSkillsRes.error].filter(Boolean),
     };
   } catch (err) {
     console.error('initializeDepartment error:', err);
@@ -2694,6 +2701,171 @@ export async function deleteLeaveType(leaveTypeId) {
   }
 }
 
+// ============================================================
+// ADVANCED SKILLS
+// ============================================================
+// Per-department tag list (e.g. Anaesthetics, Obstetrics, Endoscopy) an
+// officer assigns to staff and requires (one-of-a-set) on Activities/Duty
+// Types to limit who's offered for a slot — see
+// migrations/2026-08-26_advanced_skills.sql.
+
+export async function getAdvancedSkills(departmentId) {
+  try {
+    const { data, error } = await supabase
+      .from('advanced_skills')
+      .select('*')
+      .eq('department_id', departmentId)
+      .order('sort_order');
+
+    return { data: data || [], error };
+  } catch (err) {
+    console.error('getAdvancedSkills error:', err);
+    return { data: [], error: err };
+  }
+}
+
+export async function createAdvancedSkill(departmentId, name) {
+  try {
+    const { data: existing } = await supabase
+      .from('advanced_skills')
+      .select('sort_order')
+      .eq('department_id', departmentId)
+      .order('sort_order', { ascending: false })
+      .limit(1);
+    const nextSortOrder = (existing?.[0]?.sort_order ?? -1) + 1;
+
+    const { data, error } = await supabase
+      .from('advanced_skills')
+      .insert([{ department_id: departmentId, name, sort_order: nextSortOrder }])
+      .select()
+      .single();
+
+    return { data, error };
+  } catch (err) {
+    console.error('createAdvancedSkill error:', err);
+    return { data: null, error: err };
+  }
+}
+
+export async function updateAdvancedSkill(advancedSkillId, name) {
+  try {
+    const { data, error } = await supabase
+      .from('advanced_skills')
+      .update({ name })
+      .eq('advanced_skill_id', advancedSkillId)
+      .select()
+      .single();
+
+    return { data, error };
+  } catch (err) {
+    console.error('updateAdvancedSkill error:', err);
+    return { data: null, error: err };
+  }
+}
+
+// Hard-deletes the skill and strips it out of every staff member's,
+// activity type's, and duty type's array wherever it's in use — otherwise
+// those would be left holding a dangling advanced_skill_id that could never
+// be unchecked again from the UI.
+export async function deleteAdvancedSkill(advancedSkillId, departmentId) {
+  try {
+    const [staffRes, activitiesRes, dutyTypesRes] = await Promise.all([
+      supabase.from('staff').select('staff_id, advanced_skills').eq('department_id', departmentId).contains('advanced_skills', [advancedSkillId]),
+      supabase.from('activity_types').select('activity_id, required_advanced_skills').eq('department_id', departmentId).contains('required_advanced_skills', [advancedSkillId]),
+      supabase.from('duty_types').select('duty_type_id, required_advanced_skills').eq('department_id', departmentId).contains('required_advanced_skills', [advancedSkillId]),
+    ]);
+    if (staffRes.error) throw staffRes.error;
+    if (activitiesRes.error) throw activitiesRes.error;
+    if (dutyTypesRes.error) throw dutyTypesRes.error;
+
+    for (const s of staffRes.data || []) {
+      const { error } = await supabase
+        .from('staff')
+        .update({ advanced_skills: (s.advanced_skills || []).filter(id => id !== advancedSkillId) })
+        .eq('staff_id', s.staff_id);
+      if (error) throw error;
+    }
+    for (const a of activitiesRes.data || []) {
+      const { error } = await supabase
+        .from('activity_types')
+        .update({ required_advanced_skills: (a.required_advanced_skills || []).filter(id => id !== advancedSkillId) })
+        .eq('activity_id', a.activity_id);
+      if (error) throw error;
+    }
+    for (const d of dutyTypesRes.data || []) {
+      const { error } = await supabase
+        .from('duty_types')
+        .update({ required_advanced_skills: (d.required_advanced_skills || []).filter(id => id !== advancedSkillId) })
+        .eq('duty_type_id', d.duty_type_id);
+      if (error) throw error;
+    }
+
+    const { error } = await supabase
+      .from('advanced_skills')
+      .delete()
+      .eq('advanced_skill_id', advancedSkillId);
+
+    return { error };
+  } catch (err) {
+    console.error('deleteAdvancedSkill error:', err);
+    return { error: err };
+  }
+}
+
+// Which advanced skills a staff member holds — settable by an officer from
+// the Staff and Availability tab. Staff can hold more than one.
+export async function updateStaffAdvancedSkills(staffId, advancedSkillIds) {
+  try {
+    const { data, error } = await supabase
+      .from('staff')
+      .update({ advanced_skills: advancedSkillIds })
+      .eq('staff_id', staffId)
+      .select()
+      .single();
+
+    return { data, error };
+  } catch (err) {
+    console.error('updateStaffAdvancedSkills error:', err);
+    return { data: null, error: err };
+  }
+}
+
+// Which advanced skills are required (any one of them) to be offered for
+// this Activity's assignment slots. Empty = no restriction, same as
+// locations.allowed_activity_ids.
+export async function updateActivityTypeRequiredSkills(activityId, advancedSkillIds) {
+  try {
+    const { data, error } = await supabase
+      .from('activity_types')
+      .update({ required_advanced_skills: advancedSkillIds })
+      .eq('activity_id', activityId)
+      .select()
+      .single();
+
+    return { data, error };
+  } catch (err) {
+    console.error('updateActivityTypeRequiredSkills error:', err);
+    return { data: null, error: err };
+  }
+}
+
+// Same as updateActivityTypeRequiredSkills, for a Duty Type's on-call slot.
+export async function updateDutyTypeRequiredSkills(dutyTypeId, advancedSkillIds) {
+  try {
+    const { data, error } = await supabase
+      .from('duty_types')
+      .update({ required_advanced_skills: advancedSkillIds })
+      .eq('duty_type_id', dutyTypeId)
+      .select()
+      .single();
+
+    return { data, error };
+  } catch (err) {
+    console.error('updateDutyTypeRequiredSkills error:', err);
+    return { data: null, error: err };
+  }
+}
+
 // Free-text leave/special code on a staff_assignments row — separate from
 // createStaffAssignment/updateStaffAssignment so setting it doesn't disturb
 // the staff/role/shift fields those two are already responsible for.
@@ -3560,6 +3732,76 @@ export async function signOut() {
   } catch (err) {
     console.error('signOut error:', err);
     return { error: err };
+  }
+}
+
+// ---- Two-factor authentication (TOTP via Supabase Auth's built-in MFA) ----
+// No secrets of our own to store or verify — GoTrue holds the TOTP secret
+// and does the code check server-side; these just wrap its `auth.mfa` API
+// in the same { data, error } shape as everything else here.
+
+// currentLevel/nextLevel are 'aal1' (password only) or 'aal2' (password +
+// a verified second factor). nextLevel > currentLevel is the signal App.js
+// uses to show the MfaChallenge step-up screen after a plain password
+// sign-in for someone who has 2FA turned on.
+export async function getMfaAssuranceLevel() {
+  try {
+    const { data, error } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+    return { data, error };
+  } catch (err) {
+    console.error('getMfaAssuranceLevel error:', err);
+    return { data: null, error: err };
+  }
+}
+
+export async function listMfaFactors() {
+  try {
+    const { data, error } = await supabase.auth.mfa.listFactors();
+    return { data, error };
+  } catch (err) {
+    console.error('listMfaFactors error:', err);
+    return { data: null, error: err };
+  }
+}
+
+// Starts enrolling a new TOTP factor — returns an id to challenge/verify
+// against, plus a ready-to-render QR code (data: URI) and the plain-text
+// secret as a manual-entry fallback. The factor sits unverified (and
+// useless for sign-in) until confirmMfaEnrollment succeeds.
+export async function enrollMfaFactor() {
+  try {
+    const { data, error } = await supabase.auth.mfa.enroll({ factorType: 'totp' });
+    return { data, error };
+  } catch (err) {
+    console.error('enrollMfaFactor error:', err);
+    return { data: null, error: err };
+  }
+}
+
+// Confirms a freshly enrolled factor (or answers a step-up challenge at
+// sign-in) with the 6-digit code from the authenticator app. Wraps the
+// challenge+verify pair Supabase splits into two calls, since every caller
+// here needs both anyway.
+export async function verifyMfaCode(factorId, code) {
+  try {
+    const { data: challenge, error: challengeError } = await supabase.auth.mfa.challenge({ factorId });
+    if (challengeError) throw challengeError;
+
+    const { data, error } = await supabase.auth.mfa.verify({ factorId, challengeId: challenge.id, code });
+    return { data, error };
+  } catch (err) {
+    console.error('verifyMfaCode error:', err);
+    return { data: null, error: err };
+  }
+}
+
+export async function unenrollMfaFactor(factorId) {
+  try {
+    const { data, error } = await supabase.auth.mfa.unenroll({ factorId });
+    return { data, error };
+  } catch (err) {
+    console.error('unenrollMfaFactor error:', err);
+    return { data: null, error: err };
   }
 }
 

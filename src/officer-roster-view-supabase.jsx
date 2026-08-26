@@ -53,6 +53,11 @@ import { createTheatreActivity,
   createLeaveType,
   updateLeaveType,
   deleteLeaveType,
+  createAdvancedSkill,
+  updateAdvancedSkill,
+  deleteAdvancedSkill,
+  updateActivityTypeRequiredSkills,
+  updateDutyTypeRequiredSkills,
   updateStaffAssignmentLeaveCode,
   updateDepartmentPayCentreNumber,
   updateDepartmentCoffeePlace,
@@ -160,6 +165,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     dutyTypes: [],
     phoneBookEntries: [],
     weekTemplates: [],
+    advancedSkills: [],
   });
   // Bumped whenever staff are added/removed, so components that fetch their
   // own staff-derived data independently (Case Mix, Fairness, Staff Profiles,
@@ -253,6 +259,10 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   const [editLocationDefaultEnd, setEditLocationDefaultEnd] = useState('');
   // Which location's Allowed Activities modal is open, if any.
   const [editingLocationActivitiesId, setEditingLocationActivitiesId] = useState(null);
+  // Which location's per-activity Advanced Skill matrix is open, if any —
+  // a location-scoped view onto the same activity_types.required_advanced_skills
+  // set from the Activities section's own "Skills" button.
+  const [editingLocationSkillsId, setEditingLocationSkillsId] = useState(null);
 
   // Activity Management State
   const [newActivityInput, setNewActivityInput] = useState('');
@@ -267,6 +277,17 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   const [editingLeaveTypeId, setEditingLeaveTypeId] = useState(null);
   const [editLeaveTypeName, setEditLeaveTypeName] = useState('');
   const [editLeaveTypeCode, setEditLeaveTypeCode] = useState('');
+
+  // Advanced Skill Management State (Settings -> Staff Filters). List
+  // itself lives in refData.advancedSkills — the single source of truth
+  // also used by the Staff and Availability tab and the Activity/Duty Type
+  // "Skills" pickers below.
+  const [newAdvancedSkillName, setNewAdvancedSkillName] = useState('');
+  const [editingAdvancedSkillId, setEditingAdvancedSkillId] = useState(null);
+  const [editAdvancedSkillName, setEditAdvancedSkillName] = useState('');
+  // Which activity's / duty type's required-skills modal is open, if any.
+  const [editingActivitySkillsId, setEditingActivitySkillsId] = useState(null);
+  const [editingDutyTypeSkillsId, setEditingDutyTypeSkillsId] = useState(null);
 
   // Department Settings State (Pay Centre Number local edit buffer, kept
   // separate from refData.department so typing doesn't need a round-trip)
@@ -494,13 +515,29 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     loadFortnightAllocations();
   }, [departmentId, fortnightStart, activeTab, fortnightRefreshKey]);
 
+  // Advanced Skills are a hard filter, unlike activity_restrictions below
+  // (a staff preference that only warns) — a slot with a non-empty
+  // required list only offers staff holding AT LEAST ONE of those skills.
+  // Empty/unset required list = no restriction, so nothing changes for an
+  // Activity/Duty Type an officer hasn't configured this for.
+  const hasRequiredAdvancedSkill = (staffId, requiredSkillIds) => {
+    if (!requiredSkillIds || requiredSkillIds.length === 0) return true;
+    const staff = refData.staff.find(s => s.staff_id === staffId);
+    const staffSkills = staff?.advanced_skills || [];
+    return requiredSkillIds.some(id => staffSkills.includes(id));
+  };
+
   // Returns staff matching filterFn, ordered by exposure rate for the given
   // activity (lowest first) when case-mix data is available; falls back to
-  // reference-data order otherwise.
+  // reference-data order otherwise. Also hard-filters out anyone missing a
+  // required Advanced Skill for this activity (see hasRequiredAdvancedSkill).
   const getRankedStaffOptions = (activityId, filterFn) => {
+    const activity = refData.activities.find(a => a.activity_id === activityId);
+    const requiredSkillIds = activity?.required_advanced_skills;
+    const combinedFilter = s => filterFn(s) && hasRequiredAdvancedSkill(s.staff_id, requiredSkillIds);
     const ranked = sortedStaffByActivity[activityId];
-    if (ranked) return ranked.filter(filterFn); // already active-only (getSortedStaffForActivity filters at the query)
-    return refData.staff.filter(s => s.active !== false).filter(filterFn);
+    if (ranked) return ranked.filter(combinedFilter); // already active-only (getSortedStaffForActivity filters at the query)
+    return refData.staff.filter(s => s.active !== false).filter(combinedFilter);
   };
 
   const getVolunteersForActivity = (theatreActivityId, role) => {
@@ -580,8 +617,12 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
 
   const getDutyStaffOptions = (dutyType) => {
     const currentStaffId = dutyAssignments[dutyType];
+    const dutyTypeRow = refData.dutyTypes.find(d => d.key === dutyType);
+    const requiredSkillIds = dutyTypeRow?.required_advanced_skills;
     return refData.staff
-      .filter(s => (s.active !== false && isAvailableForDuty(s.staff_id)) || s.staff_id === currentStaffId)
+      .filter(s => s.staff_id === currentStaffId || (
+        s.active !== false && isAvailableForDuty(s.staff_id) && hasRequiredAdvancedSkill(s.staff_id, requiredSkillIds)
+      ))
       .map(s => ({ ...s, unavailable: s.active === false || !isAvailableForDuty(s.staff_id) }));
   };
 
@@ -1473,6 +1514,89 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
       setError(null);
     } catch (err) {
       setError(`Failed to delete leave type: ${err.message}`);
+    }
+  };
+
+  // Advanced Skill Management Handlers
+  const handleCreateAdvancedSkill = async () => {
+    if (!newAdvancedSkillName.trim() || !departmentId) return;
+
+    try {
+      const { data, error } = await createAdvancedSkill(departmentId, newAdvancedSkillName.trim());
+      if (error) throw error;
+
+      setRefData(prev => ({ ...prev, advancedSkills: [...prev.advancedSkills, data] }));
+      setNewAdvancedSkillName('');
+      setError(null);
+    } catch (err) {
+      setError(`Failed to create advanced skill: ${err.message}`);
+    }
+  };
+
+  const handleStartEditAdvancedSkill = (skill) => {
+    setEditingAdvancedSkillId(skill.advanced_skill_id);
+    setEditAdvancedSkillName(skill.name);
+  };
+
+  const handleUpdateAdvancedSkill = async () => {
+    if (!editingAdvancedSkillId || !editAdvancedSkillName.trim()) return;
+
+    try {
+      const { data, error } = await updateAdvancedSkill(editingAdvancedSkillId, editAdvancedSkillName.trim());
+      if (error) throw error;
+
+      setRefData(prev => ({ ...prev, advancedSkills: prev.advancedSkills.map(s => s.advanced_skill_id === editingAdvancedSkillId ? data : s) }));
+      setEditingAdvancedSkillId(null);
+      setEditAdvancedSkillName('');
+      setError(null);
+    } catch (err) {
+      setError(`Failed to rename advanced skill: ${err.message}`);
+    }
+  };
+
+  const handleDeleteAdvancedSkill = async (advancedSkillId) => {
+    if (!window.confirm("Delete this advanced skill? It's removed from every staff member, Activity, and Duty Type that has it checked.")) {
+      return;
+    }
+
+    try {
+      const { error } = await deleteAdvancedSkill(advancedSkillId, departmentId);
+      if (error) throw error;
+
+      setRefData(prev => ({
+        ...prev,
+        advancedSkills: prev.advancedSkills.filter(s => s.advanced_skill_id !== advancedSkillId),
+        staff: prev.staff.map(s => ({ ...s, advanced_skills: (s.advanced_skills || []).filter(id => id !== advancedSkillId) })),
+        activities: prev.activities.map(a => ({ ...a, required_advanced_skills: (a.required_advanced_skills || []).filter(id => id !== advancedSkillId) })),
+        dutyTypes: prev.dutyTypes.map(d => ({ ...d, required_advanced_skills: (d.required_advanced_skills || []).filter(id => id !== advancedSkillId) })),
+      }));
+      setError(null);
+    } catch (err) {
+      setError(`Failed to delete advanced skill: ${err.message}`);
+    }
+  };
+
+  const handleUpdateActivityRequiredSkills = async (activityId, skillIds) => {
+    try {
+      const { data, error } = await updateActivityTypeRequiredSkills(activityId, skillIds);
+      if (error) throw error;
+
+      setRefData(prev => ({ ...prev, activities: prev.activities.map(a => a.activity_id === activityId ? data : a) }));
+      setError(null);
+    } catch (err) {
+      setError(`Failed to update required skills: ${err.message}`);
+    }
+  };
+
+  const handleUpdateDutyTypeRequiredSkills = async (dutyTypeId, skillIds) => {
+    try {
+      const { data, error } = await updateDutyTypeRequiredSkills(dutyTypeId, skillIds);
+      if (error) throw error;
+
+      setRefData(prev => ({ ...prev, dutyTypes: prev.dutyTypes.map(d => d.duty_type_id === dutyTypeId ? data : d) }));
+      setError(null);
+    } catch (err) {
+      setError(`Failed to update required skills: ${err.message}`);
     }
   };
 
@@ -3694,9 +3818,18 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                             {dutyType.start_time && dutyType.end_time
                               ? ` • ${dutyType.start_time.slice(0, 5)}–${dutyType.end_time.slice(0, 5)} card at On Call`
                               : ' • no card (top panel only)'}
+                            {dutyType.required_advanced_skills?.length > 0 && (
+                              <span className="text-purple-700"> • requires {dutyType.required_advanced_skills.length} skill{dutyType.required_advanced_skills.length === 1 ? '' : 's'}</span>
+                            )}
                           </p>
                         </div>
                         <div className="flex gap-2">
+                          <button
+                            onClick={() => setEditingDutyTypeSkillsId(dutyType.duty_type_id)}
+                            className="px-3 py-1 bg-purple-100 hover:bg-purple-200 text-purple-900 font-medium rounded text-xs transition"
+                          >
+                            Skills
+                          </button>
                           <button
                             onClick={() => handleStartEditDutyType(dutyType)}
                             className="px-3 py-1 bg-blue-100 hover:bg-blue-200 text-blue-900 font-medium rounded text-xs transition"
@@ -4219,6 +4352,12 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                             Activities
                           </button>
                           <button
+                            onClick={() => setEditingLocationSkillsId(loc.location_id)}
+                            className="px-3 py-1 bg-purple-100 hover:bg-purple-200 text-purple-900 font-medium rounded text-xs transition"
+                          >
+                            Skills
+                          </button>
+                          <button
                             onClick={() => handleStartEditLocation(loc)}
                             className="px-3 py-1 bg-blue-100 hover:bg-blue-200 text-blue-900 font-medium rounded text-xs transition"
                           >
@@ -4308,8 +4447,19 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                       <>
                         <p className="font-semibold text-sm text-gray-900">
                           {act.name}{act.abbreviation && <span className="ml-2 text-xs font-normal text-gray-500">({act.abbreviation})</span>}
+                          {act.required_advanced_skills?.length > 0 && (
+                            <span className="ml-2 text-xs font-normal text-purple-700">
+                              · requires {act.required_advanced_skills.length} skill{act.required_advanced_skills.length === 1 ? '' : 's'}
+                            </span>
+                          )}
                         </p>
                         <div className="flex gap-2">
+                          <button
+                            onClick={() => setEditingActivitySkillsId(act.activity_id)}
+                            className="px-3 py-1 bg-purple-100 hover:bg-purple-200 text-purple-900 font-medium rounded text-xs transition"
+                          >
+                            Skills
+                          </button>
                           <button
                             onClick={() => handleStartEditActivity(act)}
                             className="px-3 py-1 bg-blue-100 hover:bg-blue-200 text-blue-900 font-medium rounded text-xs transition"
@@ -4350,7 +4500,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
             <CollapsibleSection title="Staff Settings">
             {/* Staff and Availability Section */}
             <CollapsibleSection title="Staff and Availability">
-              <StaffAvailabilityTab departmentId={departmentId} staffList={refData.staff} leaveTypes={refData.leaveTypes} onStaffChanged={refreshStaffList} />
+              <StaffAvailabilityTab departmentId={departmentId} staffList={refData.staff} leaveTypes={refData.leaveTypes} advancedSkills={refData.advancedSkills} onStaffChanged={refreshStaffList} />
             </CollapsibleSection>
 
             {/* Staff Profiles Section */}
@@ -4361,6 +4511,84 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
             {/* Staff Accounts Section */}
             <CollapsibleSection title="Staff Accounts">
               <StaffAccountsTab departmentId={departmentId} refreshKey={staffVersion} />
+            </CollapsibleSection>
+            </CollapsibleSection>
+
+            {/* Staff Filters Group — the configurable Advanced Skill list
+                used to tag staff (Staff and Availability tab, above) and to
+                restrict who's offered for an Activity/Duty Type slot (the
+                "Skills" button on each, in Card Properties/Duty Types). */}
+            <CollapsibleSection title="Staff Filters">
+            <CollapsibleSection title="Advanced Skill">
+              <div className="flex gap-2 mb-4">
+                <input
+                  type="text"
+                  placeholder="Skill name (e.g., 'Anaesthetics')"
+                  value={newAdvancedSkillName}
+                  onChange={(e) => setNewAdvancedSkillName(e.target.value)}
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                />
+                <button
+                  onClick={handleCreateAdvancedSkill}
+                  className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition text-sm"
+                >
+                  Add
+                </button>
+              </div>
+
+              <p className="text-xs text-gray-600 mb-4">
+                Officers check these against each staff member in Staff and Availability, then require one-or-more of them on an Activity or Duty Type to limit who's offered for that slot — e.g. only staff with Anaesthetics or Endoscopy show up for an Endoscopy consultant slot.
+              </p>
+
+              <div className="space-y-2">
+                {refData.advancedSkills.map(skill => (
+                  <div key={skill.advanced_skill_id} className="p-3 border border-gray-200 rounded-lg flex items-center justify-between gap-2">
+                    {editingAdvancedSkillId === skill.advanced_skill_id ? (
+                      <div className="flex gap-2 items-center flex-1">
+                        <input
+                          type="text"
+                          value={editAdvancedSkillName}
+                          onChange={(e) => setEditAdvancedSkillName(e.target.value)}
+                          className="flex-1 px-2 py-1 border border-gray-300 rounded text-sm"
+                        />
+                        <button
+                          onClick={handleUpdateAdvancedSkill}
+                          className="px-3 py-1 bg-green-600 hover:bg-green-700 text-white font-medium rounded text-xs transition"
+                        >
+                          Save
+                        </button>
+                        <button
+                          onClick={() => setEditingAdvancedSkillId(null)}
+                          className="px-3 py-1 bg-gray-400 hover:bg-gray-500 text-white font-medium rounded text-xs transition"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <p className="font-semibold text-sm text-gray-900">{skill.name}</p>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleStartEditAdvancedSkill(skill)}
+                            className="px-3 py-1 bg-blue-100 hover:bg-blue-200 text-blue-900 font-medium rounded text-xs transition"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => handleDeleteAdvancedSkill(skill.advanced_skill_id)}
+                            className="px-3 py-1 bg-red-100 hover:bg-red-200 text-red-900 font-medium rounded text-xs transition"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                ))}
+                {refData.advancedSkills.length === 0 && (
+                  <p className="text-sm text-gray-500">No advanced skills yet — add one above.</p>
+                )}
+              </div>
             </CollapsibleSection>
             </CollapsibleSection>
           </div>
@@ -4565,6 +4793,235 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                   </div>
                 </div>
               </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Location Activity Skills Matrix — a location-scoped view onto the
+          same activity_types.required_advanced_skills set from the
+          Activities section's own "Skills" button (see
+          handleUpdateActivityRequiredSkills). Only lists activities usable
+          at this location (activitiesAllowedAtLocation), since that's the
+          set an officer actually cares about from here. The requirement
+          itself is shared everywhere that activity is used, not scoped to
+          just this location. */}
+      {editingLocationSkillsId && (() => {
+        const location = refData.locations.find(l => l.location_id === editingLocationSkillsId);
+        const activitiesHere = activitiesAllowedAtLocation(editingLocationSkillsId);
+        const toggleSkill = (activity, skillId) => {
+          const current = activity.required_advanced_skills || [];
+          const next = current.includes(skillId) ? current.filter(id => id !== skillId) : [...current, skillId];
+          handleUpdateActivityRequiredSkills(activity.activity_id, next);
+        };
+        return (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-3xl max-h-[85vh] overflow-y-auto">
+              <div className="flex justify-between items-start mb-4">
+                <div>
+                  <h2 className="text-lg font-bold text-gray-900">{location?.name} — Required Advanced Skills by Activity</h2>
+                  <p className="text-sm text-gray-600">Leave an activity with none checked to allow any staff. Otherwise, only staff with at least one checked skill are offered for its consultant/registrar slots — this applies wherever that activity is used, not just at {location?.name}.</p>
+                </div>
+                <button onClick={() => setEditingLocationSkillsId(null)} className="p-1 hover:bg-gray-100 rounded-lg">
+                  <X size={20} />
+                </button>
+              </div>
+
+              {error && (
+                <div className="mb-4 p-3 bg-red-50 border border-red-300 rounded-lg flex gap-2 items-start">
+                  <AlertCircle size={18} className="text-red-600 flex-shrink-0 mt-0.5" />
+                  <p className="text-sm text-red-700">{error}</p>
+                </div>
+              )}
+
+              {refData.advancedSkills.length === 0 ? (
+                <p className="text-sm text-gray-500">No advanced skills configured yet — add some under Staff Filters -&gt; Advanced Skill in Settings.</p>
+              ) : activitiesHere.length === 0 ? (
+                <p className="text-sm text-gray-500">No activities are usable at this location yet.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full border-collapse">
+                    <thead>
+                      <tr className="bg-gray-50">
+                        <th className="text-left px-3 py-2 border border-gray-200 font-semibold text-sm text-gray-700">Activity</th>
+                        {refData.advancedSkills.map(skill => (
+                          <th key={skill.advanced_skill_id} className="text-center px-3 py-2 border border-gray-200 font-semibold text-sm text-gray-700">
+                            {skill.name}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {activitiesHere.map(activity => (
+                        <tr key={activity.activity_id} className="hover:bg-gray-50">
+                          <td className="px-3 py-2 border border-gray-200 text-sm font-semibold text-gray-900">{activity.name}</td>
+                          {refData.advancedSkills.map(skill => (
+                            <td key={skill.advanced_skill_id} className="text-center px-3 py-2 border border-gray-200">
+                              <input
+                                type="checkbox"
+                                checked={(activity.required_advanced_skills || []).includes(skill.advanced_skill_id)}
+                                onChange={() => toggleSkill(activity, skill.advanced_skill_id)}
+                                className="w-5 h-5 cursor-pointer accent-purple-600"
+                              />
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Activity Required Skills Modal — narrows the consultant/registrar
+          pickers for this Activity to staff holding at least one of these
+          Advanced Skills. Empty = no restriction. */}
+      {editingActivitySkillsId && (() => {
+        const activity = refData.activities.find(a => a.activity_id === editingActivitySkillsId);
+        const requiredIds = activity?.required_advanced_skills || [];
+        const required = refData.advancedSkills.filter(s => requiredIds.includes(s.advanced_skill_id));
+        const notRequired = refData.advancedSkills.filter(s => !requiredIds.includes(s.advanced_skill_id));
+        return (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-2xl max-h-[85vh] overflow-y-auto">
+              <div className="flex justify-between items-start mb-4">
+                <div>
+                  <h2 className="text-lg font-bold text-gray-900">{activity?.name} — Required Advanced Skills</h2>
+                  <p className="text-sm text-gray-600">Leave empty to allow any staff. Otherwise, only staff with at least one checked skill are offered.</p>
+                </div>
+                <button onClick={() => setEditingActivitySkillsId(null)} className="p-1 hover:bg-gray-100 rounded-lg">
+                  <X size={20} />
+                </button>
+              </div>
+
+              {error && (
+                <div className="mb-4 p-3 bg-red-50 border border-red-300 rounded-lg flex gap-2 items-start">
+                  <AlertCircle size={18} className="text-red-600 flex-shrink-0 mt-0.5" />
+                  <p className="text-sm text-red-700">{error}</p>
+                </div>
+              )}
+
+              {refData.advancedSkills.length === 0 ? (
+                <p className="text-sm text-gray-500">No advanced skills configured yet — add some under Staff Filters -&gt; Advanced Skill in Settings.</p>
+              ) : (
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-xs font-semibold text-gray-600 uppercase mb-2">Available Skills</p>
+                    <div className="border border-gray-200 rounded-lg divide-y divide-gray-100 max-h-80 overflow-y-auto">
+                      {notRequired.length === 0 && (
+                        <p className="p-3 text-sm text-gray-400 italic">Every skill is already required</p>
+                      )}
+                      {notRequired.map(skill => (
+                        <button
+                          key={skill.advanced_skill_id}
+                          onClick={() => handleUpdateActivityRequiredSkills(activity.activity_id, [...requiredIds, skill.advanced_skill_id])}
+                          className="w-full text-left px-3 py-2 text-sm hover:bg-blue-50 transition flex items-center justify-between gap-2"
+                        >
+                          {skill.name}
+                          <span className="text-blue-600 text-xs font-semibold flex-shrink-0">Add →</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <p className="text-xs font-semibold text-gray-600 uppercase mb-2">Required Here (any one)</p>
+                    <div className="border border-gray-200 rounded-lg divide-y divide-gray-100 max-h-80 overflow-y-auto">
+                      {required.length === 0 && (
+                        <p className="p-3 text-sm text-gray-400 italic">None selected — every staff member is offered</p>
+                      )}
+                      {required.map(skill => (
+                        <button
+                          key={skill.advanced_skill_id}
+                          onClick={() => handleUpdateActivityRequiredSkills(activity.activity_id, requiredIds.filter(id => id !== skill.advanced_skill_id))}
+                          className="w-full text-left px-3 py-2 text-sm hover:bg-red-50 transition flex items-center justify-between gap-2"
+                        >
+                          <span className="text-red-600 text-xs font-semibold flex-shrink-0">← Remove</span>
+                          {skill.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Duty Type Required Skills Modal — same as the Activity one above,
+          but narrows the Duty Assignments dropdown for this on-call slot. */}
+      {editingDutyTypeSkillsId && (() => {
+        const dutyType = refData.dutyTypes.find(d => d.duty_type_id === editingDutyTypeSkillsId);
+        const requiredIds = dutyType?.required_advanced_skills || [];
+        const required = refData.advancedSkills.filter(s => requiredIds.includes(s.advanced_skill_id));
+        const notRequired = refData.advancedSkills.filter(s => !requiredIds.includes(s.advanced_skill_id));
+        return (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-2xl max-h-[85vh] overflow-y-auto">
+              <div className="flex justify-between items-start mb-4">
+                <div>
+                  <h2 className="text-lg font-bold text-gray-900">{dutyType?.label} — Required Advanced Skills</h2>
+                  <p className="text-sm text-gray-600">Leave empty to allow any staff. Otherwise, only staff with at least one checked skill are offered.</p>
+                </div>
+                <button onClick={() => setEditingDutyTypeSkillsId(null)} className="p-1 hover:bg-gray-100 rounded-lg">
+                  <X size={20} />
+                </button>
+              </div>
+
+              {error && (
+                <div className="mb-4 p-3 bg-red-50 border border-red-300 rounded-lg flex gap-2 items-start">
+                  <AlertCircle size={18} className="text-red-600 flex-shrink-0 mt-0.5" />
+                  <p className="text-sm text-red-700">{error}</p>
+                </div>
+              )}
+
+              {refData.advancedSkills.length === 0 ? (
+                <p className="text-sm text-gray-500">No advanced skills configured yet — add some under Staff Filters -&gt; Advanced Skill in Settings.</p>
+              ) : (
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-xs font-semibold text-gray-600 uppercase mb-2">Available Skills</p>
+                    <div className="border border-gray-200 rounded-lg divide-y divide-gray-100 max-h-80 overflow-y-auto">
+                      {notRequired.length === 0 && (
+                        <p className="p-3 text-sm text-gray-400 italic">Every skill is already required</p>
+                      )}
+                      {notRequired.map(skill => (
+                        <button
+                          key={skill.advanced_skill_id}
+                          onClick={() => handleUpdateDutyTypeRequiredSkills(dutyType.duty_type_id, [...requiredIds, skill.advanced_skill_id])}
+                          className="w-full text-left px-3 py-2 text-sm hover:bg-blue-50 transition flex items-center justify-between gap-2"
+                        >
+                          {skill.name}
+                          <span className="text-blue-600 text-xs font-semibold flex-shrink-0">Add →</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <p className="text-xs font-semibold text-gray-600 uppercase mb-2">Required Here (any one)</p>
+                    <div className="border border-gray-200 rounded-lg divide-y divide-gray-100 max-h-80 overflow-y-auto">
+                      {required.length === 0 && (
+                        <p className="p-3 text-sm text-gray-400 italic">None selected — every staff member is offered</p>
+                      )}
+                      {required.map(skill => (
+                        <button
+                          key={skill.advanced_skill_id}
+                          onClick={() => handleUpdateDutyTypeRequiredSkills(dutyType.duty_type_id, requiredIds.filter(id => id !== skill.advanced_skill_id))}
+                          className="w-full text-left px-3 py-2 text-sm hover:bg-red-50 transition flex items-center justify-between gap-2"
+                        >
+                          <span className="text-red-600 text-xs font-semibold flex-shrink-0">← Remove</span>
+                          {skill.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         );

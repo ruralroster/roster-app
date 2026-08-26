@@ -14,6 +14,7 @@ import {
   updateStaffPayrollNumber,
   updateStaffPositionId,
   updateStaffCostCentre,
+  updateStaffAdvancedSkills,
 } from './supabaseClient';
 import {
   FTE_OPTIONS,
@@ -66,7 +67,7 @@ function getMondayOfWeek(date) {
   return d;
 }
 
-export default function StaffAvailabilityTab({ departmentId, staffList = [], leaveTypes = [], onStaffChanged }) {
+export default function StaffAvailabilityTab({ departmentId, staffList = [], leaveTypes = [], advancedSkills = [], onStaffChanged }) {
   const [selectedStaffId, setSelectedStaffId] = useState('');
   const [weekStartDate, setWeekStartDate] = useState(() => startOfWeek(new Date()));
   const [availabilityMap, setAvailabilityMap] = useState({});
@@ -78,6 +79,7 @@ export default function StaffAvailabilityTab({ departmentId, staffList = [], lea
   const [savingFte, setSavingFte] = useState(false);
   const [rankOverrides, setRankOverrides] = useState({});
   const [savingRank, setSavingRank] = useState(false);
+  const [savingAdvancedSkills, setSavingAdvancedSkills] = useState(false);
   const [nameOverrides, setNameOverrides] = useState({});
   const [savingName, setSavingName] = useState(false);
   const [payrollNumberOverrides, setPayrollNumberOverrides] = useState({});
@@ -264,6 +266,25 @@ export default function StaffAvailabilityTab({ departmentId, staffList = [], lea
       setError(`Failed to update rank: ${err.message}`);
     } finally {
       setSavingRank(false);
+    }
+  };
+
+  const handleToggleAdvancedSkill = async (skillId) => {
+    if (!selectedStaffId) return;
+    const current = selectedStaff?.advanced_skills || [];
+    const next = current.includes(skillId) ? current.filter(id => id !== skillId) : [...current, skillId];
+
+    setSavingAdvancedSkills(true);
+    try {
+      const { error: skillsError } = await updateStaffAdvancedSkills(selectedStaffId, next);
+      if (skillsError) throw skillsError;
+
+      if (onStaffChanged) await onStaffChanged();
+      setError(null);
+    } catch (err) {
+      setError(`Failed to update advanced skills: ${err.message}`);
+    } finally {
+      setSavingAdvancedSkills(false);
     }
   };
 
@@ -739,6 +760,36 @@ export default function StaffAvailabilityTab({ departmentId, staffList = [], lea
                 <option key={f} value={f}>{formatFte(f)} FTE</option>
               ))}
             </select>
+          </div>
+
+          <div className="mb-4">
+            <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Adv Skill</label>
+            {advancedSkills.length === 0 ? (
+              <p className="text-xs text-gray-500">No advanced skills configured yet — add some under Staff Filters &gt; Advanced Skill in Settings.</p>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {advancedSkills.map(skill => {
+                  const checked = (selectedStaff?.advanced_skills || []).includes(skill.advanced_skill_id);
+                  return (
+                    <label
+                      key={skill.advanced_skill_id}
+                      className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold border cursor-pointer transition ${
+                        checked ? 'bg-purple-600 border-purple-600 text-white' : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'
+                      } ${savingAdvancedSkills ? 'opacity-50 pointer-events-none' : ''}`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => handleToggleAdvancedSkill(skill.advanced_skill_id)}
+                        disabled={savingAdvancedSkills}
+                        className="hidden"
+                      />
+                      {skill.name}
+                    </label>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           <div className="mb-4">
