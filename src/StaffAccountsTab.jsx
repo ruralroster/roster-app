@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { AlertCircle, Loader, CheckCircle2, CircleDashed } from 'lucide-react';
-import { getStaffList, inviteStaff, updateStaffRole } from './supabaseClient';
+import { getStaffList, inviteStaff, updateStaffRole, supabase } from './supabaseClient';
 import { RANK_OPTIONS } from './StaffAvailabilityTab';
 
 const ROLE_OPTIONS = [
@@ -40,6 +40,11 @@ export default function StaffAccountsTab({ departmentId, refreshKey }) {
   // and show progress without a full-table loading state.
   const [savingRoleId, setSavingRoleId] = useState(null);
   const [roleError, setRoleError] = useState(null);
+
+  // Resending access to an already-linked account — keyed by staff_id so
+  // only the row being reinvited shows progress/result.
+  const [reinvitingId, setReinvitingId] = useState(null);
+  const [reinviteResult, setReinviteResult] = useState(null); // { staffId, message, isError }
 
   const loadStaff = async () => {
     setLoading(true);
@@ -124,6 +129,34 @@ export default function StaffAccountsTab({ departmentId, refreshKey }) {
       setRoleError(`Failed to update role: ${err.message}`);
     } finally {
       setSavingRoleId(null);
+    }
+  };
+
+  // Resends account access to a staff member who's already linked (e.g.
+  // they never got or lost the original invite email). Person only ever
+  // has one email on file (`staff.email`, kept current by edits here, in
+  // Staff and Availability, or Staff Activity Profiles — whichever was
+  // saved most recently), so that's always the address this goes to.
+  // Reuses the password-recovery link rather than `inviteUserByEmail`
+  // (which errors for an account that already exists) — same flow as the
+  // "Forgot password" link in Login.jsx, which App.js also routes to the
+  // SetPassword screen.
+  const handleReinvite = async (person) => {
+    if (!person.email) return;
+
+    setReinvitingId(person.staff_id);
+    setReinviteResult(null);
+    try {
+      const { error: reinviteErr } = await supabase.auth.resetPasswordForEmail(person.email, {
+        redirectTo: window.location.origin + window.location.pathname,
+      });
+      if (reinviteErr) throw reinviteErr;
+
+      setReinviteResult({ staffId: person.staff_id, message: `Sent to ${person.email}.`, isError: false });
+    } catch (err) {
+      setReinviteResult({ staffId: person.staff_id, message: `Failed: ${err.message}`, isError: true });
+    } finally {
+      setReinvitingId(null);
     }
   };
 
@@ -230,9 +263,24 @@ export default function StaffAccountsTab({ departmentId, refreshKey }) {
                   </td>
                   <td className="px-3 py-3 border border-gray-200">
                     {person.user_id ? (
-                      <span className="inline-flex items-center gap-1 text-xs font-semibold text-green-700">
-                        <CheckCircle2 size={14} /> Linked
-                      </span>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="inline-flex items-center gap-1 text-xs font-semibold text-green-700">
+                          <CheckCircle2 size={14} /> Linked
+                        </span>
+                        <button
+                          onClick={() => handleReinvite(person)}
+                          disabled={reinvitingId === person.staff_id || !person.email}
+                          title={person.email ? `Resend access link to ${person.email}` : 'No email on file'}
+                          className="px-2 py-0.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded text-xs transition disabled:opacity-50"
+                        >
+                          {reinvitingId === person.staff_id ? 'Sending...' : 'Reinvite'}
+                        </button>
+                        {reinviteResult?.staffId === person.staff_id && (
+                          <p className={`text-xs basis-full ${reinviteResult.isError ? 'text-red-700' : 'text-green-700'}`}>
+                            {reinviteResult.message}
+                          </p>
+                        )}
+                      </div>
                     ) : linkingStaffId === person.staff_id ? (
                       <div className="flex items-center gap-1.5">
                         <input

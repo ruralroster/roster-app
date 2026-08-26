@@ -11,6 +11,7 @@ import {
   deactivateStaff,
   reactivateStaff,
   updateStaffName,
+  updateStaffEmail,
   updateStaffPayrollNumber,
   updateStaffPositionId,
   updateStaffCostCentre,
@@ -82,6 +83,8 @@ export default function StaffAvailabilityTab({ departmentId, staffList = [], lea
   const [savingAdvancedSkills, setSavingAdvancedSkills] = useState(false);
   const [nameOverrides, setNameOverrides] = useState({});
   const [savingName, setSavingName] = useState(false);
+  const [emailOverrides, setEmailOverrides] = useState({});
+  const [savingEmail, setSavingEmail] = useState(false);
   const [payrollNumberOverrides, setPayrollNumberOverrides] = useState({});
   const [savingPayrollNumber, setSavingPayrollNumber] = useState(false);
   const [positionIdOverrides, setPositionIdOverrides] = useState({});
@@ -309,6 +312,29 @@ export default function StaffAvailabilityTab({ departmentId, staffList = [], lea
       setError(`Failed to update name: ${err.message}`);
     } finally {
       setSavingName(false);
+    }
+  };
+
+  const handleEmailInput = (value) => {
+    if (!selectedStaffId) return;
+    setEmailOverrides(prev => ({ ...prev, [selectedStaffId]: value }));
+  };
+
+  const handleSaveEmail = async () => {
+    if (!selectedStaffId) return;
+    const email = emailOverrides[selectedStaffId] ?? selectedStaff?.email ?? '';
+
+    setSavingEmail(true);
+    try {
+      const { error: emailError } = await updateStaffEmail(selectedStaffId, email.trim());
+      if (emailError) throw emailError;
+
+      if (onStaffChanged) await onStaffChanged();
+      setError(null);
+    } catch (err) {
+      setError(`Failed to update email: ${err.message}`);
+    } finally {
+      setSavingEmail(false);
     }
   };
 
@@ -614,6 +640,7 @@ export default function StaffAvailabilityTab({ departmentId, staffList = [], lea
   const currentFte = fteOverrides[selectedStaffId] ?? selectedStaff?.fte ?? DEFAULT_FTE;
   const currentRank = rankOverrides[selectedStaffId] ?? selectedStaff?.rank ?? '';
   const currentName = nameOverrides[selectedStaffId] ?? selectedStaff?.name ?? '';
+  const currentEmail = emailOverrides[selectedStaffId] ?? selectedStaff?.email ?? '';
   const currentPayrollNumber = payrollNumberOverrides[selectedStaffId] ?? selectedStaff?.payroll_number ?? '';
   const currentPositionId = positionIdOverrides[selectedStaffId] ?? selectedStaff?.position_id ?? '';
   const currentCostCentre = costCentreOverrides[selectedStaffId] ?? selectedStaff?.cost_centre ?? '';
@@ -730,6 +757,27 @@ export default function StaffAvailabilityTab({ departmentId, staffList = [], lea
                 className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-medium rounded-lg transition text-sm"
               >
                 {savingName ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+          </div>
+
+          <div className="mb-4">
+            <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Email</label>
+            <div className="flex gap-2">
+              <input
+                type="email"
+                placeholder="Add email…"
+                value={currentEmail}
+                onChange={(e) => handleEmailInput(e.target.value)}
+                disabled={savingEmail}
+                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+              />
+              <button
+                onClick={handleSaveEmail}
+                disabled={savingEmail}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-medium rounded-lg transition text-sm"
+              >
+                {savingEmail ? 'Saving...' : 'Save'}
               </button>
             </div>
           </div>
