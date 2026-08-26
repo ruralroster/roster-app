@@ -6,7 +6,7 @@ import Login from './Login';
 import SetPassword from './SetPassword';
 import MfaChallenge from './MfaChallenge';
 import DepartmentSwitcher from './DepartmentSwitcher';
-import { supabase, getMyMemberships, getMfaAssuranceLevel, signOut, updateMyPreferredView, createDepartment } from './supabaseClient';
+import { supabase, getMyMemberships, getMfaAssuranceLevel, getMustResetPassword, clearMustResetPassword, signOut, updateMyPreferredView, createDepartment } from './supabaseClient';
 
 // Supabase redirects invite/password-recovery links back here with
 // ?type=invite / ?type=recovery (or, on older/implicit-flow projects,
@@ -32,6 +32,16 @@ function App() {
   // department's own saved preference.
   const [viewOverride, setViewOverride] = useState(null);
   const [needsPasswordSetup, setNeedsPasswordSetup] = useState(needsPasswordSetupFromUrl);
+  // Whether this account was given a one-time temporary password by an
+  // officer (StaffAccountsTab's "One-Time Password" button, for when the
+  // real invite email gets spam-filtered) and hasn't set its own password
+  // yet. Unlike needsPasswordSetup above, this isn't detectable from the
+  // URL — a temp password is a normal password-sign-in, not a one-time
+  // link — so it's read from the database instead. null = not checked yet
+  // for the current session, true/false once getMustResetPassword has
+  // answered. Re-checked from scratch whenever `session` changes, same as
+  // needsMfaChallenge below.
+  const [needsForcedReset, setNeedsForcedReset] = useState(null);
   // Whether this session still needs to answer a 2FA challenge before
   // seeing anything else. null = not checked yet for the current session
   // (renders the loader, same as `session === undefined`); true/false once
@@ -56,11 +66,27 @@ function App() {
         setMemberships(null);
         setActiveMembership(null);
         setNeedsMfaChallenge(null);
+        setNeedsForcedReset(null);
       }
     });
 
     return () => subscription.unsubscribe();
   }, []);
+
+  // Guarded on needsForcedReset still being null so this resolves once per
+  // sign-in, not on every `session` change (routine token refreshes fire a
+  // new session object too — see the identical comment on the MFA effect
+  // below). Skipped entirely while needsPasswordSetup is true: that flow
+  // already ends at SetPassword, which would just be reached a second way.
+  useEffect(() => {
+    if (!session || needsPasswordSetup || needsForcedReset !== null) return;
+    let cancelled = false;
+    getMustResetPassword().then(({ data, error }) => {
+      if (cancelled) return;
+      setNeedsForcedReset(!error && !!data);
+    });
+    return () => { cancelled = true; };
+  }, [session, needsPasswordSetup, needsForcedReset]);
 
   // A plain password sign-in only ever reaches 'aal1'. Someone with 2FA
   // turned on (see TwoFactorSettings) needs a step up to 'aal2' before
@@ -73,14 +99,14 @@ function App() {
   // re-running the check then would flash the app back to a loading screen
   // for no reason. Signing out resets it to null again, above.
   useEffect(() => {
-    if (!session || needsPasswordSetup || needsMfaChallenge !== null) return;
+    if (!session || needsPasswordSetup || needsForcedReset !== false || needsMfaChallenge !== null) return;
     let cancelled = false;
     getMfaAssuranceLevel().then(({ data, error }) => {
       if (cancelled) return;
       setNeedsMfaChallenge(!error && data && data.nextLevel === 'aal2' && data.currentLevel !== 'aal2');
     });
     return () => { cancelled = true; };
-  }, [session, needsPasswordSetup, needsMfaChallenge]);
+  }, [session, needsPasswordSetup, needsForcedReset, needsMfaChallenge]);
 
   const loadMemberships = useCallback(async () => {
     setMembershipsLoading(true);
@@ -114,6 +140,11 @@ function App() {
     window.history.replaceState(null, '', window.location.pathname);
   };
 
+  const handleForcedResetDone = async () => {
+    await clearMustResetPassword();
+    setNeedsForcedReset(false);
+  };
+
   if (session === undefined) {
     return <FullScreenLoader />;
   }
@@ -124,6 +155,20 @@ function App() {
 
   if (needsPasswordSetup) {
     return <SetPassword onDone={handlePasswordSet} />;
+  }
+
+  if (needsForcedReset === null) {
+    return <FullScreenLoader />;
+  }
+
+  if (needsForcedReset) {
+    return (
+      <SetPassword
+        onDone={handleForcedResetDone}
+        title="Choose a new password"
+        subtitle="You signed in with a temporary password — set your own before continuing."
+      />
+    );
   }
 
   if (needsMfaChallenge === null) {

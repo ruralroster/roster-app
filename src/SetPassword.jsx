@@ -6,7 +6,7 @@ import { supabase } from './supabaseClient';
 // one-time token (Supabase establishes the session automatically from the
 // URL — see App.js's hash check). Without this screen there'd be no way to
 // set a password to use with the normal Login form afterward.
-export default function SetPassword({ onDone }) {
+export default function SetPassword({ onDone, title = 'Set your password', subtitle = 'Choose a password to sign in with from now on' }) {
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [loading, setLoading] = useState(false);
@@ -39,8 +39,8 @@ export default function SetPassword({ onDone }) {
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-blue-100 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         <div className="bg-white rounded-lg shadow-lg p-8">
-          <h1 className="text-2xl font-bold text-gray-900 mb-2">Set your password</h1>
-          <p className="text-gray-600 mb-8">Choose a password to sign in with from now on</p>
+          <h1 className="text-2xl font-bold text-gray-900 mb-2">{title}</h1>
+          <p className="text-gray-600 mb-8">{subtitle}</p>
 
           {error && (
             <div className="mb-6 p-4 bg-red-50 border border-red-300 rounded-lg flex gap-2 items-start">

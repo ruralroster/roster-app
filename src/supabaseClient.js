@@ -4008,3 +4008,53 @@ export async function inviteStaff(departmentId, name, email, rank, role, staffId
     return { data: null, error: err };
   }
 }
+
+// Fallback for when the invite/reinvite email gets spam-filtered: sets a
+// random temporary password on an already-linked account (server-side —
+// see supabase/functions/generate-temp-password/index.ts) so the officer
+// can relay it out-of-band (WhatsApp, SMS, in person). Also flags the
+// account so the recipient is forced through SetPassword on next login
+// (see my_must_reset_password/clear_my_must_reset_password below).
+export async function generateTempPassword(departmentId, staffId) {
+  console.log('generateTempPassword called', departmentId, staffId);
+
+  try {
+    const { data, error } = await supabase.functions.invoke('generate-temp-password', {
+      body: { departmentId, staffId },
+    });
+
+    if (error) throw error;
+    if (data?.error) throw new Error(data.error);
+
+    return { data: data?.data ?? data, error: null };
+  } catch (err) {
+    console.error('generateTempPassword error:', err);
+    return { data: null, error: err };
+  }
+}
+
+// Whether the current session's account was just given a temporary
+// password by an officer and hasn't chosen its own yet — checked by App.js
+// alongside the invite/recovery-link check to force SetPassword either way.
+// Goes through a SECURITY DEFINER function rather than a direct table read
+// since `profiles` has no RLS policies (see
+// migrations/2026-08-27_must_reset_password.sql).
+export async function getMustResetPassword() {
+  try {
+    const { data, error } = await supabase.rpc('my_must_reset_password');
+    return { data, error };
+  } catch (err) {
+    return { data: null, error: err };
+  }
+}
+
+// Clears the flag above once the account holder has set their own
+// password via SetPassword.
+export async function clearMustResetPassword() {
+  try {
+    const { error } = await supabase.rpc('clear_my_must_reset_password');
+    return { error };
+  } catch (err) {
+    return { error: err };
+  }
+}

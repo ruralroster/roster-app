@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { AlertCircle, Loader, CheckCircle2, CircleDashed } from 'lucide-react';
-import { getStaffList, inviteStaff, updateStaffRole, supabase } from './supabaseClient';
+import { getStaffList, inviteStaff, updateStaffRole, generateTempPassword, supabase } from './supabaseClient';
 import { RANK_OPTIONS } from './StaffAvailabilityTab';
 
 const ROLE_OPTIONS = [
@@ -45,6 +45,12 @@ export default function StaffAccountsTab({ departmentId, refreshKey }) {
   // only the row being reinvited shows progress/result.
   const [reinvitingId, setReinvitingId] = useState(null);
   const [reinviteResult, setReinviteResult] = useState(null); // { staffId, message, isError }
+
+  // One-time temporary password — the WhatsApp/SMS fallback for when the
+  // invite/reinvite email itself gets spam-filtered. Keyed by staff_id, same
+  // shape as reinviteResult above.
+  const [generatingPwId, setGeneratingPwId] = useState(null);
+  const [tempPasswordResult, setTempPasswordResult] = useState(null); // { staffId, password, error }
 
   const loadStaff = async () => {
     setLoading(true);
@@ -157,6 +163,31 @@ export default function StaffAccountsTab({ departmentId, refreshKey }) {
       setReinviteResult({ staffId: person.staff_id, message: `Failed: ${err.message}`, isError: true });
     } finally {
       setReinvitingId(null);
+    }
+  };
+
+  // Sets a random temporary password on the account server-side (see
+  // supabase/functions/generate-temp-password/index.ts) and returns it once
+  // for the officer to relay out-of-band — WhatsApp, SMS, in person — for a
+  // person whose invite/reinvite email keeps landing in spam. Also flags
+  // the account so App.js forces them through SetPassword on next login,
+  // same screen an invite link would have shown.
+  const handleGenerateTempPassword = async (person) => {
+    if (!window.confirm(
+      `Generate a one-time password for ${person.name}? Their current password (if any) stops working immediately — only share the new one with them directly.`
+    )) return;
+
+    setGeneratingPwId(person.staff_id);
+    setTempPasswordResult(null);
+    try {
+      const { data, error: genErr } = await generateTempPassword(departmentId, person.staff_id);
+      if (genErr) throw genErr;
+
+      setTempPasswordResult({ staffId: person.staff_id, password: data.tempPassword });
+    } catch (err) {
+      setTempPasswordResult({ staffId: person.staff_id, error: err.message });
+    } finally {
+      setGeneratingPwId(null);
     }
   };
 
@@ -275,10 +306,42 @@ export default function StaffAccountsTab({ departmentId, refreshKey }) {
                         >
                           {reinvitingId === person.staff_id ? 'Sending...' : 'Reinvite'}
                         </button>
+                        <button
+                          onClick={() => handleGenerateTempPassword(person)}
+                          disabled={generatingPwId === person.staff_id}
+                          title="Generate a one-time password to share manually (WhatsApp, SMS, etc.) if the invite email is being spam-filtered"
+                          className="px-2 py-0.5 bg-purple-100 hover:bg-purple-200 text-purple-900 font-medium rounded text-xs transition disabled:opacity-50"
+                        >
+                          {generatingPwId === person.staff_id ? 'Generating...' : 'One-Time Password'}
+                        </button>
                         {reinviteResult?.staffId === person.staff_id && (
                           <p className={`text-xs basis-full ${reinviteResult.isError ? 'text-red-700' : 'text-green-700'}`}>
                             {reinviteResult.message}
                           </p>
+                        )}
+                        {tempPasswordResult?.staffId === person.staff_id && (
+                          tempPasswordResult.error ? (
+                            <p className="text-xs text-red-700 basis-full">Failed: {tempPasswordResult.error}</p>
+                          ) : (
+                            <div className="basis-full flex items-center gap-2 flex-wrap mt-1 p-2 bg-purple-50 border border-purple-200 rounded">
+                              <code className="text-sm font-mono font-semibold text-purple-900">{tempPasswordResult.password}</code>
+                              <button
+                                onClick={() => navigator.clipboard.writeText(tempPasswordResult.password)}
+                                className="text-xs text-purple-700 underline"
+                              >
+                                Copy
+                              </button>
+                              <button
+                                onClick={() => setTempPasswordResult(null)}
+                                className="text-xs text-gray-500 underline ml-auto"
+                              >
+                                Dismiss
+                              </button>
+                              <p className="text-xs text-purple-700 basis-full">
+                                Shown once — send this to {person.name} directly. They'll be asked to set their own password after signing in.
+                              </p>
+                            </div>
+                          )
                         )}
                       </div>
                     ) : linkingStaffId === person.staff_id ? (
