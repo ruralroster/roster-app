@@ -845,6 +845,17 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
 
   const handleFortnightPickLocation = (locationId) => {
     setFortnightWizardLocationId(locationId);
+
+    // A location restricted to exactly one activity has nothing left to
+    // choose — skip straight to assigning instead of making the officer
+    // click a single-option screen (e.g. every Emergency Department
+    // location only ever allows the "Emergency" activity).
+    const onlyActivity = activitiesAllowedAtLocation(locationId);
+    if (onlyActivity.length === 1) {
+      handleFortnightPickActivity(onlyActivity[0].activity_id, locationId);
+      return;
+    }
+
     setFortnightWizardStep('activity');
   };
 
@@ -4024,7 +4035,15 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                       </select>
                       <select
                         value={newEntryLocationId}
-                        onChange={(e) => { setNewEntryLocationId(e.target.value); setNewEntryActivityId(''); }}
+                        onChange={(e) => {
+                          const locationId = e.target.value;
+                          setNewEntryLocationId(locationId);
+                          // Pre-fill rather than force — the officer can still
+                          // change it, this just saves the click when there's
+                          // only one legal choice anyway.
+                          const onlyActivity = activitiesAllowedAtLocation(locationId);
+                          setNewEntryActivityId(onlyActivity.length === 1 ? onlyActivity[0].activity_id : '');
+                        }}
                         className="px-2 py-1 border border-gray-300 rounded text-sm"
                       >
                         <option value="">— Location —</option>
