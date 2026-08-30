@@ -2879,7 +2879,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                 </button>
                 <div className="text-center">
                   <h1 className="text-2xl font-bold text-gray-900">{formatDate(selectedDate)}</h1>
-                  <p className="text-sm text-gray-500">Large Rural Hospital — Rostering Officer</p>
+                  <p className="text-sm text-gray-500">{refData.department?.name || 'Department'} - Rostering Officer</p>
                 </div>
                 <button
                   onClick={() => {
