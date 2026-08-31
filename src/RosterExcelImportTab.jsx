@@ -40,6 +40,8 @@ export default function RosterExcelImportTab({ departmentId, staffList, location
   // "never silently create/guess" rule as everything else in this import.
   const [missingStaff, setMissingStaff] = useState(null); // [{ name, fte, suggestedRank, rank, create }]
   const [creatingStaff, setCreatingStaff] = useState(false);
+  const [creatingProgress, setCreatingProgress] = useState(null); // { current, total }
+  const [importProgress, setImportProgress] = useState(null); // { current, total }
 
   const loadEdSheet = (wb, name) => {
     setSheetName(name);
@@ -121,15 +123,18 @@ export default function RosterExcelImportTab({ departmentId, staffList, location
     }
 
     setCreatingStaff(true);
+    setCreatingProgress({ current: 0, total: toCreate.length });
     setError(null);
     try {
-      for (const person of toCreate) {
+      for (let i = 0; i < toCreate.length; i++) {
+        const person = toCreate[i];
         const { data, error: createError } = await createStaff(departmentId, person.name, person.rank, '');
         if (createError) throw new Error(`${person.name}: ${createError.message}`);
         if (person.fte !== 1 && data) {
           const { error: fteError } = await updateStaffFTE(data.staff_id, person.fte);
           if (fteError) throw new Error(`${person.name}: created, but failed to set FTE: ${fteError.message}`);
         }
+        setCreatingProgress({ current: i + 1, total: toCreate.length });
       }
       if (onStaffChanged) await onStaffChanged();
       checkMissingStaff();
@@ -137,6 +142,7 @@ export default function RosterExcelImportTab({ departmentId, staffList, location
       setError(`Failed to create staff: ${err.message}`);
     } finally {
       setCreatingStaff(false);
+      setCreatingProgress(null);
     }
   };
 
@@ -150,10 +156,11 @@ export default function RosterExcelImportTab({ departmentId, staffList, location
     setError(null);
     try {
       const people = format === 'ed' ? parseEdWeek(workbook, sheetName, weekIndex) : parseRosterWeek(workbook, weekIndex);
+      setImportProgress({ current: 0, total: people.length });
       const { data, error: importError } = await importRosterWeek(
         departmentId, people,
         { staffList, locations, activities, leaveTypes },
-        { dryRun }
+        { dryRun, onProgress: (current, total) => setImportProgress({ current, total }) }
       );
       if (importError) throw importError;
       setResults(data);
@@ -162,6 +169,7 @@ export default function RosterExcelImportTab({ departmentId, staffList, location
       setError(`Import failed: ${err.message}`);
     } finally {
       setLoading(false);
+      setImportProgress(null);
     }
   };
 
@@ -278,6 +286,7 @@ export default function RosterExcelImportTab({ departmentId, staffList, location
                   {creatingStaff && <Loader size={16} className="animate-spin" />}
                   Create Selected Staff
                 </button>
+                {creatingProgress && <ProgressBar current={creatingProgress.current} total={creatingProgress.total} />}
               </div>
             )
           )}
@@ -285,23 +294,26 @@ export default function RosterExcelImportTab({ departmentId, staffList, location
       )}
 
       {workbook && (
-        <div className="flex gap-2 mb-4">
-          <button
-            onClick={() => runImport(true)}
-            disabled={loading}
-            className="flex-1 px-4 py-2 bg-gray-800 hover:bg-gray-900 disabled:opacity-50 text-white font-medium rounded-lg transition text-sm flex items-center justify-center gap-2"
-          >
-            {loading && <Loader size={16} className="animate-spin" />}
-            Dry Run
-          </button>
-          <button
-            onClick={() => runImport(false)}
-            disabled={loading || !results}
-            title={!results ? 'Run a dry run first' : undefined}
-            className="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white font-medium rounded-lg transition text-sm"
-          >
-            Write to Roster
-          </button>
+        <div className="mb-4">
+          <div className="flex gap-2">
+            <button
+              onClick={() => runImport(true)}
+              disabled={loading}
+              className="flex-1 px-4 py-2 bg-gray-800 hover:bg-gray-900 disabled:opacity-50 text-white font-medium rounded-lg transition text-sm flex items-center justify-center gap-2"
+            >
+              {loading && <Loader size={16} className="animate-spin" />}
+              Dry Run
+            </button>
+            <button
+              onClick={() => runImport(false)}
+              disabled={loading || !results}
+              title={!results ? 'Run a dry run first' : undefined}
+              className="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white font-medium rounded-lg transition text-sm"
+            >
+              Write to Roster
+            </button>
+          </div>
+          {importProgress && <ProgressBar current={importProgress.current} total={importProgress.total} label={`${importProgress.current} of ${importProgress.total} people`} />}
         </div>
       )}
 
@@ -332,6 +344,24 @@ export default function RosterExcelImportTab({ departmentId, staffList, location
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// Both the staff-creation loop and the actual import loop write one row/
+// person at a time via sequential awaited Supabase calls (see
+// handleCreateMissingStaff and importRosterWeek's onProgress) — a big
+// roster genuinely takes a while, so this exists to show it's moving
+// rather than leaving the officer looking at a spinner with no sense of
+// whether it's stuck.
+function ProgressBar({ current, total, label }) {
+  const pct = total > 0 ? Math.round((current / total) * 100) : 0;
+  return (
+    <div className="mt-2">
+      <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+        <div className="bg-blue-600 h-2 rounded-full transition-all" style={{ width: `${pct}%` }} />
+      </div>
+      <p className="text-xs text-gray-500 mt-1 text-center">{label || `${current} of ${total}`} ({pct}%)</p>
     </div>
   );
 }

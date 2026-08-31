@@ -1151,6 +1151,98 @@ export async function searchStaff(departmentId, query) {
 }
 
 // ============================================================
+// STARRED STAFF
+// ============================================================
+// See migrations/2026-08-31_staff_favorites.sql. Self-service — a staff
+// member manages their own starred list, up to MAX_STARRED_STAFF.
+
+const MAX_STARRED_STAFF = 10;
+
+export async function getStarredStaff(staffId) {
+  try {
+    const { data: favorites, error: favError } = await supabase
+      .from('staff_favorites')
+      .select('favorite_id, starred_staff_id')
+      .eq('staff_id', staffId)
+      .order('created_at');
+    if (favError) throw favError;
+    if (!favorites || favorites.length === 0) return { data: [], error: null };
+
+    // Two separate queries rather than one embedded select — staff_favorites
+    // has two FKs into staff (staff_id, starred_staff_id), which PostgREST's
+    // embedding can't disambiguate without a specific FK-hint syntax this
+    // codebase doesn't otherwise use; plain queries avoid relying on that.
+    const { data: staffRows, error: staffError } = await supabase
+      .from('staff')
+      .select('staff_id, name, rank')
+      .in('staff_id', favorites.map(f => f.starred_staff_id));
+    if (staffError) throw staffError;
+
+    const staffById = new Map(staffRows.map(s => [s.staff_id, s]));
+    const data = favorites.map(f => ({ ...f, staff: staffById.get(f.starred_staff_id) || null }));
+
+    return { data, error: null };
+  } catch (err) {
+    console.error('getStarredStaff error:', err);
+    return { data: [], error: err };
+  }
+}
+
+export async function starStaffMember(staffId, starredStaffId) {
+  try {
+    const { count, error: countError } = await supabase
+      .from('staff_favorites')
+      .select('favorite_id', { count: 'exact', head: true })
+      .eq('staff_id', staffId);
+    if (countError) throw countError;
+    if ((count || 0) >= MAX_STARRED_STAFF) {
+      throw new Error(`You can only star up to ${MAX_STARRED_STAFF} people`);
+    }
+
+    const { data, error } = await supabase
+      .from('staff_favorites')
+      .insert([{ staff_id: staffId, starred_staff_id: starredStaffId }])
+      .select()
+      .single();
+
+    return { data, error };
+  } catch (err) {
+    return { data: null, error: err };
+  }
+}
+
+export async function unstarStaffMember(favoriteId) {
+  try {
+    const { error } = await supabase.from('staff_favorites').delete().eq('favorite_id', favoriteId);
+    return { error };
+  } catch (err) {
+    return { error: err };
+  }
+}
+
+// Just the dates a colleague marked themselves unavailable — no leave type,
+// no reason — via a SECURITY DEFINER function, since staff_availability's
+// own RLS is self/officer-only (see the migration for why).
+export async function getStaffOffDays(staffId, weekStartDate) {
+  const startStr = toLocalDateStr(weekStartDate);
+  const endDate = new Date(weekStartDate);
+  endDate.setDate(endDate.getDate() + 6);
+  const endStr = toLocalDateStr(endDate);
+
+  try {
+    const { data, error } = await supabase.rpc('get_staff_off_days', {
+      p_staff_id: staffId,
+      p_start: startStr,
+      p_end: endStr,
+    });
+    return { data: (data || []).map(r => r.date), error };
+  } catch (err) {
+    console.error('getStaffOffDays error:', err);
+    return { data: [], error: err };
+  }
+}
+
+// ============================================================
 // TEST DATA - POPULATE NEXT WEEK RANDOMLY
 // ============================================================
 
@@ -3417,9 +3509,16 @@ export async function assignStaffFortnight(departmentId, date, staffId, shiftId,
 
 // DD/MM/YYYY (as Excel displays it, and as extractConsultantWeek/
 // extractRmoWeek/extractInternWeek's date row comes through) -> Date.
-function parseExcelDate(ddmmyyyy) {
-  const [d, m, y] = (ddmmyyyy || '').split('/').map(Number);
+// Also accepts a 2-digit year (DD/MM/YY, e.g. edRosterExcelImport.js's
+// "08/06/26") — confirmed 2026-08-31 via a real import silently landing in
+// 1926: `new Date(year, ...)` treats any year under 100 as 1900+year, so a
+// 2-digit year needs +2000 applied explicitly first. This app has no
+// legitimate use for an actual 1900s date, so that mapping is unambiguous.
+function parseExcelDate(ddmmyy) {
+  // eslint-disable-next-line prefer-const
+  let [d, m, y] = (ddmmyy || '').split('/').map(Number);
   if (!d || !m || !y) return null;
+  if (y < 100) y += 2000;
   return new Date(y, m - 1, d);
 }
 
@@ -3460,14 +3559,16 @@ export async function findOrCreateShift(departmentId, startTime, endTime) {
 // leaveTypes } — already-loaded department reference data (e.g.
 // officer-roster-view-supabase.jsx's refData), passed in rather than
 // fetched again.
-export async function importRosterWeek(departmentId, people, refLists, { dryRun = true } = {}) {
+export async function importRosterWeek(departmentId, people, refLists, { dryRun = true, onProgress } = {}) {
   const { staffList, locations, activities, leaveTypes } = refLists;
   const results = [];
 
-  for (const person of people) {
+  for (let personIndex = 0; personIndex < people.length; personIndex++) {
+    const person = people[personIndex];
     const staff = matchStaffName(person.rawLabel, staffList);
     if (!staff) {
       results.push({ rawLabel: person.rawLabel, ok: false, reason: 'No matching staff record' });
+      onProgress?.(personIndex + 1, people.length);
       continue;
     }
 
@@ -3526,6 +3627,8 @@ export async function importRosterWeek(departmentId, people, refLists, { dryRun 
         results.push({ ...entry, ok: !assignError, action: 'assign', location: location.name, activity: activity.name, start: segment.start, end: segment.end, error: assignError?.message });
       }
     }
+
+    onProgress?.(personIndex + 1, people.length);
   }
 
   return { data: results, error: null };

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ChevronLeft, ChevronRight, ChevronDown, X, AlertCircle, Loader, Search, Download, Coffee, Copy, Check, Hand, Settings, Phone } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronDown, X, AlertCircle, Loader, Search, Download, Coffee, Copy, Check, Hand, Settings, Phone, Star, Shuffle } from 'lucide-react';
 import TwoFactorSettings from './TwoFactorSettings';
 import {
   getStaffById,
@@ -25,6 +25,10 @@ import {
   updateMyEmail,
   updateMyPhone,
   signOut,
+  getStarredStaff,
+  starStaffMember,
+  unstarStaffMember,
+  getStaffOffDays,
 } from './supabaseClient';
 import CollapsibleSection from './CollapsibleSection';
 import CoffeePicker from './CoffeePicker';
@@ -103,6 +107,18 @@ export default function StaffRosterView({ departmentId, staffId }) {
   // Week tab state
   const [weekAssignments, setWeekAssignments] = useState([]);
   const [loadingWeek, setLoadingWeek] = useState(false);
+
+  // Starred colleagues (see migrations/2026-08-31_staff_favorites.sql) —
+  // shown under "your weekly assignments", expandable to their own week,
+  // with a "crossover" comparison against the current week.
+  const [starredStaff, setStarredStaff] = useState([]);
+  const [starringError, setStarringError] = useState(null);
+  const [expandedStarredId, setExpandedStarredId] = useState(null);
+  const [colleagueWeekAssignments, setColleagueWeekAssignments] = useState([]);
+  const [loadingColleagueWeek, setLoadingColleagueWeek] = useState(false);
+  const [crossoverStaff, setCrossoverStaff] = useState(null); // { starred_staff_id, staff: {name} }
+  const [crossoverDays, setCrossoverDays] = useState(null);
+  const [loadingCrossover, setLoadingCrossover] = useState(false);
 
   // On-call tab state (renamed "Phone Book" in the nav — the on-call
   // roster plus the officer-managed non-staff numbers below it)
@@ -237,6 +253,100 @@ export default function StaffRosterView({ departmentId, staffId }) {
 
     loadWeek();
   }, [activeTab, staffId, departmentId, currentDate]);
+
+  // Load starred colleagues
+  useEffect(() => {
+    if (activeTab !== 'week' || !staffId) return;
+
+    const loadStarred = async () => {
+      const { data, error: starredError } = await getStarredStaff(staffId);
+      if (starredError) {
+        setError(`Failed to load starred colleagues: ${starredError.message}`);
+        return;
+      }
+      setStarredStaff(data);
+    };
+
+    loadStarred();
+  }, [activeTab, staffId]);
+
+  const handleToggleStar = async (targetStaffId) => {
+    setStarringError(null);
+    const existing = starredStaff.find(f => f.starred_staff_id === targetStaffId);
+    try {
+      if (existing) {
+        const { error: unstarError } = await unstarStaffMember(existing.favorite_id);
+        if (unstarError) throw unstarError;
+        setStarredStaff(prev => prev.filter(f => f.favorite_id !== existing.favorite_id));
+      } else {
+        const { data, error: starError } = await starStaffMember(staffId, targetStaffId);
+        if (starError) throw starError;
+        setStarredStaff(prev => [...prev, data]);
+      }
+    } catch (err) {
+      setStarringError(err.message);
+    }
+  };
+
+  const handleToggleExpandStarred = async (colleague) => {
+    if (expandedStarredId === colleague.starred_staff_id) {
+      setExpandedStarredId(null);
+      return;
+    }
+
+    setExpandedStarredId(colleague.starred_staff_id);
+    setLoadingColleagueWeek(true);
+    try {
+      const weekStart = getMondayOfWeek(currentDate);
+      const { data, error: weekError } = await getStaffAssignmentsForWeek(colleague.starred_staff_id, weekStart);
+      if (weekError) throw weekError;
+      setColleagueWeekAssignments(data);
+    } catch (err) {
+      setError(`Failed to load ${colleague.staff?.name}'s week: ${err.message}`);
+    } finally {
+      setLoadingColleagueWeek(false);
+    }
+  };
+
+  const handleOpenCrossover = async (colleague) => {
+    setCrossoverStaff(colleague);
+    setCrossoverDays(null);
+    setLoadingCrossover(true);
+    try {
+      const weekStart = getMondayOfWeek(currentDate);
+      const [myOffRes, colleagueWeekRes, colleagueOffRes] = await Promise.all([
+        getStaffAvailability(departmentId, weekStart),
+        getStaffAssignmentsForWeek(colleague.starred_staff_id, weekStart),
+        getStaffOffDays(colleague.starred_staff_id, weekStart),
+      ]);
+      if (myOffRes.error) throw myOffRes.error;
+      if (colleagueWeekRes.error) throw colleagueWeekRes.error;
+      if (colleagueOffRes.error) throw colleagueOffRes.error;
+
+      // getStaffAvailability queries the whole department but RLS limits a
+      // plain staff member to their own rows — exactly "my availability"
+      // with no extra filtering needed.
+      const myOffDates = new Set(myOffRes.data.filter(a => a.available === false).map(a => a.date));
+      const myWorkingDates = new Set(weekAssignments.map(a => a.date));
+      const colleagueWorkingDates = new Set(colleagueWeekRes.data.map(a => a.date));
+      const colleagueOffDates = new Set(colleagueOffRes.data);
+
+      const days = Array.from({ length: 7 }, (_, i) => {
+        const d = new Date(weekStart);
+        d.setDate(d.getDate() + i);
+        const dateStr = toLocalDateStr(d);
+        let status = null;
+        if (myWorkingDates.has(dateStr) && colleagueWorkingDates.has(dateStr)) status = 'working';
+        else if (myOffDates.has(dateStr) && colleagueOffDates.has(dateStr)) status = 'off';
+        return { dateStr, label: SETTINGS_DAY_LABELS[d.getDay()], status };
+      });
+      setCrossoverDays(days);
+    } catch (err) {
+      setError(`Failed to load crossover: ${err.message}`);
+    } finally {
+      setLoadingCrossover(false);
+    }
+  };
 
   // Load on-call roster
   useEffect(() => {
@@ -936,6 +1046,71 @@ export default function StaffRosterView({ departmentId, staffId }) {
               </div>
             </div>
 
+            {starredStaff.length > 0 && (
+              <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
+                <p className="text-xs font-semibold text-gray-600 uppercase mb-3">Starred Colleagues</p>
+                <div className="space-y-2">
+                  {starredStaff.map(colleague => (
+                    <div key={colleague.favorite_id} className="border border-gray-200 rounded-lg">
+                      <div className="flex items-center justify-between gap-2 p-3">
+                        <button
+                          onClick={() => handleToggleExpandStarred(colleague)}
+                          className="flex-1 text-left flex items-center gap-2"
+                        >
+                          <ChevronDown
+                            size={16}
+                            className={`text-gray-400 transition-transform ${expandedStarredId === colleague.starred_staff_id ? 'rotate-180' : ''}`}
+                          />
+                          <span className="font-medium text-gray-900">{colleague.staff?.name}</span>
+                        </button>
+                        <button
+                          onClick={() => handleOpenCrossover(colleague)}
+                          title="Compare this week"
+                          className="flex items-center gap-1 px-2 py-1 bg-purple-100 hover:bg-purple-200 text-purple-900 text-xs font-medium rounded-lg transition flex-shrink-0"
+                        >
+                          <Shuffle size={14} /> Crossover
+                        </button>
+                      </div>
+
+                      {expandedStarredId === colleague.starred_staff_id && (
+                        <div className="border-t border-gray-100 p-3">
+                          {loadingColleagueWeek ? (
+                            <div className="text-center py-4">
+                              <Loader size={20} className="text-blue-600 animate-spin mx-auto" />
+                            </div>
+                          ) : colleagueWeekAssignments.length === 0 ? (
+                            <p className="text-xs text-gray-500">No assignments this week</p>
+                          ) : (
+                            <div className="space-y-2">
+                              {(() => {
+                                const byDate = new Map();
+                                colleagueWeekAssignments.forEach((assignment) => {
+                                  if (!byDate.has(assignment.date)) byDate.set(assignment.date, []);
+                                  byDate.get(assignment.date).push(assignment);
+                                });
+                                return Array.from(byDate.entries()).map(([date, assignments]) => (
+                                  <div key={date}>
+                                    <p className="text-xs font-semibold text-gray-600 uppercase">
+                                      {new Date(date).toLocaleDateString('en-AU', { weekday: 'short', month: 'short', day: 'numeric' })}
+                                    </p>
+                                    {assignments.map((assignment) => (
+                                      <p key={assignment.assignment_id} className="text-sm text-gray-700">
+                                        {assignment.locations?.name} — {assignment.shifts?.name} ({assignment.shifts?.start_time?.slice(0, 5)}-{assignment.shifts?.end_time?.slice(0, 5)})
+                                      </p>
+                                    ))}
+                                  </div>
+                                ));
+                              })()}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {loadingWeek ? (
               <div className="text-center py-8">
                 <Loader size={32} className="text-blue-600 animate-spin mx-auto mb-2" />
@@ -1601,13 +1776,38 @@ export default function StaffRosterView({ departmentId, staffId }) {
                 <h2 className="text-2xl font-bold text-gray-900">{selectedSearchResult.name}</h2>
                 <p className="text-sm text-gray-600 capitalize">{selectedSearchResult.rank}</p>
               </div>
-              <button
-                onClick={() => setSelectedSearchResult(null)}
-                className="p-1 hover:bg-gray-100 rounded-lg"
-              >
-                <X size={20} />
-              </button>
+              <div className="flex items-center gap-1">
+                {selectedSearchResult.staff_id !== staffId && (
+                  <button
+                    onClick={() => handleToggleStar(selectedSearchResult.staff_id)}
+                    title={
+                      starredStaff.some(f => f.starred_staff_id === selectedSearchResult.staff_id)
+                        ? 'Remove from starred'
+                        : starredStaff.length >= 10
+                          ? 'You can only star up to 10 people'
+                          : 'Star — shows under your Week tab'
+                    }
+                    disabled={!starredStaff.some(f => f.starred_staff_id === selectedSearchResult.staff_id) && starredStaff.length >= 10}
+                    className="p-1 hover:bg-yellow-50 rounded-lg disabled:opacity-30"
+                  >
+                    <Star
+                      size={22}
+                      className={starredStaff.some(f => f.starred_staff_id === selectedSearchResult.staff_id) ? 'fill-yellow-400 text-yellow-500' : 'text-gray-300'}
+                    />
+                  </button>
+                )}
+                <button
+                  onClick={() => setSelectedSearchResult(null)}
+                  className="p-1 hover:bg-gray-100 rounded-lg"
+                >
+                  <X size={20} />
+                </button>
+              </div>
             </div>
+
+            {starringError && (
+              <p className="text-xs text-red-700 mb-4">{starringError}</p>
+            )}
 
             {selectedSearchResult.phone && (
               <a href={`tel:${selectedSearchResult.phone}`} className="block bg-blue-50 hover:bg-blue-100 rounded-lg p-4 mb-6 transition">
@@ -1646,6 +1846,70 @@ export default function StaffRosterView({ departmentId, staffId }) {
             <button
               onClick={() => setSelectedSearchResult(null)}
               className="w-full bg-gray-100 hover:bg-gray-200 text-gray-900 font-medium py-2 rounded-lg"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Crossover Modal — this week's working-together / both-off days
+          against a starred colleague. */}
+      {crossoverStaff && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-sm">
+            <div className="flex justify-between items-start mb-4">
+              <div>
+                <h2 className="text-xl font-bold text-gray-900">Crossover</h2>
+                <p className="text-sm text-gray-600">You &amp; {crossoverStaff.staff?.name} — this week</p>
+              </div>
+              <button
+                onClick={() => setCrossoverStaff(null)}
+                className="p-1 hover:bg-gray-100 rounded-lg"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {loadingCrossover ? (
+              <div className="text-center py-8">
+                <Loader size={32} className="text-blue-600 animate-spin mx-auto" />
+              </div>
+            ) : crossoverDays && (
+              <>
+                <div className="grid grid-cols-7 gap-1 mb-4">
+                  {crossoverDays.map(day => (
+                    <div
+                      key={day.dateStr}
+                      title={day.status === 'working' ? 'Working together' : day.status === 'off' ? 'Both off' : ''}
+                      className={`aspect-square flex items-center justify-center rounded-lg text-xs font-bold border-2 ${
+                        day.status === 'working'
+                          ? 'bg-green-100 border-green-500 text-green-800'
+                          : day.status === 'off'
+                            ? 'bg-gray-200 border-gray-400 text-gray-700'
+                            : 'bg-white border-gray-200 text-gray-300'
+                      }`}
+                    >
+                      {day.label.slice(0, 2)}
+                    </div>
+                  ))}
+                </div>
+                <div className="space-y-1 text-sm">
+                  <p className="text-gray-700">
+                    <span className="inline-block w-3 h-3 rounded bg-green-100 border-2 border-green-500 mr-2 align-middle" />
+                    Working together: {crossoverDays.filter(d => d.status === 'working').map(d => d.label).join(', ') || 'none'}
+                  </p>
+                  <p className="text-gray-700">
+                    <span className="inline-block w-3 h-3 rounded bg-gray-200 border-2 border-gray-400 mr-2 align-middle" />
+                    Both off: {crossoverDays.filter(d => d.status === 'off').map(d => d.label).join(', ') || 'none'}
+                  </p>
+                </div>
+              </>
+            )}
+
+            <button
+              onClick={() => setCrossoverStaff(null)}
+              className="w-full mt-6 bg-gray-100 hover:bg-gray-200 text-gray-900 font-medium py-2 rounded-lg"
             >
               Close
             </button>
