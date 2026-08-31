@@ -17,7 +17,10 @@
 
 BEGIN;
 
--- Supersede the earlier draft, if it was ever run.
+-- Supersede the earlier draft, if it was ever run — staff.rank's FK has to
+-- come off staff_ranks before that table can be dropped (confirmed
+-- 2026-08-31: it was run once, before rank_supervision_rules was found).
+ALTER TABLE staff DROP CONSTRAINT IF EXISTS staff_rank_fkey;
 DROP TABLE IF EXISTS staff_ranks;
 
 ALTER TABLE rank_supervision_rules
