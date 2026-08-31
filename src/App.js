@@ -265,7 +265,7 @@ function App() {
 
       <div className="pt-16">
         {effectiveView === 'officer' ? (
-          <OfficerRosterView departmentId={departmentId} staffId={staffId} topBarActionsRef={topBarActionsRef} />
+          <OfficerRosterView departmentId={departmentId} staffId={staffId} topBarActionsRef={topBarActionsRef} isSuperAdmin={isSuperAdmin} />
         ) : (
           <StaffApp departmentId={departmentId} staffId={staffId} />
         )}

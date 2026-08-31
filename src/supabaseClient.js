@@ -3220,6 +3220,29 @@ export async function updateDepartmentCoffeePlace(departmentId, coffeePlaceName,
   }
 }
 
+// Which Excel roster layout this department's Import tab uses (see
+// migrations/2026-09-01_department_roster_import_format.sql) — a plain
+// department setting, changed only by a super-admin from
+// RosterExcelImportTab.jsx, since a department's own officers have no
+// reason to see or pick a format other than their own.
+export async function updateDepartmentRosterImportFormat(departmentId, format) {
+  console.log('updateDepartmentRosterImportFormat called', departmentId, format);
+
+  try {
+    const { data, error } = await supabase
+      .from('departments')
+      .update({ roster_import_format: format })
+      .eq('department_id', departmentId)
+      .select()
+      .single();
+
+    return { data, error };
+  } catch (err) {
+    console.error('updateDepartmentRosterImportFormat error:', err);
+    return { data: null, error: err };
+  }
+}
+
 // Morning/Afternoon/Night boundary times (see
 // migrations/2026-08-31_department_session_times.sql and
 // shiftSessionUtils.js's getSessionGroups/getDepartmentSessionBoundaries).

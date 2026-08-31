@@ -99,7 +99,7 @@ const ALLOCATION_STATUS_STYLES = {
 };
 
 // eslint-disable-next-line no-unused-vars -- staffId (the signed-in officer's own staff_id, now known via App.js) is threaded through for upcoming self-service/audit features; not consumed internally yet.
-export default function OfficerRosterView({ departmentId: departmentIdProp, staffId, topBarActionsRef } = {}) {
+export default function OfficerRosterView({ departmentId: departmentIdProp, staffId, topBarActionsRef, isSuperAdmin = false } = {}) {
   const departmentId = departmentIdProp || process.env.REACT_APP_DEPARTMENT_ID;
 
   // Copy Last Week's Activities / + Add Activity portal into App.js's fixed
@@ -4402,12 +4402,15 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
             <CollapsibleSection title="Excel Roster Import">
               <RosterExcelImportTab
                 departmentId={departmentId}
+                department={refData.department}
                 staffList={refData.staff}
                 locations={refData.locations}
                 activities={refData.activities}
                 leaveTypes={refData.leaveTypes}
                 staffRanks={refData.staffRanks}
                 onStaffChanged={refreshStaffList}
+                isSuperAdmin={isSuperAdmin}
+                onDepartmentChanged={(patch) => setRefData(prev => ({ ...prev, department: { ...prev.department, ...patch } }))}
               />
             </CollapsibleSection>
 

@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { AlertCircle, Loader, Upload } from 'lucide-react';
-import { importRosterWeek, createStaff, updateStaffFTE } from './supabaseClient';
+import { importRosterWeek, createStaff, updateStaffFTE, updateDepartmentRosterImportFormat } from './supabaseClient';
 import { getWeekDateRanges, parseRosterWeek } from './rosterExcelImport';
 import { getEdSheetNames, getEdWeekDateRanges, parseEdWeek, getEdStaffRoster } from './edRosterExcelImport';
 
@@ -16,13 +16,43 @@ const FORMATS = [
 // A future department with yet another layout needs its own parser module
 // added here the same way, not a rewrite of this component.
 //
+// Which format applies is a per-department setting (departments.
+// roster_import_format — migrations/2026-09-01_department_roster_import_
+// format.sql), not a free choice every officer sees: a department only
+// ever uses its own layout, so the picker is hidden for everyone except a
+// super-admin, who sets it once when onboarding a department.
+//
 // Always runs a dry run first — nothing is written to Supabase until the
 // officer reviews that report and explicitly confirms. Re-running is
 // safe: assignStaffFortnight (which the real write goes through) already
 // joins an existing card instead of duplicating it, and a leave day just
 // re-marks the same availability row.
-export default function RosterExcelImportTab({ departmentId, staffList, locations, activities, leaveTypes, staffRanks = [], onStaffChanged }) {
-  const [format, setFormat] = useState('classic');
+export default function RosterExcelImportTab({ departmentId, department, staffList, locations, activities, leaveTypes, staffRanks = [], onStaffChanged, isSuperAdmin = false, onDepartmentChanged }) {
+  const [format, setFormat] = useState(() => department?.roster_import_format || 'classic');
+  const [savingFormat, setSavingFormat] = useState(false);
+
+  // Keeps format in sync if `department` loads/changes after this
+  // component's first render (e.g. Settings opened before initializeDepartment
+  // finishes) — a super-admin's own in-progress dropdown pick still wins
+  // once it round-trips back through onDepartmentChanged, since that
+  // updates department.roster_import_format to the same value.
+  useEffect(() => {
+    if (department?.roster_import_format) setFormat(department.roster_import_format);
+  }, [department?.roster_import_format]);
+
+  const handleSuperAdminFormatChange = async (nextFormat) => {
+    handleFormatChange(nextFormat);
+    setSavingFormat(true);
+    try {
+      const { error: saveError } = await updateDepartmentRosterImportFormat(departmentId, nextFormat);
+      if (saveError) throw saveError;
+      if (onDepartmentChanged) onDepartmentChanged({ roster_import_format: nextFormat });
+    } catch (err) {
+      setError(`Failed to save this department's roster format: ${err.message}`);
+    } finally {
+      setSavingFormat(false);
+    }
+  };
   const [workbook, setWorkbook] = useState(null);
   const [fileName, setFileName] = useState('');
   const [sheetNames, setSheetNames] = useState([]);
@@ -180,15 +210,25 @@ export default function RosterExcelImportTab({ departmentId, staffList, location
     <div>
       <div className="mb-4">
         <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Roster format</label>
-        <select
-          value={format}
-          onChange={(e) => handleFormatChange(e.target.value)}
-          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-        >
-          {FORMATS.map(f => (
-            <option key={f.value} value={f.value}>{f.label}</option>
-          ))}
-        </select>
+        {isSuperAdmin ? (
+          <>
+            <select
+              value={format}
+              onChange={(e) => handleSuperAdminFormatChange(e.target.value)}
+              disabled={savingFormat}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm disabled:opacity-50"
+            >
+              {FORMATS.map(f => (
+                <option key={f.value} value={f.value}>{f.label}</option>
+              ))}
+            </select>
+            <p className="text-xs text-gray-500 mt-1">Super-admin only — this sets which format this department always uses, for every officer.</p>
+          </>
+        ) : (
+          <p className="px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 text-gray-700">
+            {FORMATS.find(f => f.value === format)?.label || format}
+          </p>
+        )}
       </div>
 
       {error && (
