@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { AlertCircle, Loader, CheckCircle2, CircleDashed } from 'lucide-react';
 import { getStaffList, inviteStaff, updateStaffRole, generateTempPassword, supabase } from './supabaseClient';
-import { RANK_OPTIONS } from './StaffAvailabilityTab';
 
 const ROLE_OPTIONS = [
   { value: 'staff', label: 'Staff' },
@@ -14,14 +13,14 @@ const ROLE_OPTIONS = [
 // on staff who already exist) — this tab is about linking a `staff` row to
 // an actual auth account, a different concern with its own failure modes
 // (invite email delivery, "already has an account", role assignment).
-export default function StaffAccountsTab({ departmentId, refreshKey }) {
+export default function StaffAccountsTab({ departmentId, refreshKey, staffRanks = [] }) {
   const [staff, setStaff] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
-  const [rank, setRank] = useState('consultant');
+  const [rank, setRank] = useState('');
   const [role, setRole] = useState('staff');
   const [inviting, setInviting] = useState(false);
   const [inviteError, setInviteError] = useState(null);
@@ -73,7 +72,7 @@ export default function StaffAccountsTab({ departmentId, refreshKey }) {
 
   const handleInvite = async (e) => {
     e.preventDefault();
-    if (!name.trim() || !email.trim()) return;
+    if (!name.trim() || !email.trim() || !rank) return;
 
     setInviting(true);
     setInviteError(null);
@@ -85,7 +84,7 @@ export default function StaffAccountsTab({ departmentId, refreshKey }) {
       setInviteSuccess(data?.invited ? `Invite sent to ${email.trim()}.` : `${email.trim()} already has an account — linked to this department.`);
       setName('');
       setEmail('');
-      setRank('consultant');
+      setRank('');
       setRole('staff');
       loadStaff();
     } catch (err) {
@@ -228,10 +227,12 @@ export default function StaffAccountsTab({ departmentId, refreshKey }) {
           <select
             value={rank}
             onChange={(e) => setRank(e.target.value)}
+            required
             className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
           >
-            {RANK_OPTIONS.map(r => (
-              <option key={r.value} value={r.value}>{r.label}</option>
+            <option value="">— Select a rank —</option>
+            {staffRanks.map(r => (
+              <option key={r.rule_id} value={r.rank}>{r.rank}</option>
             ))}
           </select>
           <select
@@ -248,9 +249,13 @@ export default function StaffAccountsTab({ departmentId, refreshKey }) {
         {inviteError && <p className="text-sm text-red-700">{inviteError}</p>}
         {inviteSuccess && <p className="text-sm text-green-700">{inviteSuccess}</p>}
 
+        {staffRanks.length === 0 && (
+          <p className="text-xs text-amber-700">Add a rank in Settings → Ranks before inviting new staff.</p>
+        )}
+
         <button
           type="submit"
-          disabled={inviting}
+          disabled={inviting || !rank}
           className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-medium rounded-lg transition text-sm flex items-center justify-center gap-2"
         >
           {inviting ? <Loader size={16} className="animate-spin" /> : null}

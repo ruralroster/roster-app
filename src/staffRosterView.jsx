@@ -27,7 +27,6 @@ import {
   signOut,
 } from './supabaseClient';
 import CollapsibleSection from './CollapsibleSection';
-import { RANK_OPTIONS } from './StaffAvailabilityTab';
 import CoffeePicker from './CoffeePicker';
 import EditableCell from './EditableCell';
 import { getSessionGroups, SESSION_GROUP_ORDER, SESSION_GROUP_LABELS } from './shiftSessionUtils';
@@ -56,7 +55,19 @@ const COFFEE_SESSION_LABELS = { morning: 'Morning', afternoon: 'Afternoon', nigh
 // logic in supabaseClient.js) — showing it next to a colleague's name read
 // as their rank but wasn't one (an Intern shows role: 'registrar'). This is
 // the real rank, from the joined staff row.
-const RANK_LABEL = Object.fromEntries(RANK_OPTIONS.map(r => [r.value, r.label]));
+//
+// Ranks are now a free-text, per-department list (see
+// migrations/2026-08-31_staff_ranks.sql and Settings → Ranks) — an officer
+// types the display text directly (e.g. "TS4"), so it needs no lookup.
+// This map only exists to pretty-print the handful of snake_case values
+// every department was seeded with before that change.
+const RANK_LABEL = {
+  consultant: 'Consultant',
+  fellow: 'Fellow',
+  advanced_trainee: 'Advanced Trainee',
+  basic_trainee: 'Basic Trainee',
+  intern: 'Intern',
+};
 
 const toDateStr = toLocalDateStr;
 

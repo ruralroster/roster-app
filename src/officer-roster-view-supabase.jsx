@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import StaffProfilesTab from './StaffProfilesTab';
 import StaffAccountsTab from './StaffAccountsTab';
-import StaffAvailabilityTab, { RANK_OPTIONS } from './StaffAvailabilityTab';
+import StaffAvailabilityTab from './StaffAvailabilityTab';
 import ShiftPatternRulesUI from './ShiftPatternRulesUI';
 import CaseMixReport from './CaseMixReport';
 import FairnessReport from './FairnessReport';
@@ -74,6 +74,12 @@ import { createTheatreActivity,
   applyWeekTemplate,
   getPendingSickReports,
   resolveSickReport,
+  getStaffRanks,
+  createStaffRank,
+  renameStaffRank,
+  setStaffRankSupervision,
+  reorderStaffRanks,
+  deleteStaffRank,
 } from './supabaseClient';
 import { downloadPayrollExcel, getMondayOfWeek } from './payrollExport';
 import { getSessionGroups, SESSION_GROUP_ORDER, SESSION_GROUP_LABELS, SESSION_DEFAULT_TIMES } from './shiftSessionUtils';
@@ -166,6 +172,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     phoneBookEntries: [],
     weekTemplates: [],
     advancedSkills: [],
+    staffRanks: [],
   });
   // Bumped whenever staff are added/removed, so components that fetch their
   // own staff-derived data independently (Case Mix, Fairness, Staff Profiles,
@@ -246,6 +253,14 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   const [editingPhoneBookEntryId, setEditingPhoneBookEntryId] = useState(null);
   const [editPhoneBookLabel, setEditPhoneBookLabel] = useState('');
   const [editPhoneBookPhone, setEditPhoneBookPhone] = useState('');
+
+  // Staff Rank Management State (see migrations/2026-08-31_staff_ranks.sql)
+  const [newRankName, setNewRankName] = useState('');
+  const [newRankRequiresSupervision, setNewRankRequiresSupervision] = useState(true);
+  const [savingRank, setSavingRank] = useState(false);
+  const [rankError, setRankError] = useState(null);
+  const [editingRankId, setEditingRankId] = useState(null);
+  const [editRankName, setEditRankName] = useState('');
 
   // Location Management State. Default hours are optional (blank = "always
   // open", e.g. an Emergency Department) — just a pre-fill offered when
@@ -344,6 +359,27 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     } catch (err) {
       setError(`Failed to refresh staff list: ${err.message}`);
     }
+  };
+
+  const refreshStaffRanks = async () => {
+    if (!departmentId) return;
+    try {
+      const { data, error: fetchError } = await getStaffRanks(departmentId);
+      if (fetchError) throw fetchError;
+      setRefData(prev => ({ ...prev, staffRanks: data }));
+      setError(null);
+    } catch (err) {
+      setError(`Failed to refresh ranks: ${err.message}`);
+    }
+  };
+
+  // Missing entirely (not found in this department's list) defaults to
+  // "requires supervision" — the safer assumption for an unranked/unknown
+  // staff member, matching the same default used server-side (see
+  // assignStaffFortnight in supabaseClient.js).
+  const rankRequiresSupervision = (rankName) => {
+    const row = refData.staffRanks.find(r => r.rank === rankName);
+    return row ? row.requires_supervision : true;
   };
 
   useEffect(() => {
@@ -825,7 +861,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     setFortnightWizardOnCallStaffName(null);
 
     const staff = refData.staff.find(s => s.staff_id === fortnightSelectedStaffId);
-    const isJunior = !!staff && staff.rank !== 'consultant' && staff.rank !== 'fellow';
+    const isJunior = !!staff && rankRequiresSupervision(staff.rank);
     if (isJunior && computeCardsInSessionForJunior(shiftId).length === 0) {
       setFortnightWizardStep('oncall');
       return;
@@ -1299,6 +1335,103 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
       setError(null);
     } catch (err) {
       setError(`Failed to remove phone book entry: ${err.message}`);
+    }
+  };
+
+  // Staff Rank Management Handlers
+  const handleCreateStaffRank = async () => {
+    if (!newRankName.trim() || !departmentId) return;
+
+    setSavingRank(true);
+    try {
+      const { error } = await createStaffRank(departmentId, newRankName.trim(), newRankRequiresSupervision);
+      if (error) throw error;
+
+      await refreshStaffRanks();
+      setNewRankName('');
+      setNewRankRequiresSupervision(true);
+      setRankError(null);
+    } catch (err) {
+      setRankError(`Failed to add rank: ${err.message}`);
+    } finally {
+      setSavingRank(false);
+    }
+  };
+
+  const handleStartEditRank = (rank) => {
+    setEditingRankId(rank.rule_id);
+    setEditRankName(rank.rank);
+  };
+
+  const handleSaveRankName = async () => {
+    if (!editRankName.trim() || !editingRankId) return;
+
+    setSavingRank(true);
+    try {
+      const { error } = await renameStaffRank(editingRankId, editRankName.trim());
+      if (error) throw error;
+
+      await refreshStaffRanks();
+      setEditingRankId(null);
+      setRankError(null);
+    } catch (err) {
+      setRankError(`Failed to rename rank: ${err.message}`);
+    } finally {
+      setSavingRank(false);
+    }
+  };
+
+  const handleToggleRankSupervision = async (rank) => {
+    setSavingRank(true);
+    try {
+      const { error } = await setStaffRankSupervision(rank.rule_id, !rank.requires_supervision);
+      if (error) throw error;
+
+      await refreshStaffRanks();
+      setRankError(null);
+    } catch (err) {
+      setRankError(`Failed to update rank: ${err.message}`);
+    } finally {
+      setSavingRank(false);
+    }
+  };
+
+  const handleMoveRank = async (rank, direction) => {
+    const ordered = [...refData.staffRanks].sort((a, b) => a.sort_order - b.sort_order);
+    const index = ordered.findIndex(r => r.rule_id === rank.rule_id);
+    const swapWith = direction === 'up' ? index - 1 : index + 1;
+    if (swapWith < 0 || swapWith >= ordered.length) return;
+
+    [ordered[index], ordered[swapWith]] = [ordered[swapWith], ordered[index]];
+
+    setSavingRank(true);
+    try {
+      const { error } = await reorderStaffRanks(ordered.map(r => r.rule_id));
+      if (error) throw error;
+
+      await refreshStaffRanks();
+      setRankError(null);
+    } catch (err) {
+      setRankError(`Failed to reorder ranks: ${err.message}`);
+    } finally {
+      setSavingRank(false);
+    }
+  };
+
+  const handleDeleteStaffRank = async (rank) => {
+    if (!window.confirm(`Delete the "${rank.rank}" rank? This only works if no staff member currently holds it.`)) return;
+
+    setSavingRank(true);
+    try {
+      const { error } = await deleteStaffRank(rank.rule_id);
+      if (error) throw error;
+
+      await refreshStaffRanks();
+      setRankError(null);
+    } catch (err) {
+      setRankError(`Failed to delete rank: ${err.message}`);
+    } finally {
+      setSavingRank(false);
     }
   };
 
@@ -2442,7 +2575,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
       // exists at all, handleFortnightPickShift routes to the 'oncall'
       // step instead, letting the officer build a fresh card with an
       // on-call consultant attached.
-      const isJuniorSelectedStaff = !!selectedStaff && selectedStaff.rank !== 'consultant' && selectedStaff.rank !== 'fellow';
+      const isJuniorSelectedStaff = !!selectedStaff && rankRequiresSupervision(selectedStaff.rank);
       const cardsInSessionForJunior = computeCardsInSessionForJunior(fortnightWizardShiftId);
       const onCallPeopleForModalDate = modalDateDutyAssignments.filter(d => d.staff_id);
 
@@ -2465,8 +2598,8 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="">All ranks</option>
-                {RANK_OPTIONS.map(r => (
-                  <option key={r.value} value={r.value}>{r.label}</option>
+                {refData.staffRanks.map(r => (
+                  <option key={r.rule_id} value={r.rank}>{r.rank}</option>
                 ))}
               </select>
 
@@ -3295,7 +3428,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                               </button>
                             );
                           })}
-                          {getRankedStaffOptions(ta.activity_id, s => (s.rank === 'consultant' || s.rank === 'fellow') && !volunteerIds.has(s.staff_id) && !consultantEntries.some(ce => ce.staffId === s.staff_id)).map(s => {
+                          {getRankedStaffOptions(ta.activity_id, s => !rankRequiresSupervision(s.rank) && !volunteerIds.has(s.staff_id) && !consultantEntries.some(ce => ce.staffId === s.staff_id)).map(s => {
                             const { blocked, overridable, blockType, label, fatigueRisk } = getAssignabilityInfo(s.staff_id);
                             const hardBlocked = blocked && !overridable;
                             const restricted = isActivityRestricted(s.staff_id, ta.activity_id);
@@ -3402,7 +3535,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                               </button>
                             );
                           })}
-                          {getRankedStaffOptions(ta.activity_id, s => (s.rank.includes('trainee') || s.rank === 'intern') && !volunteerIds.has(s.staff_id) && !registrarEntries.some(re => re.staffId === s.staff_id)).map(s => {
+                          {getRankedStaffOptions(ta.activity_id, s => rankRequiresSupervision(s.rank) && !volunteerIds.has(s.staff_id) && !registrarEntries.some(re => re.staffId === s.staff_id)).map(s => {
                             const { blocked, overridable, blockType, label, fatigueRisk } = getAssignabilityInfo(s.staff_id);
                             const hardBlocked = blocked && !overridable;
                             const restricted = isActivityRestricted(s.staff_id, ta.activity_id);
@@ -4136,6 +4269,8 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                 locations={refData.locations}
                 activities={refData.activities}
                 leaveTypes={refData.leaveTypes}
+                staffRanks={refData.staffRanks}
+                onStaffChanged={refreshStaffList}
               />
             </CollapsibleSection>
 
@@ -4514,12 +4649,131 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
             </CollapsibleSection>
             </CollapsibleSection>
 
-            {/* Staff Settings Group — Staff and Availability, Staff
+            {/* Staff Settings Group — Ranks, Staff and Availability, Staff
                 Activity Profiles, Staff Accounts */}
             <CollapsibleSection title="Staff Settings">
+            {/* Ranks Section — a prerequisite for adding staff at all (see
+                migrations/2026-08-31_staff_ranks.sql): a staff member's rank
+                must match one of this department's own configured ranks. */}
+            <CollapsibleSection title="Ranks">
+              {rankError && (
+                <div className="mb-4 p-3 bg-red-50 border border-red-300 rounded-lg flex gap-2 items-start">
+                  <AlertCircle size={18} className="text-red-600 flex-shrink-0 mt-0.5" />
+                  <p className="text-sm text-red-700">{rankError}</p>
+                </div>
+              )}
+
+              <div className="mb-4 p-3 border border-gray-200 rounded-lg space-y-2">
+                <input
+                  type="text"
+                  placeholder="Rank name (e.g., 'Basic Trainee (ACRRM, RACGP, CICM, GP)')"
+                  value={newRankName}
+                  onChange={(e) => setNewRankName(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                />
+                <div className="flex gap-2 items-center">
+                  <label className="flex items-center gap-1.5 text-xs text-gray-600">
+                    <input
+                      type="checkbox"
+                      checked={newRankRequiresSupervision}
+                      onChange={(e) => setNewRankRequiresSupervision(e.target.checked)}
+                    />
+                    Requires supervision by a higher rank
+                  </label>
+                  <button
+                    onClick={handleCreateStaffRank}
+                    disabled={savingRank || !newRankName.trim()}
+                    className="ml-auto px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white font-medium rounded-lg transition text-sm"
+                  >
+                    Add
+                  </button>
+                </div>
+              </div>
+
+              {refData.staffRanks.length === 0 ? (
+                <p className="text-sm text-gray-500">No ranks configured yet — staff can't be added until at least one exists.</p>
+              ) : (
+                <div className="space-y-2">
+                  {[...refData.staffRanks].sort((a, b) => a.sort_order - b.sort_order).map((rank, index, sorted) => (
+                    <div key={rank.rule_id} className="p-3 border border-gray-200 rounded-lg flex items-center justify-between gap-2">
+                      {editingRankId === rank.rule_id ? (
+                        <div className="flex flex-wrap gap-2 items-center flex-1">
+                          <input
+                            type="text"
+                            value={editRankName}
+                            onChange={(e) => setEditRankName(e.target.value)}
+                            className="flex-1 min-w-[10rem] px-2 py-1 border border-gray-300 rounded text-sm"
+                          />
+                          <button
+                            onClick={handleSaveRankName}
+                            disabled={savingRank || !editRankName.trim()}
+                            className="px-3 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white font-medium rounded text-xs transition"
+                          >
+                            Save
+                          </button>
+                          <button
+                            onClick={() => setEditingRankId(null)}
+                            className="px-3 py-1 bg-gray-400 hover:bg-gray-500 text-white font-medium rounded text-xs transition"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <>
+                          <div>
+                            <p className="font-semibold text-sm text-gray-900">{rank.rank}</p>
+                            <label className="flex items-center gap-1.5 text-xs text-gray-600 mt-1">
+                              <input
+                                type="checkbox"
+                                checked={rank.requires_supervision}
+                                disabled={savingRank}
+                                onChange={() => handleToggleRankSupervision(rank)}
+                              />
+                              Requires supervision by a higher rank
+                            </label>
+                          </div>
+                          <div className="flex gap-1 items-center">
+                            <button
+                              onClick={() => handleMoveRank(rank, 'up')}
+                              disabled={savingRank || index === 0}
+                              title="Move up"
+                              className="px-2 py-1 bg-gray-100 hover:bg-gray-200 disabled:opacity-30 text-gray-700 font-medium rounded text-xs transition"
+                            >
+                              ↑
+                            </button>
+                            <button
+                              onClick={() => handleMoveRank(rank, 'down')}
+                              disabled={savingRank || index === sorted.length - 1}
+                              title="Move down"
+                              className="px-2 py-1 bg-gray-100 hover:bg-gray-200 disabled:opacity-30 text-gray-700 font-medium rounded text-xs transition"
+                            >
+                              ↓
+                            </button>
+                            <button
+                              onClick={() => handleStartEditRank(rank)}
+                              className="px-3 py-1 bg-blue-100 hover:bg-blue-200 text-blue-900 font-medium rounded text-xs transition"
+                            >
+                              Rename
+                            </button>
+                            <button
+                              onClick={() => handleDeleteStaffRank(rank)}
+                              disabled={savingRank}
+                              className="px-3 py-1 bg-red-100 hover:bg-red-200 disabled:opacity-50 text-red-900 font-medium rounded text-xs transition"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CollapsibleSection>
+
             {/* Staff and Availability Section */}
             <CollapsibleSection title="Staff and Availability">
-              <StaffAvailabilityTab departmentId={departmentId} staffList={refData.staff} leaveTypes={refData.leaveTypes} advancedSkills={refData.advancedSkills} onStaffChanged={refreshStaffList} />
+              <StaffAvailabilityTab departmentId={departmentId} staffList={refData.staff} leaveTypes={refData.leaveTypes} advancedSkills={refData.advancedSkills} staffRanks={refData.staffRanks} onStaffChanged={refreshStaffList} />
             </CollapsibleSection>
 
             {/* Staff Profiles Section */}
@@ -4529,7 +4783,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
 
             {/* Staff Accounts Section */}
             <CollapsibleSection title="Staff Accounts">
-              <StaffAccountsTab departmentId={departmentId} refreshKey={staffVersion} />
+              <StaffAccountsTab departmentId={departmentId} refreshKey={staffVersion} staffRanks={refData.staffRanks} />
             </CollapsibleSection>
             </CollapsibleSection>
 

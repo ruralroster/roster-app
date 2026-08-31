@@ -33,7 +33,7 @@ export async function initializeDepartment(departmentId) {
   console.log('initializeDepartment called with departmentId:', departmentId);
   
   try {
-    const [locRes, activitiesRes, shiftsRes, staffRes, leaveTypesRes, departmentRes, dutyTypesRes, phoneBookRes, weekTemplatesRes, advancedSkillsRes] = await Promise.all([
+    const [locRes, activitiesRes, shiftsRes, staffRes, leaveTypesRes, departmentRes, dutyTypesRes, phoneBookRes, weekTemplatesRes, advancedSkillsRes, staffRanksRes] = await Promise.all([
       supabase
         .from('locations')
         .select('*')
@@ -85,6 +85,11 @@ export async function initializeDepartment(departmentId) {
         .select('*')
         .eq('department_id', departmentId)
         .order('sort_order'),
+      supabase
+        .from('rank_supervision_rules')
+        .select('*')
+        .eq('department_id', departmentId)
+        .order('sort_order'),
     ]);
 
     console.log('Locations:', locRes.data?.length || 0, locRes.error);
@@ -109,7 +114,8 @@ export async function initializeDepartment(departmentId) {
       phoneBookEntries: phoneBookRes.data || [],
       weekTemplates: weekTemplatesRes.data || [],
       advancedSkills: advancedSkillsRes.data || [],
-      errors: [locRes.error, activitiesRes.error, shiftsRes.error, staffRes.error, leaveTypesRes.error, departmentRes.error, dutyTypesRes.error, phoneBookRes.error, weekTemplatesRes.error, advancedSkillsRes.error].filter(Boolean),
+      staffRanks: staffRanksRes.data || [],
+      errors: [locRes.error, activitiesRes.error, shiftsRes.error, staffRes.error, leaveTypesRes.error, departmentRes.error, dutyTypesRes.error, phoneBookRes.error, weekTemplatesRes.error, advancedSkillsRes.error, staffRanksRes.error].filter(Boolean),
     };
   } catch (err) {
     console.error('initializeDepartment error:', err);
@@ -1632,6 +1638,139 @@ export async function updateStaffRank(staffId, rank) {
 }
 
 // ============================================================
+// STAFF RANKS (per-department rank list)
+// ============================================================
+// Built on rank_supervision_rules (department_id, rank, requires_supervision,
+// max_per_consultant, can_share_supervisor — pre-existing, used by the
+// validate_supervision DB function) rather than a new table — see
+// migrations/2026-08-31_staff_ranks.sql. staff.rank stays free text,
+// validated against this table by a composite FK on (department_id, rank);
+// renaming a row here cascades to every staff member holding it (ON UPDATE
+// CASCADE), deleting one is blocked by the DB while anyone still holds it.
+//
+// max_per_consultant/can_share_supervisor aren't exposed in the Ranks
+// Settings UI (only requires_supervision and ordering are) — a new rank
+// gets conservative defaults (1, no sharing) and can be tuned further via
+// SQL if finer supervision-capacity control is needed later.
+
+export async function getStaffRanks(departmentId) {
+  try {
+    const { data, error } = await supabase
+      .from('rank_supervision_rules')
+      .select('*')
+      .eq('department_id', departmentId)
+      .order('sort_order');
+
+    return { data: data || [], error };
+  } catch (err) {
+    console.error('getStaffRanks error:', err);
+    return { data: [], error: err };
+  }
+}
+
+export async function createStaffRank(departmentId, name, requiresSupervision) {
+  try {
+    const trimmed = name.trim();
+    if (!trimmed) throw new Error('Rank name is required');
+
+    const { data: existing, error: existingError } = await supabase
+      .from('rank_supervision_rules')
+      .select('sort_order')
+      .eq('department_id', departmentId)
+      .order('sort_order', { ascending: false })
+      .limit(1);
+    if (existingError) throw existingError;
+
+    const nextSortOrder = existing.length > 0 ? existing[0].sort_order + 1 : 0;
+
+    const { data, error } = await supabase
+      .from('rank_supervision_rules')
+      .insert([{
+        department_id: departmentId,
+        rank: trimmed,
+        sort_order: nextSortOrder,
+        requires_supervision: !!requiresSupervision,
+        max_per_consultant: requiresSupervision ? 1 : null,
+        can_share_supervisor: false,
+      }])
+      .select()
+      .single();
+
+    return { data, error };
+  } catch (err) {
+    return { data: null, error: err };
+  }
+}
+
+// Renaming cascades to every staff.rank holding the old name — see the
+// composite FK's ON UPDATE CASCADE in migrations/2026-08-31_staff_ranks.sql.
+export async function renameStaffRank(ruleId, name) {
+  try {
+    const trimmed = name.trim();
+    if (!trimmed) throw new Error('Rank name is required');
+
+    const { data, error } = await supabase
+      .from('rank_supervision_rules')
+      .update({ rank: trimmed })
+      .eq('rule_id', ruleId)
+      .select();
+
+    return { data, error };
+  } catch (err) {
+    return { data: null, error: err };
+  }
+}
+
+export async function setStaffRankSupervision(ruleId, requiresSupervision) {
+  try {
+    const { data, error } = await supabase
+      .from('rank_supervision_rules')
+      .update({ requires_supervision: !!requiresSupervision })
+      .eq('rule_id', ruleId)
+      .select();
+
+    return { data, error };
+  } catch (err) {
+    return { data: null, error: err };
+  }
+}
+
+// Persists a full reordering — orderedRuleIds is every rule_id for this
+// department in its new display order.
+export async function reorderStaffRanks(orderedRuleIds) {
+  try {
+    await Promise.all(orderedRuleIds.map((ruleId, index) =>
+      supabase.from('rank_supervision_rules').update({ sort_order: index }).eq('rule_id', ruleId)
+    ));
+    return { error: null };
+  } catch (err) {
+    return { error: err };
+  }
+}
+
+// Blocked by the DB (staff.rank's composite FK has no ON DELETE CASCADE)
+// while any staff member still holds this rank — surfaced here as a plain
+// message rather than a raw Postgres foreign-key-violation error.
+export async function deleteStaffRank(ruleId) {
+  try {
+    const { error } = await supabase
+      .from('rank_supervision_rules')
+      .delete()
+      .eq('rule_id', ruleId);
+
+    if (error) {
+      if (error.code === '23503') {
+        return { error: new Error('This rank is still assigned to at least one staff member — reassign them first.') };
+      }
+      throw error;
+    }
+    return { error: null };
+  } catch (err) {
+    return { error: err };
+  }
+}
+
+// ============================================================
 // CASE MIX / ACTIVITY EXPOSURE
 // ============================================================
 
@@ -2372,11 +2511,12 @@ export async function getAllocationStatusForRange(departmentId, startDate, endDa
 const VOLUNTEER_LOOKAHEAD_DAYS = 30;
 
 // Theatre activities in the next 30 days where the role matching this staff
-// member's rank (consultant -> consultant, *trainee*/intern -> registrar;
-// any other rank has nothing to volunteer for) is still unfilled, they're not
-// activity-restricted from it, and they've explicitly marked themselves
-// available that date (an unconfirmed day doesn't count, same rule as
-// officer-side assignment).
+// member's rank (per that department's staff_ranks.requires_supervision:
+// false -> consultant, true -> registrar; a rank not found in the
+// department's list has nothing to volunteer for) is still unfilled,
+// they're not activity-restricted from it, and they've explicitly marked
+// themselves available that date (an unconfirmed day doesn't count, same
+// rule as officer-side assignment).
 export async function getAvailableShiftsForStaff(staffId, departmentId) {
   console.log('getAvailableShiftsForStaff called', staffId, departmentId);
 
@@ -2424,7 +2564,9 @@ export async function getAvailableShiftsForStaff(staffId, departmentId) {
     if (volunteerRes.error) throw volunteerRes.error;
 
     const rank = staffRes.data?.rank || '';
-    const roleForRank = (rank === 'consultant' || rank === 'fellow') ? 'consultant' : (rank.includes('trainee') || rank === 'intern') ? 'registrar' : null;
+    const { data: staffRanks } = await getStaffRanks(departmentId);
+    const rankRow = staffRanks.find(r => r.rank === rank);
+    const roleForRank = !rankRow ? null : rankRow.requires_supervision ? 'registrar' : 'consultant';
     if (!roleForRank) return { data: [], error: null };
 
     const restrictions = staffRes.data?.activity_restrictions || [];
@@ -3186,7 +3328,11 @@ export async function assignStaffFortnight(departmentId, date, staffId, shiftId,
       alreadyOnCard = count > 0;
     }
 
-    const role = (staffRow.rank === 'consultant' || staffRow.rank === 'fellow') ? 'consultant' : 'registrar';
+    const { data: staffRanksForRole } = await getStaffRanks(departmentId);
+    const rankRowForRole = staffRanksForRole.find(r => r.rank === staffRow.rank);
+    // No matching rank (rank not set) defaults to the safer assumption —
+    // needs supervision — rather than silently treating them as senior.
+    const role = (!rankRowForRole || rankRowForRole.requires_supervision) ? 'registrar' : 'consultant';
 
     let data = null;
     if (!alreadyOnCard) {
@@ -3414,7 +3560,8 @@ export async function importRosterWeek(departmentId, people, refLists, { dryRun 
 const DAY_LABELS_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 export async function fetchRosterExportWeek(departmentId, weekStartDate, refLists) {
-  const { activities, leaveTypes, staffList } = refLists;
+  const { activities, leaveTypes, staffList, staffRanks = [] } = refLists;
+  const requiresSupervisionByRank = new Map(staffRanks.map(r => [r.rank, r.requires_supervision]));
 
   const weekStart = new Date(weekStartDate);
   weekStart.setHours(0, 0, 0, 0);
@@ -3503,8 +3650,14 @@ export async function fetchRosterExportWeek(departmentId, weekStartDate, refList
         weekStart: dateStrs[0],
         weekEnd: dateStrs[6],
         dateLabels,
-        consultants: section(r => r === 'consultant' || r === 'fellow'),
-        rmo: section(r => r === 'advanced_trainee' || r === 'basic_trainee'),
+        // "Intern" keeps its own labeled section by that literal name (a
+        // universal enough term to single out regardless of department);
+        // every other rank splits on requires_supervision. A rank not
+        // found in this department's list (shouldn't happen — see the
+        // composite FK in migrations/2026-08-31_staff_ranks.sql) defaults
+        // to the "rmo" section rather than silently vanishing from the export.
+        consultants: section(r => requiresSupervisionByRank.get(r) === false),
+        rmo: section(r => r !== 'intern' && requiresSupervisionByRank.get(r) !== false),
         interns: section(r => r === 'intern'),
       },
       error: null,

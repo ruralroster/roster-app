@@ -42,14 +42,6 @@ const WEEKS_SHOWN = 4;
 const DAYS_SHOWN = WEEKS_SHOWN * 7;
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-export const RANK_OPTIONS = [
-  { value: 'consultant', label: 'Consultant' },
-  { value: 'fellow', label: 'Fellow' },
-  { value: 'advanced_trainee', label: 'Advanced Trainee' },
-  { value: 'basic_trainee', label: 'Basic Trainee' },
-  { value: 'intern', label: 'Intern' },
-];
-
 const toDateStr = toLocalDateStr;
 
 function startOfWeek(date) {
@@ -68,7 +60,7 @@ function getMondayOfWeek(date) {
   return d;
 }
 
-export default function StaffAvailabilityTab({ departmentId, staffList = [], leaveTypes = [], advancedSkills = [], onStaffChanged }) {
+export default function StaffAvailabilityTab({ departmentId, staffList = [], leaveTypes = [], advancedSkills = [], staffRanks = [], onStaffChanged }) {
   const [selectedStaffId, setSelectedStaffId] = useState('');
   const [weekStartDate, setWeekStartDate] = useState(() => startOfWeek(new Date()));
   const [availabilityMap, setAvailabilityMap] = useState({});
@@ -104,7 +96,7 @@ export default function StaffAvailabilityTab({ departmentId, staffList = [], lea
   const [applyingRule, setApplyingRule] = useState(false);
   const [showAddStaff, setShowAddStaff] = useState(false);
   const [newStaffName, setNewStaffName] = useState('');
-  const [newStaffRank, setNewStaffRank] = useState('consultant');
+  const [newStaffRank, setNewStaffRank] = useState('');
   const [newStaffPhone, setNewStaffPhone] = useState('');
   const [savingStaff, setSavingStaff] = useState(false);
 
@@ -408,7 +400,7 @@ export default function StaffAvailabilityTab({ departmentId, staffList = [], lea
   };
 
   const handleCreateStaff = async () => {
-    if (!departmentId || !newStaffName.trim()) return;
+    if (!departmentId || !newStaffName.trim() || !newStaffRank) return;
 
     setSavingStaff(true);
     try {
@@ -420,7 +412,7 @@ export default function StaffAvailabilityTab({ departmentId, staffList = [], lea
 
       setShowAddStaff(false);
       setNewStaffName('');
-      setNewStaffRank('consultant');
+      setNewStaffRank('');
       setNewStaffPhone('');
       setError(null);
     } catch (err) {
@@ -663,7 +655,9 @@ export default function StaffAvailabilityTab({ departmentId, staffList = [], lea
           <div className="flex gap-3">
             <button
               onClick={() => setShowAddStaff(!showAddStaff)}
-              className="text-xs font-semibold text-blue-600 hover:text-blue-800"
+              disabled={staffRanks.length === 0}
+              title={staffRanks.length === 0 ? 'Add a rank in Settings → Ranks first' : undefined}
+              className="text-xs font-semibold text-blue-600 hover:text-blue-800 disabled:opacity-50 disabled:hover:text-blue-600"
             >
               {showAddStaff ? 'Cancel' : '+ Add Staff'}
             </button>
@@ -703,8 +697,9 @@ export default function StaffAvailabilityTab({ departmentId, staffList = [], lea
               onChange={(e) => setNewStaffRank(e.target.value)}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
             >
-              {RANK_OPTIONS.map(r => (
-                <option key={r.value} value={r.value}>{r.label}</option>
+              <option value="">— Select a rank —</option>
+              {staffRanks.map(r => (
+                <option key={r.rule_id} value={r.rank}>{r.rank}</option>
               ))}
             </select>
             <input
@@ -716,7 +711,7 @@ export default function StaffAvailabilityTab({ departmentId, staffList = [], lea
             />
             <button
               onClick={handleCreateStaff}
-              disabled={!newStaffName.trim() || savingStaff}
+              disabled={!newStaffName.trim() || !newStaffRank || savingStaff}
               className="w-full px-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition"
             >
               Add Staff Member
@@ -790,8 +785,8 @@ export default function StaffAvailabilityTab({ departmentId, staffList = [], lea
               disabled={savingRank}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
             >
-              {RANK_OPTIONS.map(r => (
-                <option key={r.value} value={r.value}>{r.label}</option>
+              {staffRanks.map(r => (
+                <option key={r.rule_id} value={r.rank}>{r.rank}</option>
               ))}
             </select>
           </div>
