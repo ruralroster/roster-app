@@ -26,17 +26,19 @@ DROP TABLE IF EXISTS staff_ranks;
 ALTER TABLE rank_supervision_rules
   ADD COLUMN IF NOT EXISTS sort_order integer NOT NULL DEFAULT 0;
 
+-- This table originally had its own CHECK constraint limiting `rank` to
+-- a fixed set of literal values — directly incompatible with the entire
+-- point of this migration (letting an officer create arbitrary rank names
+-- like "TS4" in Settings). Dropped in favor of the composite FK from
+-- staff.rank, which validates against real configured rows instead of a
+-- hardcoded list.
+ALTER TABLE rank_supervision_rules DROP CONSTRAINT IF EXISTS rank_supervision_rules_rank_check;
+
 UPDATE rank_supervision_rules SET rank = 'intern' WHERE rank = 'in_term';
 
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint WHERE conname = 'rank_supervision_rules_department_rank_key'
-  ) THEN
-    ALTER TABLE rank_supervision_rules
-      ADD CONSTRAINT rank_supervision_rules_department_rank_key UNIQUE (department_id, rank);
-  END IF;
-END $$;
+-- The UNIQUE(department_id, rank) constraint the FK below needs already
+-- exists (confirmed 2026-08-31: rank_supervision_rules_department_id_rank_key)
+-- — nothing to add here.
 
 -- Give every department's existing rows a stable order matching the
 -- classic seniority sequence, so Settings → Ranks has something sane to
