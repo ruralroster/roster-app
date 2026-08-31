@@ -61,6 +61,7 @@ import { createTheatreActivity,
   updateStaffAssignmentLeaveCode,
   updateDepartmentPayCentreNumber,
   updateDepartmentCoffeePlace,
+  updateDepartmentSessionTimes,
   getAllStaffAssignmentsForRange,
   getDutyAssignmentsForRange,
   assignStaffFortnight,
@@ -82,7 +83,7 @@ import { createTheatreActivity,
   deleteStaffRank,
 } from './supabaseClient';
 import { downloadPayrollExcel, getMondayOfWeek } from './payrollExport';
-import { getSessionGroups, SESSION_GROUP_ORDER, SESSION_GROUP_LABELS, SESSION_DEFAULT_TIMES } from './shiftSessionUtils';
+import { getSessionGroups, SESSION_GROUP_ORDER, SESSION_GROUP_LABELS, SESSION_DEFAULT_TIMES, DEFAULT_SESSION_BOUNDARIES, getDepartmentSessionBoundaries } from './shiftSessionUtils';
 import { formatFte, DEFAULT_FTE } from './availabilityUtils';
 
 const CALENDAR_WEEKS_SHOWN = 4;
@@ -178,6 +179,12 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   // own staff-derived data independently (Case Mix, Fairness, Staff Profiles,
   // the ranked assignment dropdowns) know to refetch instead of going stale.
   const [staffVersion, setStaffVersion] = useState(0);
+
+  // This department's Morning/Afternoon/Night windows (see
+  // migrations/2026-08-31_department_session_times.sql) — passed into every
+  // getSessionGroups call below so Allocations-section grouping respects
+  // this department's own boundaries instead of the hardcoded default.
+  const sessionBoundaries = getDepartmentSessionBoundaries(refData.department);
 
   // Date-specific Data
   const [theatreActivities, setTheatreActivities] = useState([]);
@@ -311,6 +318,11 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   const [coffeePlaceNameInput, setCoffeePlaceNameInput] = useState('');
   const [coffeePlacePhoneInput, setCoffeePlacePhoneInput] = useState('');
   const [savingCoffeePlace, setSavingCoffeePlace] = useState(false);
+  // Morning/Afternoon/Night boundary times (see
+  // migrations/2026-08-31_department_session_times.sql) — local edit
+  // buffer matching the shape getDepartmentSessionBoundaries returns.
+  const [sessionBoundariesInput, setSessionBoundariesInput] = useState(DEFAULT_SESSION_BOUNDARIES);
+  const [savingSessionTimes, setSavingSessionTimes] = useState(false);
 
   // Leave/Special Code popover state — which assignment is being edited and
   // the in-progress value, following the same "local draft object, confirm
@@ -337,6 +349,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
         setPayCentreNumberInput(result.department?.pay_centre_number || '');
         setCoffeePlaceNameInput(result.department?.coffee_place_name || '');
         setCoffeePlacePhoneInput(result.department?.coffee_place_phone || '');
+        setSessionBoundariesInput(getDepartmentSessionBoundaries(result.department));
         setError(null);
       } catch (err) {
         setError(`Failed to load department: ${err.message}`);
@@ -816,13 +829,13 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   // before the render that would otherwise compute this.
   const computeCardsInSessionForJunior = (shiftId) => {
     const shift = refData.shifts.find(s => s.shift_id === shiftId);
-    const shiftSessionGroups = shift ? getSessionGroups(shift) : [];
+    const shiftSessionGroups = shift ? getSessionGroups(shift, sessionBoundaries) : [];
     if (shiftSessionGroups.length === 0 || !fortnightModalDate) return [];
 
     const dateStr = toLocalDateStr(fortnightModalDate);
     const byCard = new Map();
     fortnightAllocations
-      .filter(a => a.date === dateStr && a.theatre_activity_id && getSessionGroups(a.shifts).some(g => shiftSessionGroups.includes(g)))
+      .filter(a => a.date === dateStr && a.theatre_activity_id && getSessionGroups(a.shifts, sessionBoundaries).some(g => shiftSessionGroups.includes(g)))
       .forEach(a => {
         if (!byCard.has(a.theatre_activity_id)) {
           const activityId = a.theatre_activities?.activity_id;
@@ -1027,11 +1040,11 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     // splits who's assigned across both, showing the same location and
     // activity twice in the same session instead of one card with
     // everyone on it.
-    const newGroups = getSessionGroups({ start_time: newActivityStartTime, end_time: newActivityEndTime });
+    const newGroups = getSessionGroups({ start_time: newActivityStartTime, end_time: newActivityEndTime }, sessionBoundaries);
     const existingCard = theatreActivities.find(ta =>
       ta.location_id === newActivityLocation
       && ta.activity_id === activityId
-      && getSessionGroups({ start_time: ta.start_time, end_time: ta.end_time }).some(g => newGroups.includes(g))
+      && getSessionGroups({ start_time: ta.start_time, end_time: ta.end_time }, sessionBoundaries).some(g => newGroups.includes(g))
     );
     if (existingCard) {
       setError('This activity is already on this location for this session — assign staff on the existing card instead of adding it again.');
@@ -1782,6 +1795,34 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     }
   };
 
+  const handleSaveSessionTimes = async () => {
+    if (!departmentId) return;
+
+    setSavingSessionTimes(true);
+    try {
+      const { error } = await updateDepartmentSessionTimes(departmentId, sessionBoundariesInput);
+      if (error) throw error;
+
+      setRefData(prev => ({
+        ...prev,
+        department: {
+          ...prev.department,
+          morning_start: sessionBoundariesInput.morningStart,
+          morning_end: sessionBoundariesInput.morningEnd,
+          afternoon_start: sessionBoundariesInput.afternoonStart,
+          afternoon_end: sessionBoundariesInput.afternoonEnd,
+          night_start: sessionBoundariesInput.nightStart,
+          night_end: sessionBoundariesInput.nightEnd,
+        },
+      }));
+      setError(null);
+    } catch (err) {
+      setError(`Failed to save session times: ${err.message}`);
+    } finally {
+      setSavingSessionTimes(false);
+    }
+  };
+
   // Week Template Handlers (Settings) — create/delete a template, and
   // manage its entries once selected for editing (editingWeekTemplateId).
   const handleCreateWeekTemplate = async () => {
@@ -2042,7 +2083,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   // to re-check consultant cover, same as any other draft change.
   const cascadeAssignmentAcrossSections = (theatreActivityId, locationId, shiftId, staffId, staffName, role) => {
     const shift = refData.shifts.find(s => s.shift_id === shiftId);
-    const shiftGroups = getSessionGroups(shift);
+    const shiftGroups = getSessionGroups(shift, sessionBoundaries);
     if (shiftGroups.length <= 1) return;
 
     const originActivityId = theatreActivities.find(t => t.theatre_activity_id === theatreActivityId)?.activity_id;
@@ -2051,7 +2092,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     theatreActivities
       .filter(sibling => sibling.location_id === locationId && sibling.activity_id === originActivityId && sibling.theatre_activity_id !== theatreActivityId)
       .forEach(sibling => {
-        const siblingGroups = getSessionGroups({ start_time: sibling.start_time, end_time: sibling.end_time });
+        const siblingGroups = getSessionGroups({ start_time: sibling.start_time, end_time: sibling.end_time }, sessionBoundaries);
         if (!siblingGroups.some(g => shiftGroups.includes(g))) return;
 
         const siblingEntries = getDraftEntries(sibling.theatre_activity_id, sibling.location_id);
@@ -2482,7 +2523,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
       // directly (not the assignment row) so it works for both a regular
       // assignment's shift and a duty type's own configured times.
       const SESSION_LABEL = { morning: 'AM', afternoon: 'PM', night: 'Night' };
-      const sessionLabelsForTimes = (shiftLike) => getSessionGroups(shiftLike).map(g => SESSION_LABEL[g]);
+      const sessionLabelsForTimes = (shiftLike) => getSessionGroups(shiftLike, sessionBoundaries).map(g => SESSION_LABEL[g]);
 
       // One entry per person, further grouped by activity — used by both
       // the grid's abridged day cells and the modal's "Already on this
@@ -3139,7 +3180,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
             {(() => {
               const groupedActivities = { morning: [], afternoon: [], night: [] };
               theatreActivities.forEach(ta => {
-                getSessionGroups({ start_time: ta.start_time, end_time: ta.end_time }).forEach(group => groupedActivities[group].push(ta));
+                getSessionGroups({ start_time: ta.start_time, end_time: ta.end_time }, sessionBoundaries).forEach(group => groupedActivities[group].push(ta));
               });
               // Location, then activity, within each session — so two cards
               // for the same location+activity (e.g. ED's staggered Day/Late
@@ -3165,7 +3206,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                 // So each of this card's renderings (one per group it spans)
                 // only lists the people whose own shift actually covers
                 // *this* groupKey, not everyone on the activity.
-                const entryCoversGroup = (entry) => getSessionGroups(refData.shifts.find(s => s.shift_id === entry.shiftId)).includes(groupKey);
+                const entryCoversGroup = (entry) => getSessionGroups(refData.shifts.find(s => s.shift_id === entry.shiftId), sessionBoundaries).includes(groupKey);
                 const consultantEntries = entries.filter(e => e.role === 'consultant' && entryCoversGroup(e));
                 const registrarEntries = entries.filter(e => e.role === 'registrar' && entryCoversGroup(e));
                 const consultantPending = pendingAssignment?.theatreActivityId === ta.theatre_activity_id && pendingAssignment.role === 'consultant';
@@ -3684,6 +3725,81 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                 </button>
               </div>
               <p className="text-xs text-gray-500 mt-2">Printed in the header row of the payroll Excel export.</p>
+            </CollapsibleSection>
+
+            {/* Session Times Section — Morning/Afternoon/Night boundaries
+                used to group cards into the Day view's Allocations
+                sections and the staff coffee-order filters (see
+                shiftSessionUtils.js). Defaults match every department's
+                current behavior until edited here. */}
+            <CollapsibleSection title="Session Times">
+              <p className="text-xs text-gray-500 mb-3">
+                Controls which "Allocations" section a shift's hours fall under in the Day view, and the coffee-order session filters. A gap between two windows (e.g. Morning ending before Afternoon starts) belongs to neither.
+              </p>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-3 mb-3">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">Morning Start</label>
+                  <input
+                    type="time"
+                    value={sessionBoundariesInput.morningStart}
+                    onChange={(e) => setSessionBoundariesInput(prev => ({ ...prev, morningStart: e.target.value }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">Morning End</label>
+                  <input
+                    type="time"
+                    value={sessionBoundariesInput.morningEnd}
+                    onChange={(e) => setSessionBoundariesInput(prev => ({ ...prev, morningEnd: e.target.value }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">Afternoon Start</label>
+                  <input
+                    type="time"
+                    value={sessionBoundariesInput.afternoonStart}
+                    onChange={(e) => setSessionBoundariesInput(prev => ({ ...prev, afternoonStart: e.target.value }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">Afternoon End</label>
+                  <input
+                    type="time"
+                    value={sessionBoundariesInput.afternoonEnd}
+                    onChange={(e) => setSessionBoundariesInput(prev => ({ ...prev, afternoonEnd: e.target.value }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">Night Start</label>
+                  <input
+                    type="time"
+                    value={sessionBoundariesInput.nightStart}
+                    onChange={(e) => setSessionBoundariesInput(prev => ({ ...prev, nightStart: e.target.value }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">Night End</label>
+                  <input
+                    type="time"
+                    value={sessionBoundariesInput.nightEnd}
+                    onChange={(e) => setSessionBoundariesInput(prev => ({ ...prev, nightEnd: e.target.value }))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">Can wrap past midnight (e.g. 20:00 → 08:00).</p>
+                </div>
+              </div>
+              <button
+                onClick={handleSaveSessionTimes}
+                disabled={savingSessionTimes}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-medium rounded-lg transition text-sm"
+              >
+                {savingSessionTimes ? 'Saving...' : 'Save'}
+              </button>
             </CollapsibleSection>
 
             {/* Shift Properties Group — Shifts, Shift Pattern Rules, Duty

@@ -27,12 +27,34 @@ function toMinutes(t) {
   return Number(h) * 60 + Number(m);
 }
 
-const MORNING_START = toMinutes('09:00');
-const MORNING_END = toMinutes('12:00');
-const AFTERNOON_START = toMinutes('12:30');
-const AFTERNOON_END = toMinutes('18:00');
-const NIGHT_START = toMinutes('20:00');
-const NIGHT_END = toMinutes('08:00');
+// Default windows, used for any department that hasn't customized them
+// (see migrations/2026-08-31_department_session_times.sql — every existing
+// department is seeded with exactly these values, so nothing changes until
+// an officer edits them in Settings) and as the fallback for call sites
+// that don't have a department row handy.
+export const DEFAULT_SESSION_BOUNDARIES = {
+  morningStart: '09:00',
+  morningEnd: '12:00',
+  afternoonStart: '12:30',
+  afternoonEnd: '18:00',
+  nightStart: '20:00',
+  nightEnd: '08:00',
+};
+
+// Reads the six boundary columns off a `departments` row, falling back to
+// the default for any that are null — e.g. a department created before
+// migrations/2026-08-31_department_session_times.sql ran, or `department`
+// not loaded yet.
+export function getDepartmentSessionBoundaries(department) {
+  return {
+    morningStart: department?.morning_start?.slice(0, 5) || DEFAULT_SESSION_BOUNDARIES.morningStart,
+    morningEnd: department?.morning_end?.slice(0, 5) || DEFAULT_SESSION_BOUNDARIES.morningEnd,
+    afternoonStart: department?.afternoon_start?.slice(0, 5) || DEFAULT_SESSION_BOUNDARIES.afternoonStart,
+    afternoonEnd: department?.afternoon_end?.slice(0, 5) || DEFAULT_SESSION_BOUNDARIES.afternoonEnd,
+    nightStart: department?.night_start?.slice(0, 5) || DEFAULT_SESSION_BOUNDARIES.nightStart,
+    nightEnd: department?.night_end?.slice(0, 5) || DEFAULT_SESSION_BOUNDARIES.nightEnd,
+  };
+}
 
 export const SESSION_GROUP_ORDER = ['morning', 'afternoon', 'night'];
 
@@ -80,7 +102,11 @@ function overlapsWindow(shiftSegments, windowStart, windowEnd) {
   return segmentsOverlap(shiftSegments, toSegments(windowStart, windowEnd));
 }
 
-export function getSessionGroups(shift) {
+// `boundaries` defaults to DEFAULT_SESSION_BOUNDARIES for call sites that
+// don't have a department row handy — pass getDepartmentSessionBoundaries
+// (department) wherever one's actually available so a department's own
+// customized windows are respected.
+export function getSessionGroups(shift, boundaries = DEFAULT_SESSION_BOUNDARIES) {
   if (!shift) return [];
   const { start_time, end_time } = shift;
   if (!start_time || !end_time) return [];
@@ -88,9 +114,9 @@ export function getSessionGroups(shift) {
   const shiftSegments = toSegments(toMinutes(start_time), toMinutes(end_time));
   const groups = new Set();
 
-  if (overlapsWindow(shiftSegments, MORNING_START, MORNING_END)) groups.add('morning');
-  if (overlapsWindow(shiftSegments, AFTERNOON_START, AFTERNOON_END)) groups.add('afternoon');
-  if (overlapsWindow(shiftSegments, NIGHT_START, NIGHT_END)) groups.add('night');
+  if (overlapsWindow(shiftSegments, toMinutes(boundaries.morningStart), toMinutes(boundaries.morningEnd))) groups.add('morning');
+  if (overlapsWindow(shiftSegments, toMinutes(boundaries.afternoonStart), toMinutes(boundaries.afternoonEnd))) groups.add('afternoon');
+  if (overlapsWindow(shiftSegments, toMinutes(boundaries.nightStart), toMinutes(boundaries.nightEnd))) groups.add('night');
 
   return SESSION_GROUP_ORDER.filter(g => groups.has(g));
 }

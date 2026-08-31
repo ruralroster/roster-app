@@ -3220,6 +3220,38 @@ export async function updateDepartmentCoffeePlace(departmentId, coffeePlaceName,
   }
 }
 
+// Morning/Afternoon/Night boundary times (see
+// migrations/2026-08-31_department_session_times.sql and
+// shiftSessionUtils.js's getSessionGroups/getDepartmentSessionBoundaries).
+// boundaries is { morningStart, morningEnd, afternoonStart, afternoonEnd,
+// nightStart, nightEnd } — the same shape getDepartmentSessionBoundaries
+// returns, saved back as a full set rather than one field at a time since
+// the Settings form edits all six together.
+export async function updateDepartmentSessionTimes(departmentId, boundaries) {
+  console.log('updateDepartmentSessionTimes called', departmentId, boundaries);
+
+  try {
+    const { data, error } = await supabase
+      .from('departments')
+      .update({
+        morning_start: boundaries.morningStart,
+        morning_end: boundaries.morningEnd,
+        afternoon_start: boundaries.afternoonStart,
+        afternoon_end: boundaries.afternoonEnd,
+        night_start: boundaries.nightStart,
+        night_end: boundaries.nightEnd,
+      })
+      .eq('department_id', departmentId)
+      .select()
+      .single();
+
+    return { data, error };
+  } catch (err) {
+    console.error('updateDepartmentSessionTimes error:', err);
+    return { data: null, error: err };
+  }
+}
+
 // All staff_assignments for a department across a Mon-Sun week, with the
 // staff's name/payroll_number, shift start/end times, and linked activity
 // attached — the data source for the payroll Excel export, and (joined

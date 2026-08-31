@@ -33,7 +33,7 @@ import {
 import CollapsibleSection from './CollapsibleSection';
 import CoffeePicker from './CoffeePicker';
 import EditableCell from './EditableCell';
-import { getSessionGroups, SESSION_GROUP_ORDER, SESSION_GROUP_LABELS } from './shiftSessionUtils';
+import { getSessionGroups, SESSION_GROUP_ORDER, SESSION_GROUP_LABELS, getDepartmentSessionBoundaries } from './shiftSessionUtils';
 import {
   computeAvailabilityCompliance,
   COMPLIANCE_STYLES,
@@ -126,6 +126,11 @@ export default function StaffRosterView({ departmentId, staffId }) {
   const [loadingOnCall, setLoadingOnCall] = useState(false);
   const [phoneBookEntries, setPhoneBookEntries] = useState([]);
   const [department, setDepartment] = useState(null); // for coffee_place_name/coffee_place_phone — see the Coffee Orders modal
+
+  // This department's Morning/Afternoon/Night windows (see
+  // migrations/2026-08-31_department_session_times.sql) — passed into every
+  // getSessionGroups call below.
+  const sessionBoundaries = getDepartmentSessionBoundaries(department);
 
   // Volunteer tab state (nav label "Variation" — this tab covers both
   // picking up unfilled shifts and reporting sick, the two ways someone's
@@ -698,7 +703,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
             sessionGroups: new Set(),
           });
         }
-        getSessionGroups(assignment.shifts).forEach(g => byStaff.get(assignment.staff_id).sessionGroups.add(g));
+        getSessionGroups(assignment.shifts, sessionBoundaries).forEach(g => byStaff.get(assignment.staff_id).sessionGroups.add(g));
       });
 
       const list = [...byStaff.values()]
@@ -778,7 +783,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
       // where — "Allocations" above is the personal-only view.
       const groupedAssignments = { morning: [], afternoon: [], night: [] };
       todayAllAssignments.forEach(assignment => {
-        getSessionGroups(assignment.shifts).forEach(group => groupedAssignments[group].push(assignment));
+        getSessionGroups(assignment.shifts, sessionBoundaries).forEach(group => groupedAssignments[group].push(assignment));
       });
 
       return (
@@ -873,7 +878,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
                     <div className="space-y-3">
                       {todayAssignments.map(assignment => {
                         const isExpanded = expandedAllocationId === assignment.assignment_id;
-                        const sessions = getSessionGroups(assignment.shifts);
+                        const sessions = getSessionGroups(assignment.shifts, sessionBoundaries);
                         const colleagues = isExpanded
                           ? Array.from(
                               new Map(
