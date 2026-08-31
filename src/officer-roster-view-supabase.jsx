@@ -2642,11 +2642,23 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                 >
                   <ChevronLeft size={24} />
                 </button>
-                <h1 className="text-lg font-bold text-gray-900 text-center">
-                  {days[0].toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}
-                  {' – '}
-                  {days[13].toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}
-                </h1>
+                <div className="text-center">
+                  <h1 className="text-lg font-bold text-gray-900">
+                    {days[0].toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}
+                    {' – '}
+                    {days[13].toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}
+                  </h1>
+                  <input
+                    type="date"
+                    value={toLocalDateStr(fortnightStart)}
+                    onChange={(e) => {
+                      if (!e.target.value) return;
+                      setFortnightStart(getMondayOfWeek(new Date(`${e.target.value}T00:00:00`)));
+                    }}
+                    title="Jumps to the Monday of that date's week"
+                    className="mt-1 px-2 py-0.5 border border-gray-200 rounded text-xs text-gray-600"
+                  />
+                </div>
                 <button
                   onClick={() => {
                     const d = new Date(fortnightStart);
@@ -3024,6 +3036,15 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                 <div className="text-center">
                   <h1 className="text-2xl font-bold text-gray-900">{formatDate(selectedDate)}</h1>
                   <p className="text-sm text-gray-500">{refData.department?.name || 'Department'} - Rostering Officer</p>
+                  <input
+                    type="date"
+                    value={toLocalDateStr(selectedDate)}
+                    onChange={(e) => {
+                      if (!e.target.value) return;
+                      setSelectedDate(new Date(`${e.target.value}T00:00:00`));
+                    }}
+                    className="mt-1 px-2 py-0.5 border border-gray-200 rounded text-xs text-gray-600"
+                  />
                 </div>
                 <button
                   onClick={() => {

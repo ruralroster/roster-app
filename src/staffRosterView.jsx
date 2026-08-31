@@ -168,11 +168,15 @@ export default function StaffRosterView({ departmentId, staffId }) {
   const [savingActivityName, setSavingActivityName] = useState(null);
   const [savingProfileField, setSavingProfileField] = useState(null);
 
-  // Load staff member info
+  // Load staff member info. staffId can legitimately be null here — a
+  // super-admin's membership in a department they have no real `staff` row
+  // in is synthesized with staff_id: null (see getMyMemberships in
+  // supabaseClient.js) — so this only requires departmentId, and skips the
+  // personal getStaffById lookup when there's no staffId to look up.
   useEffect(() => {
     const init = async () => {
-      if (!staffId || !departmentId) {
-        setError('Staff ID or Department ID not configured');
+      if (!departmentId) {
+        setError('Department ID not configured');
         setLoading(false);
         return;
       }
@@ -182,19 +186,19 @@ export default function StaffRosterView({ departmentId, staffId }) {
         // migrations/2026-08-24_phone_book.sql has been run, the table
         // doesn't exist yet, and the Phone Book tab should just show
         // nothing rather than block loading everything else.
-        const [{ data, error: staffError }, { data: dutyTypesData, error: dutyTypesError }, { data: phoneBookData }, { data: departmentData }] = await Promise.all([
-          getStaffById(staffId),
+        const [staffRes, { data: dutyTypesData, error: dutyTypesError }, { data: phoneBookData }, { data: departmentData }] = await Promise.all([
+          staffId ? getStaffById(staffId) : Promise.resolve({ data: null, error: null }),
           getDutyTypes(departmentId),
           getPhoneBookEntries(departmentId),
           getDepartment(departmentId),
         ]);
-        if (staffError) throw staffError;
+        if (staffRes.error) throw staffRes.error;
         if (dutyTypesError) throw dutyTypesError;
-        setStaffMember(data);
+        setStaffMember(staffRes.data);
         setDutyTypes(dutyTypesData);
         setPhoneBookEntries(phoneBookData || []);
         setDepartment(departmentData || null);
-        setError(null);
+        setError(staffId ? null : 'You have no personal staff record in this department (likely viewing as a super-admin) — showing the department-wide roster only, nothing personal.');
       } catch (err) {
         setError(`Failed to load staff: ${err.message}`);
       } finally {
@@ -205,15 +209,18 @@ export default function StaffRosterView({ departmentId, staffId }) {
     init();
   }, [staffId, departmentId]);
 
-  // Load today's assignments
+  // Load today's assignments. The department-wide fetches (allAssignRes,
+  // dutyRes) don't need a personal staffId, so they still run for a
+  // super-admin with no staff row in this department — only the personal
+  // "my own allocations" fetch is skipped without one.
   useEffect(() => {
-    if (activeTab !== 'day' || !staffId || !departmentId) return;
+    if (activeTab !== 'day' || !departmentId) return;
 
     const loadDay = async () => {
       setLoadingDay(true);
       try {
         const [assignRes, allAssignRes, dutyRes] = await Promise.all([
-          getStaffAssignmentsForStaffDate(staffId, dayViewDate),
+          staffId ? getStaffAssignmentsForStaffDate(staffId, dayViewDate) : Promise.resolve({ data: [], error: null }),
           getStaffAssignmentsForDate(departmentId, dayViewDate),
           getDutyAssignmentsForDate(departmentId, dayViewDate),
         ]);
@@ -781,6 +788,15 @@ export default function StaffRosterView({ departmentId, staffId }) {
               <div>
                 <h1 className="text-2xl font-bold text-gray-900">{formatDate(dayViewDate)}</h1>
                 <p className="text-sm text-gray-500">Your roster</p>
+                <input
+                  type="date"
+                  value={toLocalDateStr(dayViewDate)}
+                  onChange={(e) => {
+                    if (!e.target.value) return;
+                    setDayViewDate(new Date(`${e.target.value}T00:00:00`));
+                  }}
+                  className="mt-1 px-2 py-0.5 border border-gray-200 rounded text-xs text-gray-600"
+                />
                 {error && (
                   <div className="mt-4 p-3 bg-red-50 border border-red-300 rounded-lg flex gap-2 items-start">
                     <AlertCircle size={18} className="text-red-600 flex-shrink-0 mt-0.5" />
@@ -1029,6 +1045,16 @@ export default function StaffRosterView({ departmentId, staffId }) {
               <div>
                 <h1 className="text-2xl font-bold text-gray-900">Week of {formatDateShort(weekStart)}</h1>
                 <p className="text-sm text-gray-500">Your roster for this week</p>
+                <input
+                  type="date"
+                  value={toLocalDateStr(currentDate)}
+                  onChange={(e) => {
+                    if (!e.target.value) return;
+                    setCurrentDate(new Date(`${e.target.value}T00:00:00`));
+                  }}
+                  title="Jumps to that date's week"
+                  className="mt-1 px-2 py-0.5 border border-gray-200 rounded text-xs text-gray-600"
+                />
               </div>
               <div className="flex gap-2">
                 <button
