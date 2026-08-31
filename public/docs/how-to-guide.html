@@ -308,6 +308,9 @@
         <li><a href="#officer-fortnight">Fortnight view</a></li>
         <li><a href="#officer-settings">Settings</a></li>
         <li><a href="#officer-skills">Advanced Skills</a></li>
+        <li><a href="#officer-ranks">Ranks</a></li>
+        <li><a href="#officer-session-times">Session Times</a></li>
+        <li><a href="#officer-import">Excel roster import</a></li>
         <li><a href="#officer-payroll">Payroll export</a></li>
       </ul>
     </div>
@@ -315,6 +318,7 @@
       <span class="group-label">Staff</span>
       <ul>
         <li><a href="#staff-day">Day &amp; Week</a></li>
+        <li><a href="#staff-starred">Starred Colleagues</a></li>
         <li><a href="#staff-phonebook">Phone Book</a></li>
         <li><a href="#staff-variation">Variation</a></li>
         <li><a href="#staff-coffee">Coffee</a></li>
@@ -368,6 +372,7 @@
           <p>A name greyed out in a dropdown means that person isn't confirmed available, or is resting after a night shift — you can still pick them, but you'll be asked to confirm first.</p>
         </div>
         <p>If the activity has a required Advanced Skill configured (see below), the dropdown goes further than greying someone out — anyone without the skill isn't offered at all. See <a href="#officer-skills">Advanced Skills</a>.</p>
+        <p>A date field next to the arrows at the top jumps straight to any date — type or pick one instead of stepping through one day at a time.</p>
       </article>
 
       <article class="topic" id="officer-day-duty">
@@ -390,8 +395,9 @@
         <ol>
           <li>Filter by rank (optional) and select a staff member. Their FTE counter shows how many shifts they're expected to do this fortnight and how many they've already got.</li>
           <li>Click any day cell to open the assignment wizard.</li>
-          <li>Choose a shift, then a location, then an activity. Long shifts that cross a session boundary (e.g. Morning into Afternoon) automatically fill the matching card in the next session too.</li>
+          <li>Choose a shift, then a location, then an activity — if the location only ever allows one activity, that step is skipped and it's picked automatically. Long shifts that cross a session boundary (e.g. Morning into Afternoon) automatically fill the matching card in the next session too.</li>
         </ol>
+        <p>The date field beside the arrows above the grid jumps straight to any date's fortnight (it snaps to that week's Monday).</p>
       </article>
 
       <article class="topic" id="officer-fortnight-junior">
@@ -410,14 +416,49 @@
         <p>Settings is grouped into collapsed sections — tap a heading to open it:</p>
         <ul>
           <li><strong>Department Settings</strong> — pay centre number.</li>
+          <li><strong>Session Times</strong> — the Morning/Afternoon/Night boundary times, see below.</li>
           <li><strong>Shift Properties</strong> — Shifts, Shift Pattern Rules (fatigue rules), Duty Types (on-call slots, their abbreviations, and which Advanced Skill each one requires), Leave Types.</li>
           <li><strong>Week Templates</strong> — the recurring coverage skeleton (see Calendar, above).</li>
           <li><strong>Phone Book</strong> — the Coffee Place number, plus any other numbers staff should be able to tap-to-call (nearest tertiary ED, NUM, etc.).</li>
           <li><strong>Card Properties</strong> — Locations and Activities: which activities are allowed at which location, and (via each one's <strong>Skills</strong> button) which Advanced Skill an activity requires.</li>
           <li><strong>Audit Balance</strong> — Case Mix Report and On-Call &amp; Weekend Fairness, for checking the roster is spreading load evenly.</li>
-          <li><strong>Staff Settings</strong> — Staff and Availability (day-by-day availability, rank, FTE, and which Advanced Skills each person holds), Staff Activity Profiles, and Staff Accounts (inviting people, setting officer vs staff permission, correcting rank).</li>
+          <li><strong>Staff Settings</strong> — Ranks (see below), Staff and Availability (day-by-day availability, rank, FTE, email, and which Advanced Skills each person holds), Staff Activity Profiles, and Staff Accounts (inviting people, setting officer vs staff permission, correcting rank, resending an invite or generating a one-time password).</li>
           <li><strong>Staff Filters</strong> — the Advanced Skill list itself (e.g. Anaesthetics, Obstetrics, Endoscopy) — add, rename, or remove the skills the two sections above reference.</li>
         </ul>
+      </article>
+
+      <article class="topic" id="officer-ranks">
+        <span class="eyebrow">Staff Settings → Ranks</span>
+        <h3>Setting up your rank list</h3>
+        <p>Every department defines its own ranks — there's no fixed Consultant/Fellow/Trainee/Intern list underneath. A brand-new department starts with five common ones already there; add, rename, reorder (↑/↓), or delete from that same screen.</p>
+        <ul>
+          <li>A staff member can't be added until at least one rank exists — set this up before inviting anyone.</li>
+          <li><strong>Requires supervision by a higher rank</strong>, ticked per rank, is what the app checks when deciding whether a junior needs a supervising colleague present (see Fortnight view, above, and the assignment warnings in Day view).</li>
+          <li>Deleting a rank is blocked while any staff member still holds it — reassign them first.</li>
+        </ul>
+      </article>
+
+      <article class="topic" id="officer-session-times">
+        <span class="eyebrow">Department Settings → Session Times</span>
+        <h3>Morning, Afternoon, and Night boundaries</h3>
+        <p>These six times decide which "Allocations" section a shift falls under in Day view, and which shifts show up in the staff Coffee session filters. Set them to match how your department's shifts actually run — a department whose Day shift starts at 07:30 will want Morning starting well before the default 09:00.</p>
+        <p>A gap between two windows (Morning ending before Afternoon starts, for instance) belongs to neither section — an activity scheduled entirely inside that gap won't show under any Allocations heading.</p>
+      </article>
+
+      <article class="topic" id="officer-import">
+        <span class="eyebrow">Settings → Excel Roster Import</span>
+        <h3>Bringing in a roster built outside the app</h3>
+        <ol>
+          <li>Pick the <strong>Roster format</strong> that matches your department's spreadsheet — each department's layout is different, so this isn't automatic.</li>
+          <li>Upload the file. If the format has more than one tab (sheet) per file, a Sheet dropdown appears.</li>
+          <li><strong>Check for Missing Staff</strong> — for a brand-new department, this reads every name off the roster and lists anyone with no staff record yet, with FTE and a suggested rank pre-filled from the sheet. Review, adjust the rank if needed, and <strong>Create Selected Staff</strong>.</li>
+          <li>Pick a week and hit <strong>Dry Run</strong> — this previews exactly what would be written, with nothing actually saved yet. A progress bar shows how far through it's got on a large file.</li>
+          <li>If the dry run looks right, <strong>Write to Roster</strong> does the same thing for real. Repeat per week for the rest of the file.</li>
+        </ol>
+        <div class="callout">
+          <span class="mark">Unmapped codes are never guessed</span>
+          <p>A shift code the importer doesn't recognise shows up as an error in the results list rather than being silently skipped or guessed at — check with whoever built the spreadsheet what it means, then it can be added.</p>
+        </div>
       </article>
 
       <article class="topic" id="officer-skills">
@@ -463,6 +504,21 @@
         <h3>Your roster</h3>
         <p><strong>Day</strong> shows today's allocation front and centre, then Morning/Afternoon/Night sections (collapsed until tapped) for who else is working. Tap the arrow on your own allocation to see who else is at your location for that session.</p>
         <p><strong>Week</strong> lists the current week (Monday to Sunday) as one card per day, with each shift and activity underneath.</p>
+        <p>Both tabs have a date field next to the arrows — type or pick a date to jump straight to it instead of stepping through one day or week at a time.</p>
+      </article>
+
+      <article class="topic" id="staff-starred">
+        <span class="eyebrow">Week tab</span>
+        <h3>Starred Colleagues</h3>
+        <p>Search for a colleague (the search icon in the top bar), open their card, and tap the star to add them — up to 10. They then show in a <strong>Starred Colleagues</strong> list on your Week tab.</p>
+        <ul>
+          <li>Tap a starred name to expand their week's shifts, the same way you'd see your own.</li>
+          <li>Tap <strong>Crossover</strong> next to a name for a 7-day grid comparing this week: green marks a day you're both rostered on, grey marks a day you're both off.</li>
+        </ul>
+        <div class="callout">
+          <span class="mark">What "both off" actually checks</span>
+          <p>Crossover only ever sees which dates someone marked themselves unavailable — never their leave type or the reason — so starring a colleague doesn't expose why they're off, just whether the two of you are free the same day.</p>
+        </div>
       </article>
 
       <article class="topic" id="staff-phonebook">
