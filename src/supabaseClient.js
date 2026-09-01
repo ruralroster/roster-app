@@ -740,6 +740,29 @@ export async function updateLocationAllowedActivities(locationId, activityIds) {
   }
 }
 
+// Whether a junior (any rank flagged requires_supervision in
+// rank_supervision_rules) can be freely rostered to this location without
+// a consultant/on-call — see handleCompleteAllocation's noConsultantConfirm
+// and the Fortnight wizard's on-call routing in
+// officer-roster-view-supabase.jsx, both gated on this flag. Defaults to
+// true (the migration backfills every existing location to true), so every
+// department keeps its current "always needs cover" behavior unless an
+// officer explicitly unchecks it for a specific location.
+export async function updateLocationSupervisionRequirement(locationId, requiresSupervision) {
+  try {
+    const { data, error } = await supabase
+      .from('locations')
+      .update({ requires_supervision: requiresSupervision })
+      .eq('location_id', locationId)
+      .select()
+      .single();
+
+    return { data, error };
+  } catch (err) {
+    return { data: null, error: err };
+  }
+}
+
 // Locations are never hard-deleted, for the same reason as shifts — "delete"
 // sets active=false so it can no longer be picked for a new activity, while
 // existing theatre_activities/staff_assignments there are left completely

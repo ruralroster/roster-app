@@ -42,6 +42,7 @@ import { createTheatreActivity,
   createLocation,
   updateLocation,
   updateLocationAllowedActivities,
+  updateLocationSupervisionRequirement,
   deactivateLocation,
   reactivateLocation,
   createActivityType,
@@ -892,6 +893,14 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   // (location + activity) with that consultant added onto it, on-call
   // ticked, alongside the junior. See handleFortnightConfirmOnCall /
   // handleFortnightPickActivity.
+  //
+  // Skipped if this department has any location flagged
+  // requires_supervision = false (Settings > Locations) — that location
+  // doesn't need this at all, so forcing the on-call detour before the
+  // officer has even picked a location would block the "junior-only
+  // roster" use case entirely. If they end up picking a location that DOES
+  // require supervision anyway, handleCompleteAllocation's own
+  // no-consultant warning still catches it at Complete Allocation time.
   const handleFortnightPickShift = (shiftId) => {
     setFortnightWizardShiftId(shiftId);
     setFortnightWizardOnCallStaffId(null);
@@ -899,7 +908,8 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
 
     const staff = refData.staff.find(s => s.staff_id === fortnightSelectedStaffId);
     const isJunior = !!staff && rankRequiresSupervision(staff.rank);
-    if (isJunior && computeCardsInSessionForJunior(shiftId).length === 0) {
+    const hasUnsupervisedLocation = refData.locations.some(l => l.active !== false && l.requires_supervision === false);
+    if (isJunior && !hasUnsupervisedLocation && computeCardsInSessionForJunior(shiftId).length === 0) {
       setFortnightWizardStep('oncall');
       return;
     }
@@ -1558,6 +1568,22 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     }
   };
 
+  // Auto-saves as soon as the checkbox is toggled — same pattern as
+  // handleUpdateLocationAllowedActivities. See rankRequiresSupervision/
+  // handleCompleteAllocation/handleFortnightPickShift for where this flag
+  // is actually enforced.
+  const handleToggleLocationSupervision = async (locationId, requiresSupervision) => {
+    try {
+      const { data, error } = await updateLocationSupervisionRequirement(locationId, requiresSupervision);
+      if (error) throw error;
+
+      setRefData(prev => ({ ...prev, locations: prev.locations.map(l => l.location_id === locationId ? data : l) }));
+      setError(null);
+    } catch (err) {
+      setError(`Failed to update supervision requirement: ${err.message}`);
+    }
+  };
+
   // Every activity picker that starts from a location (the Fortnight
   // wizard, the Day view's Add Activity dialog, and an existing card's own
   // Activity dropdown) narrows to this — see
@@ -2178,11 +2204,15 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   // DB (by assignment_id) and issues exactly the inserts/updates/deletes
   // needed, rather than blowing away and recreating everything. Warns
   // (non-blocking, needs a second click) if the result has no consultant —
-  // present or on-call both count, only zero consultants trips it.
+  // present or on-call both count, only zero consultants trips it. Skipped
+  // entirely for a location flagged requires_supervision = false (e.g. a
+  // junior-only clinic, or a site with no consultant structure at all) —
+  // see updateLocationSupervisionRequirement/Settings > Locations.
   const handleCompleteAllocation = async (ta, confirmNoConsultant = false) => {
     const entries = getDraftEntries(ta.theatre_activity_id, ta.location_id);
+    const locationRequiresSupervision = refData.locations.find(l => l.location_id === ta.location_id)?.requires_supervision !== false;
 
-    if (!entries.some(e => e.role === 'consultant') && !confirmNoConsultant) {
+    if (locationRequiresSupervision && !entries.some(e => e.role === 'consultant') && !confirmNoConsultant) {
       setNoConsultantConfirm({ theatreActivityId: ta.theatre_activity_id });
       return;
     }
@@ -4694,19 +4724,29 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                       </div>
                     ) : (
                       <>
-                        <p className="font-semibold text-sm text-gray-900">
-                          {loc.name}{loc.active === false && <span className="ml-2 text-xs font-normal text-gray-500">(inactive)</span>}
-                          <span className="ml-2 text-xs font-normal text-gray-500">
-                            {loc.default_start_time && loc.default_end_time
-                              ? `(default ${loc.default_start_time.slice(0, 5)}–${loc.default_end_time.slice(0, 5)})`
-                              : '(always open)'}
-                          </span>
-                          {loc.allowed_activity_ids?.length > 0 && (
-                            <span className="ml-2 text-xs font-normal text-purple-700">
-                              · {loc.allowed_activity_ids.length} activit{loc.allowed_activity_ids.length === 1 ? 'y' : 'ies'} allowed
+                        <div>
+                          <p className="font-semibold text-sm text-gray-900">
+                            {loc.name}{loc.active === false && <span className="ml-2 text-xs font-normal text-gray-500">(inactive)</span>}
+                            <span className="ml-2 text-xs font-normal text-gray-500">
+                              {loc.default_start_time && loc.default_end_time
+                                ? `(default ${loc.default_start_time.slice(0, 5)}–${loc.default_end_time.slice(0, 5)})`
+                                : '(always open)'}
                             </span>
-                          )}
-                        </p>
+                            {loc.allowed_activity_ids?.length > 0 && (
+                              <span className="ml-2 text-xs font-normal text-purple-700">
+                                · {loc.allowed_activity_ids.length} activit{loc.allowed_activity_ids.length === 1 ? 'y' : 'ies'} allowed
+                              </span>
+                            )}
+                          </p>
+                          <label className="flex items-center gap-1.5 text-xs text-gray-600 mt-1">
+                            <input
+                              type="checkbox"
+                              checked={loc.requires_supervision !== false}
+                              onChange={() => handleToggleLocationSupervision(loc.location_id, loc.requires_supervision === false)}
+                            />
+                            Requires senior supervision (junior staff need a consultant/on-call here)
+                          </label>
+                        </div>
                         <div className="flex gap-2">
                           <button
                             onClick={() => setEditingLocationActivitiesId(loc.location_id)}
