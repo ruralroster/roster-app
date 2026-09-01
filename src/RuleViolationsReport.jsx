@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { AlertCircle, Loader, X } from 'lucide-react';
-import { getEdRuleCheckData } from './supabaseClient';
+import { getEdRuleCheckData, getRuleViolationDismissals, dismissRuleViolation } from './supabaseClient';
 import { checkEdRuleViolations, checkEdStaffingLevels } from './edRuleChecks';
 import { toLocalDateStr } from './dateUtils';
 
@@ -23,15 +23,21 @@ function defaultEnd() {
   return toLocalDateStr(d);
 }
 
-export default function RuleViolationsReport({ departmentId }) {
+// onInvestigate(staffId, dateStr): jump to Fortnight view with that person
+// selected and the week containing dateStr on screen. onInvestigateDate
+// (dateStr): jump to Day view for that date — used for staffing-level
+// shortfalls, which have no single person to select.
+export default function RuleViolationsReport({ departmentId, onInvestigate, onInvestigateDate }) {
   const [startDate, setStartDate] = useState(defaultStart);
   const [endDate, setEndDate] = useState(defaultEnd);
   const [violationsByStaff, setViolationsByStaff] = useState(null); // Map staff_id -> violations[]
-  const [staffingViolations, setStaffingViolations] = useState([]); // [{ date, rule, message }]
+  const [staffingViolations, setStaffingViolations] = useState([]); // [{ date, rule, message, key }]
+  const [dismissed, setDismissed] = useState(new Set()); // "staffId|violationKey" ('null' for staffing-level)
   const [staffById, setStaffById] = useState(new Map());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [selectedStaffId, setSelectedStaffId] = useState(null);
+  const [dismissingKey, setDismissingKey] = useState(null);
 
   const runCheck = async () => {
     if (!departmentId || !startDate || !endDate) return;
@@ -39,11 +45,16 @@ export default function RuleViolationsReport({ departmentId }) {
     setLoading(true);
     setError(null);
     try {
-      const { data, error: fetchError } = await getEdRuleCheckData(departmentId, startDate, endDate);
+      const [{ data, error: fetchError }, { data: dismissedSet, error: dismissError }] = await Promise.all([
+        getEdRuleCheckData(departmentId, startDate, endDate),
+        getRuleViolationDismissals(departmentId),
+      ]);
       if (fetchError) throw fetchError;
+      if (dismissError) throw dismissError;
 
       const byId = new Map(data.staff.map(s => [s.staff_id, s]));
       setStaffById(byId);
+      setDismissed(dismissedSet);
       setViolationsByStaff(checkEdRuleViolations(data.assignments, byId));
       setStaffingViolations(checkEdStaffingLevels(data.assignments));
     } catch (err) {
@@ -53,9 +64,32 @@ export default function RuleViolationsReport({ departmentId }) {
     }
   };
 
+  const isDismissed = (staffId, key) => dismissed.has(`${staffId || 'null'}|${key}`);
+
+  const handleDismiss = async (staffId, key) => {
+    setDismissingKey(key);
+    try {
+      const { error: dismissError } = await dismissRuleViolation(departmentId, staffId, key);
+      if (dismissError) throw dismissError;
+      setDismissed(prev => new Set(prev).add(`${staffId || 'null'}|${key}`));
+      setError(null);
+    } catch (err) {
+      setError(`Failed to accept violation: ${err.message}`);
+    } finally {
+      setDismissingKey(null);
+    }
+  };
+
   const staffList = Array.from(staffById.values()).sort((a, b) => a.name.localeCompare(b.name));
   const selectedStaff = selectedStaffId ? staffById.get(selectedStaffId) : null;
-  const selectedViolations = selectedStaffId ? violationsByStaff?.get(selectedStaffId) || [] : [];
+  const selectedViolations = (selectedStaffId ? violationsByStaff?.get(selectedStaffId) || [] : [])
+    .filter(v => !isDismissed(selectedStaffId, v.key));
+  const visibleStaffingViolations = staffingViolations.filter(v => !isDismissed(null, v.key));
+
+  // Recount per-person after dismissals, so a fully-dismissed person's name
+  // goes back to the neutral/non-clickable state.
+  const visibleCountFor = (staffId) => (violationsByStaff?.get(staffId) || []).filter(v => !isDismissed(staffId, v.key)).length;
+  const peopleWithViolations = staffList.filter(p => visibleCountFor(p.staff_id) > 0).length;
 
   return (
     <>
@@ -103,14 +137,33 @@ export default function RuleViolationsReport({ departmentId }) {
         <p className="text-sm text-gray-500">No shifts found in that range.</p>
       )}
 
-      {violationsByStaff && staffingViolations.length > 0 && (
+      {violationsByStaff && visibleStaffingViolations.length > 0 && (
         <div className="mb-4">
           <p className="text-xs font-semibold text-gray-600 uppercase mb-2">Staffing shortfalls</p>
           <div className="space-y-1">
-            {staffingViolations.map((v, i) => (
-              <div key={i} className="p-2 bg-amber-50 border border-amber-200 rounded-lg text-sm">
-                <span className="font-medium text-amber-900">{v.date}</span>
-                <span className="text-gray-700"> — {v.rule}: {v.message}</span>
+            {visibleStaffingViolations.map((v) => (
+              <div key={v.key} className="p-2 bg-amber-50 border border-amber-200 rounded-lg text-sm flex items-center justify-between gap-2">
+                <div>
+                  <span className="font-medium text-amber-900">{v.date}</span>
+                  <span className="text-gray-700"> — {v.rule}: {v.message}</span>
+                </div>
+                <div className="flex gap-1.5 flex-shrink-0">
+                  {onInvestigateDate && (
+                    <button
+                      onClick={() => onInvestigateDate(v.date)}
+                      className="px-2 py-1 bg-blue-100 hover:bg-blue-200 text-blue-900 text-xs font-medium rounded transition"
+                    >
+                      Investigate
+                    </button>
+                  )}
+                  <button
+                    onClick={() => handleDismiss(null, v.key)}
+                    disabled={dismissingKey === v.key}
+                    className="px-2 py-1 bg-gray-100 hover:bg-gray-200 disabled:opacity-50 text-gray-700 text-xs font-medium rounded transition"
+                  >
+                    Accept
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -121,11 +174,11 @@ export default function RuleViolationsReport({ departmentId }) {
         <>
           <p className="text-xs font-semibold text-gray-600 uppercase mb-2">Individual rule violations</p>
           <p className="text-xs text-gray-500 mb-2">
-            {violationsByStaff.size === 0 ? 'No violations found in this range.' : `${violationsByStaff.size} of ${staffList.length} people have at least one violation.`}
+            {peopleWithViolations === 0 ? 'No violations found in this range.' : `${peopleWithViolations} of ${staffList.length} people have at least one violation.`}
           </p>
           <div className="flex flex-wrap gap-2">
             {staffList.map(person => {
-              const count = violationsByStaff.get(person.staff_id)?.length || 0;
+              const count = visibleCountFor(person.staff_id);
               return (
                 <button
                   key={person.staff_id}
@@ -155,10 +208,30 @@ export default function RuleViolationsReport({ departmentId }) {
               </button>
             </div>
             <div className="space-y-3">
-              {selectedViolations.map((v, i) => (
-                <div key={i} className="p-3 bg-red-50 border border-red-200 rounded-lg">
+              {selectedViolations.length === 0 && (
+                <p className="text-sm text-gray-500">All violations for this person have been accepted.</p>
+              )}
+              {selectedViolations.map((v) => (
+                <div key={v.key} className="p-3 bg-red-50 border border-red-200 rounded-lg">
                   <p className="text-xs font-semibold text-red-800 uppercase">{v.rule}</p>
                   <p className="text-sm text-gray-800 mt-0.5">{v.message}</p>
+                  <div className="flex gap-1.5 mt-2">
+                    {onInvestigate && v.dates?.length > 0 && (
+                      <button
+                        onClick={() => onInvestigate(selectedStaffId, v.dates[0])}
+                        className="px-2 py-1 bg-blue-100 hover:bg-blue-200 text-blue-900 text-xs font-medium rounded transition"
+                      >
+                        Investigate
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleDismiss(selectedStaffId, v.key)}
+                      disabled={dismissingKey === v.key}
+                      className="px-2 py-1 bg-gray-100 hover:bg-gray-200 disabled:opacity-50 text-gray-700 text-xs font-medium rounded transition"
+                    >
+                      Accept
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>

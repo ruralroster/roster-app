@@ -4848,7 +4848,18 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                 not generic). */}
             {refData.department?.roster_import_format === 'ed' && (
               <CollapsibleSection title="Rule Violations">
-                <RuleViolationsReport departmentId={departmentId} />
+                <RuleViolationsReport
+                  departmentId={departmentId}
+                  onInvestigate={(staffId, dateStr) => {
+                    setFortnightSelectedStaffId(staffId);
+                    setFortnightStart(getMondayOfWeek(new Date(`${dateStr}T00:00:00`)));
+                    setActiveTab('fortnight');
+                  }}
+                  onInvestigateDate={(dateStr) => {
+                    setSelectedDate(new Date(`${dateStr}T00:00:00`));
+                    setActiveTab('day');
+                  }}
+                />
               </CollapsibleSection>
             )}
             </CollapsibleSection>

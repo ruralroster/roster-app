@@ -106,6 +106,7 @@ function checkPersonViolations(shiftsByDate, rank) {
     const spansFriSun = days.every(d => FRI_SUN.has(d));
     if (!spansMonThu && !spansFriSun) {
       violations.push({
+        key: `night-shape:${block.start}`,
         rule: 'Night shape',
         message: `Night block ${block.start} to ${block.end} isn't confined to Mon-Thu or Fri-Sun`,
         dates: block.dates,
@@ -116,6 +117,7 @@ function checkPersonViolations(shiftsByDate, rank) {
     const workedDuringRest = daysOffNeeded.filter(d => shiftsByDate[d]);
     if (workedDuringRest.length > 0) {
       violations.push({
+        key: `rest-after-nights:${block.end}`,
         rule: 'Rest after nights',
         message: `Rostered on ${workedDuringRest.join(', ')} — fewer than 3 full days off after the night block ending ${block.end}`,
         dates: workedDuringRest,
@@ -127,6 +129,7 @@ function checkPersonViolations(shiftsByDate, rank) {
       const gapDays = Math.round((dateOnly(block.start) - prevStart) / MS_PER_DAY);
       if (gapDays < NIGHT_SPACING_DAYS) {
         violations.push({
+          key: `night-spacing:${block.start}`,
           rule: 'Night spacing',
           message: `Two separate night blocks within ${NIGHT_SPACING_DAYS} days: starting ${nightBlocks[i - 1].start} and ${block.start}`,
           dates: [nightBlocks[i - 1].start, block.start],
@@ -148,6 +151,7 @@ function checkPersonViolations(shiftsByDate, rank) {
       const dShifts = weekShifts.filter(s => s.letter === 'D');
       if (dShifts.length > 1) {
         violations.push({
+          key: `d-cap:${weekDates[0]}`,
           rule: 'D shift weekly cap',
           message: `${dShifts.length} D shifts in the week of ${weekDates[0]} (max 1)`,
           dates: weekDates.filter(d => (shiftsByDate[d] || []).some(s => s.letter === 'D')),
@@ -157,6 +161,7 @@ function checkPersonViolations(shiftsByDate, rank) {
       const eShifts = weekShifts.filter(s => s.letter === 'E' && s.timeCode !== 'Night');
       if (eShifts.length > 1) {
         violations.push({
+          key: `e-cap:${weekDates[0]}`,
           rule: 'E shift weekly cap',
           message: `${eShifts.length} non-night E shifts in the week of ${weekDates[0]} (max 1)`,
           dates: weekDates.filter(d => (shiftsByDate[d] || []).some(s => s.letter === 'E' && s.timeCode !== 'Night')),
@@ -175,9 +180,10 @@ function checkPersonViolations(shiftsByDate, rank) {
       const cShifts = fnShifts.filter(s => s.letter === 'C');
       if (cShifts.length === 0) {
         violations.push({
+          key: `c-min:${fnDates[0]}`,
           rule: 'C shift fortnightly minimum',
           message: `No C shifts in the ${fnLabel} (need at least 1)`,
-          dates: [],
+          dates: [fnDates[0]],
         });
       }
 
@@ -185,18 +191,20 @@ function checkPersonViolations(shiftsByDate, rank) {
         const stShifts = fnShifts.filter(s => s.letter === 'ST');
         if (stShifts.length === 0) {
           violations.push({
+            key: `st-min:${fnDates[0]}`,
             rule: 'ST fortnightly minimum (TS4)',
             message: `No ST shifts in the ${fnLabel} (need at least 1 for TS4)`,
-            dates: [],
+            dates: [fnDates[0]],
           });
         }
       }
 
       if (isLocum && fnShifts.length > 10) {
         violations.push({
+          key: `locum-cap:${fnDates[0]}`,
           rule: 'Locum fortnightly cap',
           message: `${fnShifts.length} shifts in the ${fnLabel} (locums capped at 10)`,
-          dates: [],
+          dates: [fnDates[0]],
         });
       }
     }
@@ -273,28 +281,28 @@ export function checkEdStaffingLevels(assignments) {
       const clinicalCount = earlyLetters.filter(l => THURSDAY_CLINICAL_LETTERS.has(l)).length;
       const teachingCount = earlyLetters.filter(l => l === 'T').length;
       if (clinicalCount < MIN_THURSDAY_CLINICAL) {
-        violations.push({ date, rule: 'Thursday Early — clinical minimum', message: `Only ${clinicalCount} on clinical shifts (A/B/D/E) — need at least ${MIN_THURSDAY_CLINICAL}` });
+        violations.push({ key: `thu-clinical-min:${date}`, date, rule: 'Thursday Early — clinical minimum', message: `Only ${clinicalCount} on clinical shifts (A/B/D/E) — need at least ${MIN_THURSDAY_CLINICAL}` });
       }
       if (teachingCount < MIN_THURSDAY_TEACHING) {
-        violations.push({ date, rule: 'Thursday Early — teaching minimum', message: `Only ${teachingCount} on teaching (0730T) — need at least ${MIN_THURSDAY_TEACHING}` });
+        violations.push({ key: `thu-teaching-min:${date}`, date, rule: 'Thursday Early — teaching minimum', message: `Only ${teachingCount} on teaching (0730T) — need at least ${MIN_THURSDAY_TEACHING}` });
       }
     } else {
       const earlyCount = earlyLetters.filter(l => EARLY_LATE_LETTERS.has(l)).length;
       if (earlyCount < MIN_EARLY) {
-        violations.push({ date, rule: 'Early shift minimum', message: `Only ${earlyCount} reg on Early — need at least ${MIN_EARLY}` });
+        violations.push({ key: `early-min:${date}`, date, rule: 'Early shift minimum', message: `Only ${earlyCount} reg on Early — need at least ${MIN_EARLY}` });
       }
     }
 
     const lateLetters = byDateAndTime.get(`${date}|Evening`) || [];
     const lateCount = lateLetters.filter(l => EARLY_LATE_LETTERS.has(l)).length;
     if (lateCount < MIN_LATE) {
-      violations.push({ date, rule: 'Late shift minimum', message: `Only ${lateCount} reg on Late — need at least ${MIN_LATE}` });
+      violations.push({ key: `late-min:${date}`, date, rule: 'Late shift minimum', message: `Only ${lateCount} reg on Late — need at least ${MIN_LATE}` });
     }
 
     const nightLetters = byDateAndTime.get(`${date}|Night`) || [];
     const nightCount = nightLetters.filter(l => NIGHT_LETTERS.has(l)).length;
     if (nightCount < MIN_NIGHT) {
-      violations.push({ date, rule: 'Night shift minimum', message: `Only ${nightCount} reg on Night — need at least ${MIN_NIGHT}` });
+      violations.push({ key: `night-min:${date}`, date, rule: 'Night shift minimum', message: `Only ${nightCount} reg on Night — need at least ${MIN_NIGHT}` });
     }
   }
 

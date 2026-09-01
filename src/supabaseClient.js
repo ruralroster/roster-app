@@ -2225,6 +2225,41 @@ export async function getEdRuleCheckData(departmentId, startDateStr, endDateStr)
   }
 }
 
+// "Accepting" a rule violation (see migrations/2026-09-01_rule_violation_
+// dismissals.sql) — some violations are a deliberate, reviewed exception
+// rather than a mistake, and re-running the check shouldn't keep
+// resurfacing the same one. staffId is null for a staffing-level (day-
+// wide) violation. Returns a Set of "staffId|violationKey" strings
+// (staffId as the literal string 'null' for staffing-level ones, since a
+// real staff_id string never collides with that) for cheap lookup —
+// RuleViolationsReport.jsx filters against this before rendering.
+export async function getRuleViolationDismissals(departmentId) {
+  try {
+    const { data, error } = await supabase
+      .from('rule_violation_dismissals')
+      .select('staff_id, violation_key')
+      .eq('department_id', departmentId);
+    if (error) throw error;
+
+    return { data: new Set((data || []).map(d => `${d.staff_id || 'null'}|${d.violation_key}`)), error: null };
+  } catch (err) {
+    console.error('getRuleViolationDismissals error:', err);
+    return { data: new Set(), error: err };
+  }
+}
+
+export async function dismissRuleViolation(departmentId, staffId, violationKey) {
+  try {
+    const { error } = await supabase
+      .from('rule_violation_dismissals')
+      .insert([{ department_id: departmentId, staff_id: staffId || null, violation_key: violationKey }]);
+    return { error };
+  } catch (err) {
+    console.error('dismissRuleViolation error:', err);
+    return { error: err };
+  }
+}
+
 // ============================================================
 // FATIGUE / SHIFT-SEQUENCING CONSTRAINTS
 // ============================================================
