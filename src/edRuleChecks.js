@@ -52,6 +52,26 @@ function dayOfWeek(dateStr) {
   return dateOnly(dateStr).getDay(); // 0 Sun .. 6 Sat
 }
 
+// A confirmed real fortnight boundary (2026-09-01) — every fortnight in
+// this department's cycle is exactly 14 days from this date, forever in
+// both directions. Weeks don't need an anchor like this: every Monday is
+// already a real calendar-week boundary no matter which one you start
+// counting from, since there's only one possible Monday grid. Fortnights
+// have two possible phases against any arbitrary start date, so which one
+// is "real" has to come from an actual confirmed date, not be inferred
+// from whatever range happens to get queried — anchoring to the query's
+// own start date (as this used to) silently produced different fortnight
+// splits depending on what date range was checked, for the same roster.
+const FORTNIGHT_ANCHOR = dateOnly('2026-06-08');
+
+// The Monday-aligned 14-day fortnight (per FORTNIGHT_ANCHOR) that dateStr
+// falls in.
+function getFortnightStart(dateStr) {
+  const diffDays = Math.floor((dateOnly(dateStr) - FORTNIGHT_ANCHOR) / MS_PER_DAY);
+  const fortnightIndex = Math.floor(diffDays / 14);
+  return addDays(FORTNIGHT_ANCHOR, fortnightIndex * 14);
+}
+
 // Reconstructs { date, letter, timeCode } from an assignment row shaped
 // like staff_assignments joined with locations(name) and shifts(start_time)
 // — returns null for anything that isn't a recognized ED location/time
@@ -138,8 +158,11 @@ function checkPersonViolations(shiftsByDate, rank) {
     }
   });
 
-  // --- Weekly caps (Monday-anchored calendar weeks): at most one D shift,
-  // at most one non-night E shift.
+  // --- Weekly caps (Monday-anchored calendar weeks — any Monday works
+  // here, since there's only one possible Monday grid, unlike fortnights
+  // below): at most one non-night D shift, at most one non-night E shift.
+  // Confirmed 2026-09-01: "lates counted but not nights" applies to both
+  // — a shift starting 22:00 never counts toward either weekly cap.
   const allDates = Object.keys(shiftsByDate).sort();
   if (allDates.length > 0) {
     const firstMonday = addDays(dateOnly(allDates[0]), -((dayOfWeek(allDates[0]) + 6) % 7));
@@ -148,13 +171,13 @@ function checkPersonViolations(shiftsByDate, rank) {
       const weekDates = Array.from({ length: 7 }, (_, n) => toLocalDateStr(addDays(weekStart, n)));
       const weekShifts = weekDates.flatMap(d => shiftsByDate[d] || []);
 
-      const dShifts = weekShifts.filter(s => s.letter === 'D');
+      const dShifts = weekShifts.filter(s => s.letter === 'D' && s.timeCode !== 'Night');
       if (dShifts.length > 1) {
         violations.push({
           key: `d-cap:${weekDates[0]}`,
           rule: 'D shift weekly cap',
-          message: `${dShifts.length} D shifts in the week of ${weekDates[0]} (max 1)`,
-          dates: weekDates.filter(d => (shiftsByDate[d] || []).some(s => s.letter === 'D')),
+          message: `${dShifts.length} non-night D shifts in the week of ${weekDates[0]} (max 1)`,
+          dates: weekDates.filter(d => (shiftsByDate[d] || []).some(s => s.letter === 'D' && s.timeCode !== 'Night')),
         });
       }
 
@@ -169,10 +192,13 @@ function checkPersonViolations(shiftsByDate, rank) {
       }
     }
 
-    // --- Fortnightly minimums (also Monday-anchored, 14-day blocks): at
-    // least one C shift (nights count), at least one ST shift for TS4,
-    // and a locum's total shift count capped at 10.
-    for (let fnStart = firstMonday; fnStart <= lastDate; fnStart = addDays(fnStart, 14)) {
+    // --- Fortnightly minimums, anchored to FORTNIGHT_ANCHOR (a confirmed
+    // real fortnight boundary) rather than to whatever date range happens
+    // to be queried: at least one C shift (nights count), at least one ST
+    // shift for TS4, and a locum's total shift count capped at 10.
+    const fortnightStarts = [...new Set(allDates.map(d => toLocalDateStr(getFortnightStart(d))))].sort();
+    for (const fnStartStr of fortnightStarts) {
+      const fnStart = dateOnly(fnStartStr);
       const fnDates = Array.from({ length: 14 }, (_, n) => toLocalDateStr(addDays(fnStart, n)));
       const fnShifts = fnDates.flatMap(d => shiftsByDate[d] || []);
       const fnLabel = `fortnight of ${fnDates[0]}`;
