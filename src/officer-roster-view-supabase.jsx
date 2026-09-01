@@ -7,6 +7,7 @@ import ShiftPatternRulesUI from './ShiftPatternRulesUI';
 import CaseMixReport from './CaseMixReport';
 import FairnessReport from './FairnessReport';
 import RuleViolationsReport, { createDefaultRuleCheckState } from './RuleViolationsReport';
+import InvestigateViolationModal from './InvestigateViolationModal';
 import RosterExcelImportTab from './RosterExcelImportTab';
 import RosterExcelExportTab from './RosterExcelExportTab';
 import CollapsibleSection from './CollapsibleSection';
@@ -132,6 +133,11 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   // Fortnight/Day view), and this needs to survive that round trip so the
   // same dates/results are still there when they come back.
   const [ruleCheckState, setRuleCheckState] = useState(createDefaultRuleCheckState);
+  // Which violation's 3-week person view is open, if any — see
+  // InvestigateViolationModal. Investigating stays right here on Settings
+  // (no tab switch) until a specific day is actually picked, at which
+  // point it hands off to the existing Fortnight day modal.
+  const [investigatingViolation, setInvestigatingViolation] = useState(null); // { staffId, staffName, dateStr }
   // Week Template Management State (Settings) — list itself lives in
   // refData.weekTemplates; entries are fetched on demand per selected
   // template, since a department could have several and there's no reason
@@ -4859,9 +4865,8 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                   state={ruleCheckState}
                   setState={setRuleCheckState}
                   onInvestigate={(staffId, dateStr) => {
-                    setFortnightSelectedStaffId(staffId);
-                    setFortnightStart(getMondayOfWeek(new Date(`${dateStr}T00:00:00`)));
-                    setActiveTab('fortnight');
+                    const staffName = refData.staff.find(s => s.staff_id === staffId)?.name || '';
+                    setInvestigatingViolation({ staffId, staffName, dateStr });
                   }}
                   onInvestigateDate={(dateStr) => {
                     setSelectedDate(new Date(`${dateStr}T00:00:00`));
@@ -4871,6 +4876,22 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
               </CollapsibleSection>
             )}
             </CollapsibleSection>
+
+            {investigatingViolation && (
+              <InvestigateViolationModal
+                staffId={investigatingViolation.staffId}
+                staffName={investigatingViolation.staffName}
+                centerDate={investigatingViolation.dateStr}
+                onClose={() => setInvestigatingViolation(null)}
+                onOpenDay={(date) => {
+                  setFortnightSelectedStaffId(investigatingViolation.staffId);
+                  setFortnightStart(getMondayOfWeek(date));
+                  setActiveTab('fortnight');
+                  handleOpenFortnightModal(date);
+                  setInvestigatingViolation(null);
+                }}
+              />
+            )}
 
             {/* Staff Settings Group — Ranks, Staff and Availability, Staff
                 Activity Profiles, Staff Accounts */}
