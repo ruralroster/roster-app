@@ -152,7 +152,7 @@ function checkPersonViolations(shiftsByDate, rank) {
           key: `night-spacing:${block.start}`,
           rule: 'Night spacing',
           message: `Two separate night blocks within ${NIGHT_SPACING_DAYS} days: starting ${nightBlocks[i - 1].start} and ${block.start}`,
-          dates: [nightBlocks[i - 1].start, block.start],
+          dates: [...nightBlocks[i - 1].dates, ...block.dates],
         });
       }
     }
@@ -161,8 +161,11 @@ function checkPersonViolations(shiftsByDate, rank) {
   // --- Weekly caps (Monday-anchored calendar weeks — any Monday works
   // here, since there's only one possible Monday grid, unlike fortnights
   // below): at most one non-night D shift, at most one non-night E shift.
-  // Confirmed 2026-09-01: "lates counted but not nights" applies to both
-  // — a shift starting 22:00 never counts toward either weekly cap.
+  // Each confirmed independently as its own fact, not derived from a
+  // "weekly caps always exclude nights" rule — confirmed 2026-09-01 not
+  // to assume that pattern extends to any rule added later; whether a
+  // night counts is a per-rule detail to confirm each time, not something
+  // to infer from whether the window is a week or a fortnight.
   const allDates = Object.keys(shiftsByDate).sort();
   if (allDates.length > 0) {
     const firstMonday = addDays(dateOnly(allDates[0]), -((dayOfWeek(allDates[0]) + 6) % 7));
@@ -230,7 +233,7 @@ function checkPersonViolations(shiftsByDate, rank) {
           key: `locum-cap:${fnDates[0]}`,
           rule: 'Locum fortnightly cap',
           message: `${fnShifts.length} shifts in the ${fnLabel} (locums capped at 10)`,
-          dates: [fnDates[0]],
+          dates: fnDates.filter(d => shiftsByDate[d]),
         });
       }
     }

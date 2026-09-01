@@ -138,7 +138,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   // InvestigateViolationModal. Investigating stays right here on Settings
   // (no tab switch) until a specific day is actually picked, at which
   // point it hands off to the existing Fortnight day modal.
-  const [investigatingViolation, setInvestigatingViolation] = useState(null); // { staffId, staffName, dateStr }
+  const [investigatingViolation, setInvestigatingViolation] = useState(null); // { staffId, staffName, dates }
   // A specific day's full roster-and-remove view, opened from within the
   // investigate modal above (layered on top of it, not replacing it, so
   // closing this returns to the 3-week view rather than losing it).
@@ -4869,9 +4869,9 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                   departmentId={departmentId}
                   state={ruleCheckState}
                   setState={setRuleCheckState}
-                  onInvestigate={(staffId, dateStr) => {
+                  onInvestigate={(staffId, dates) => {
                     const staffName = refData.staff.find(s => s.staff_id === staffId)?.name || '';
-                    setInvestigatingViolation({ staffId, staffName, dateStr });
+                    setInvestigatingViolation({ staffId, staffName, dates });
                   }}
                   onInvestigateDate={(dateStr) => {
                     setSelectedDate(new Date(`${dateStr}T00:00:00`));
@@ -4886,7 +4886,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
               <InvestigateViolationModal
                 staffId={investigatingViolation.staffId}
                 staffName={investigatingViolation.staffName}
-                centerDate={investigatingViolation.dateStr}
+                dates={investigatingViolation.dates}
                 onClose={() => setInvestigatingViolation(null)}
                 onOpenDay={(date) => setReviewingDay(date)}
               />

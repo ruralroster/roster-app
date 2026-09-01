@@ -21,10 +21,13 @@ function getMondayOfWeek(date) {
 // ruleCheckState — that already survives navigation, this modal is the
 // other half: investigate without navigating away at all, only jumping
 // into Fortnight view once a specific day is actually picked).
-export default function InvestigateViolationModal({ staffId, staffName, centerDate, onClose, onOpenDay }) {
+export default function InvestigateViolationModal({ staffId, staffName, dates, onClose, onOpenDay }) {
   const [weeks, setWeeks] = useState(null); // [{ weekStart, byDate: Map(dateStr -> assignment[]) }]
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+
+  const centerDate = dates[0];
+  const violationDates = new Set(dates);
 
   useEffect(() => {
     const load = async () => {
@@ -75,7 +78,7 @@ export default function InvestigateViolationModal({ staffId, staffName, centerDa
                 <span className="w-3 h-3 rounded border-2 border-gray-200 bg-white" /> Not working
               </span>
               <span className="flex items-center gap-1.5 text-xs text-gray-600">
-                <span className="w-3 h-3 rounded border-2 border-gray-200 bg-white ring-2 ring-red-500 ring-offset-1" /> The violation
+                <span className="w-3 h-3 rounded border-2 border-gray-200 bg-white ring-2 ring-red-500 ring-offset-1" /> Involved in the violation
               </span>
             </div>
           </div>
@@ -107,7 +110,7 @@ export default function InvestigateViolationModal({ staffId, staffName, centerDa
                     const d = new Date(weekStart);
                     d.setDate(d.getDate() + i);
                     const dateStr = toLocalDateStr(d);
-                    const isCenter = dateStr === centerDate;
+                    const isViolationDate = violationDates.has(dateStr);
                     const dayAssignments = byDate.get(dateStr) || [];
                     const isWorking = dayAssignments.length > 0;
                     return (
@@ -116,7 +119,7 @@ export default function InvestigateViolationModal({ staffId, staffName, centerDa
                         onClick={() => onOpenDay(d)}
                         className={`p-2 rounded-lg border-2 text-left transition hover:opacity-80 ${
                           isWorking ? 'border-green-300 bg-green-50' : 'border-gray-200 bg-white'
-                        } ${isCenter ? 'ring-2 ring-red-500 ring-offset-1' : ''}`}
+                        } ${isViolationDate ? 'ring-2 ring-red-500 ring-offset-1' : ''}`}
                       >
                         <p className="text-[10px] font-semibold text-gray-500 uppercase">{DAY_LABELS[i]} {d.getDate()}</p>
                         {dayAssignments.length === 0 ? (

@@ -83,6 +83,21 @@ export function getIcsExportFilename(staffName, startDateStr, endDateStr) {
   return `${safeName}_Roster_${startDateStr}to${endDateStr}.ics`;
 }
 
+// Builds a CSV string from an array of column defs ({ header, value(row) })
+// and an array of row objects — handles quoting per RFC 4180 (only wraps a
+// field in quotes when it actually needs it, doubling any embedded quotes).
+export function buildCsv(columns, rows) {
+  const escapeCell = (value) => {
+    const str = value === null || value === undefined ? '' : String(value);
+    return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
+  };
+  const lines = [
+    columns.map(c => escapeCell(c.header)).join(','),
+    ...rows.map(row => columns.map(c => escapeCell(c.value(row))).join(',')),
+  ];
+  return lines.join('\r\n');
+}
+
 // Triggers a browser download of the given text content as a file.
 export function downloadTextFile(filename, mimeType, content) {
   const blob = new Blob([content], { type: mimeType });

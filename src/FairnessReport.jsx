@@ -2,6 +2,16 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { AlertCircle, Loader, ArrowUp, ArrowDown } from 'lucide-react';
 import { getFairnessReport } from './supabaseClient';
 import { formatFte, computeFairnessStatus, FAIRNESS_STYLES } from './availabilityUtils';
+import ExportCsvButton from './ExportCsvButton';
+
+const CSV_COLUMNS = [
+  { header: 'Staff Name', value: r => r.staff_name },
+  { header: 'FTE', value: r => formatFte(r.fte) },
+  { header: 'Weekend Shifts', value: r => r.weekend_shifts },
+  { header: 'Weekend Fairness Ratio', value: r => r.weekend_fairness_ratio.toFixed(2) },
+  { header: 'On-Call Duties', value: r => r.oncall_shifts },
+  { header: 'On-Call Fairness Ratio', value: r => r.oncall_fairness_ratio.toFixed(2) },
+];
 
 const RatioCell = ({ ratio, count }) => {
   const status = computeFairnessStatus(ratio);
@@ -64,6 +74,12 @@ export default function FairnessReport({ departmentId, refreshKey }) {
         Each person's share of weekend shifts and on-call duty over the last 12 months, compared to their fair share based on FTE.
         1.00x means exactly proportional; well above 1.25x means they're carrying more than their share.
       </p>
+
+      {rows.length > 0 && (
+        <div className="flex justify-end mb-2">
+          <ExportCsvButton filename="fairness_report.csv" columns={CSV_COLUMNS} rows={sortedRows} />
+        </div>
+      )}
 
       {error && (
         <div className="mb-4 p-3 bg-red-50 border border-red-300 rounded-lg flex gap-2 items-start">

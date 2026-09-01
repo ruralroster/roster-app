@@ -3,6 +3,14 @@ import { AlertCircle, Loader, X } from 'lucide-react';
 import { getEdRuleCheckData, getRuleViolationDismissals, dismissRuleViolation } from './supabaseClient';
 import { checkEdRuleViolations, checkEdStaffingLevels } from './edRuleChecks';
 import { toLocalDateStr } from './dateUtils';
+import ExportCsvButton from './ExportCsvButton';
+
+const CSV_COLUMNS = [
+  { header: 'Staff Name', value: r => r.staffName },
+  { header: 'Rule', value: r => r.rule },
+  { header: 'Message', value: r => r.message },
+  { header: 'Dates', value: r => (r.dates || []).join('; ') },
+];
 
 // ED-specific hard-rule violation checker (see edRuleChecks.js for exactly
 // which rules and why only these ones — the softer "aim for"/"try to"
@@ -43,8 +51,9 @@ export function createDefaultRuleCheckState() {
   };
 }
 
-// onInvestigate(staffId, dateStr): jump to Fortnight view with that person
-// selected and the week containing dateStr on screen. onInvestigateDate
+// onInvestigate(staffId, dates): open the 3-week investigate modal for that
+// person, centered on dates[0]'s week, with every date in `dates`
+// highlighted as part of the violation. onInvestigateDate
 // (dateStr): jump to Day view for that date — used for staffing-level
 // shortfalls, which have no single person to select. `state`/`setState`
 // come from the parent — see createDefaultRuleCheckState above.
@@ -113,6 +122,15 @@ export default function RuleViolationsReport({ departmentId, state, setState, on
   const visibleCountFor = (staffId) => (violationsByStaff?.get(staffId) || []).filter(v => !isDismissed(staffId, v.key)).length;
   const peopleWithViolations = staffList.filter(p => visibleCountFor(p.staff_id) > 0).length;
 
+  const csvRows = violationsByStaff ? [
+    ...visibleStaffingViolations.map(v => ({ staffName: '—', rule: v.rule, message: v.message, dates: [v.date] })),
+    ...staffList.flatMap(person =>
+      (violationsByStaff.get(person.staff_id) || [])
+        .filter(v => !isDismissed(person.staff_id, v.key))
+        .map(v => ({ staffName: person.name, rule: v.rule, message: v.message, dates: v.dates }))
+    ),
+  ] : [];
+
   return (
     <>
       <p className="text-xs text-gray-600 mb-4">
@@ -152,6 +170,12 @@ export default function RuleViolationsReport({ departmentId, state, setState, on
         <div className="mb-4 p-3 bg-red-50 border border-red-300 rounded-lg flex gap-2 items-start">
           <AlertCircle size={18} className="text-red-600 flex-shrink-0 mt-0.5" />
           <p className="text-sm text-red-700">{error}</p>
+        </div>
+      )}
+
+      {violationsByStaff && staffList.length > 0 && (
+        <div className="flex justify-end mb-2">
+          <ExportCsvButton filename="rule_violations.csv" columns={CSV_COLUMNS} rows={csvRows} />
         </div>
       )}
 
@@ -240,7 +264,7 @@ export default function RuleViolationsReport({ departmentId, state, setState, on
                   <div className="flex gap-1.5 mt-2">
                     {onInvestigate && v.dates?.length > 0 && (
                       <button
-                        onClick={() => onInvestigate(selectedStaffId, v.dates[0])}
+                        onClick={() => onInvestigate(selectedStaffId, v.dates)}
                         className="px-2 py-1 bg-blue-100 hover:bg-blue-200 text-blue-900 text-xs font-medium rounded transition"
                       >
                         Investigate

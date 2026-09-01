@@ -1,6 +1,14 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { AlertCircle, Loader, ArrowUp, ArrowDown } from 'lucide-react';
 import { getCaseMixReport } from './supabaseClient';
+import ExportCsvButton from './ExportCsvButton';
+
+const CSV_COLUMNS = [
+  { header: 'Staff Name', value: r => r.staff_name },
+  { header: 'Activity', value: r => r.activity_name },
+  { header: 'Exposure Rate (%)', value: r => r.exposure_rate.toFixed(1) },
+  { header: 'Last Worked Date', value: r => r.last_worked_date || '' },
+];
 
 export default function CaseMixReport({ departmentId, refreshKey }) {
   const [rows, setRows] = useState([]);
@@ -56,6 +64,16 @@ export default function CaseMixReport({ departmentId, refreshKey }) {
       <p className="text-xs text-gray-600 mb-4">
         Activity exposure rate per staff member over the last 12 months. Lower exposure means less experience with that activity.
       </p>
+
+      {groupedByActivity.length > 0 && (
+        <div className="flex justify-end mb-2">
+          <ExportCsvButton
+            filename="case_mix_report.csv"
+            columns={CSV_COLUMNS}
+            rows={groupedByActivity.flatMap(g => g.rows)}
+          />
+        </div>
+      )}
 
       {error && (
         <div className="mb-4 p-3 bg-red-50 border border-red-300 rounded-lg flex gap-2 items-start">
