@@ -6,7 +6,7 @@ import StaffAvailabilityTab from './StaffAvailabilityTab';
 import ShiftPatternRulesUI from './ShiftPatternRulesUI';
 import CaseMixReport from './CaseMixReport';
 import FairnessReport from './FairnessReport';
-import RuleViolationsReport from './RuleViolationsReport';
+import RuleViolationsReport, { createDefaultRuleCheckState } from './RuleViolationsReport';
 import RosterExcelImportTab from './RosterExcelImportTab';
 import RosterExcelExportTab from './RosterExcelExportTab';
 import CollapsibleSection from './CollapsibleSection';
@@ -126,6 +126,12 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   // hit on any week row, same shape as the template-apply picker above.
   const [copyFromWeekInput, setCopyFromWeekInput] = useState('');
   const [copyingWeek, setCopyingWeek] = useState(null);
+  // Rule Violations report state lives here, not inside
+  // RuleViolationsReport itself — that component unmounts whenever the
+  // officer switches away from the Settings tab (e.g. via Investigate, to
+  // Fortnight/Day view), and this needs to survive that round trip so the
+  // same dates/results are still there when they come back.
+  const [ruleCheckState, setRuleCheckState] = useState(createDefaultRuleCheckState);
   // Week Template Management State (Settings) — list itself lives in
   // refData.weekTemplates; entries are fetched on demand per selected
   // template, since a department could have several and there's no reason
@@ -2378,39 +2384,6 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                 </button>
               </div>
 
-              <div className="flex items-center gap-2 mb-4">
-                <button
-                  onClick={() => setShowPayrollModal(true)}
-                  className="px-4 py-2 bg-gray-800 hover:bg-gray-900 text-white font-medium rounded-lg transition text-sm"
-                >
-                  Export to Payroll
-                </button>
-                <div className="ml-auto flex items-center gap-2">
-                  <label className="text-xs text-gray-600 whitespace-nowrap">Copy from week starting</label>
-                  <input
-                    type="date"
-                    value={copyFromWeekInput}
-                    onChange={(e) => setCopyFromWeekInput(e.target.value)}
-                    className="px-2 py-2 border border-gray-300 rounded-lg text-sm"
-                  />
-                </div>
-                {refData.weekTemplates.length > 0 && (
-                  <select
-                    value={applyTemplateId}
-                    onChange={(e) => setApplyTemplateId(e.target.value)}
-                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                  >
-                    <option value="">— Pick a template to apply —</option>
-                    {refData.weekTemplates.map(t => (
-                      <option key={t.week_template_id} value={t.week_template_id}>{t.name}</option>
-                    ))}
-                  </select>
-                )}
-              </div>
-              <p className="text-xs text-gray-500 mb-4 -mt-2">
-                Copying a week brings across that week's actual location/activity cards (no staff, no template needed) — pick any Monday above, then hit <strong>Copy</strong> on whichever week row below should receive it.
-              </p>
-
               <div className="grid grid-cols-7 gap-2 mb-1">
                 {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(day => (
                   <div key={day} className="text-center text-xs font-bold text-gray-600 py-2">
@@ -2495,6 +2468,39 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                   </div>
                 ))}
               </div>
+
+              <div className="flex items-center gap-2 mt-6 pt-4 border-t border-gray-200">
+                <button
+                  onClick={() => setShowPayrollModal(true)}
+                  className="px-4 py-2 bg-gray-800 hover:bg-gray-900 text-white font-medium rounded-lg transition text-sm"
+                >
+                  Export to Payroll
+                </button>
+                <div className="ml-auto flex items-center gap-2">
+                  <label className="text-xs text-gray-600 whitespace-nowrap">Copy from week starting</label>
+                  <input
+                    type="date"
+                    value={copyFromWeekInput}
+                    onChange={(e) => setCopyFromWeekInput(e.target.value)}
+                    className="px-2 py-2 border border-gray-300 rounded-lg text-sm"
+                  />
+                </div>
+                {refData.weekTemplates.length > 0 && (
+                  <select
+                    value={applyTemplateId}
+                    onChange={(e) => setApplyTemplateId(e.target.value)}
+                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  >
+                    <option value="">— Pick a template to apply —</option>
+                    {refData.weekTemplates.map(t => (
+                      <option key={t.week_template_id} value={t.week_template_id}>{t.name}</option>
+                    ))}
+                  </select>
+                )}
+              </div>
+              <p className="text-xs text-gray-500 mt-2">
+                Copying a week brings across that week's actual location/activity cards (no staff, no template needed) — pick any Monday above, then hit <strong>Copy</strong> on whichever week row above should receive it.
+              </p>
             </div>
           </div>
 
@@ -4850,6 +4856,8 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
               <CollapsibleSection title="Rule Violations">
                 <RuleViolationsReport
                   departmentId={departmentId}
+                  state={ruleCheckState}
+                  setState={setRuleCheckState}
                   onInvestigate={(staffId, dateStr) => {
                     setFortnightSelectedStaffId(staffId);
                     setFortnightStart(getMondayOfWeek(new Date(`${dateStr}T00:00:00`)));

@@ -23,21 +23,40 @@ function defaultEnd() {
   return toLocalDateStr(d);
 }
 
+// The officer's own workflow here is "run the check, click Investigate on
+// one violation, look at it in Fortnight/Day view, come back and check the
+// next one" — so the dates and results need to survive that round trip,
+// not just this component's own lifetime. Settings tabs unmount when the
+// officer switches to Fortnight/Day view (confirmed 2026-09-01: this is
+// nested under activeTab === 'settings', which stops rendering entirely
+// on any other tab), so a plain useState here would silently reset every
+// time. The officer-roster-view-supabase.jsx parent owns this state
+// instead and just passes it straight through.
+export function createDefaultRuleCheckState() {
+  return {
+    startDate: defaultStart(),
+    endDate: defaultEnd(),
+    violationsByStaff: null, // Map staff_id -> violations[]
+    staffingViolations: [], // [{ date, rule, message, key }]
+    dismissed: new Set(), // "staffId|violationKey" ('null' for staffing-level)
+    staffById: new Map(),
+  };
+}
+
 // onInvestigate(staffId, dateStr): jump to Fortnight view with that person
 // selected and the week containing dateStr on screen. onInvestigateDate
 // (dateStr): jump to Day view for that date — used for staffing-level
-// shortfalls, which have no single person to select.
-export default function RuleViolationsReport({ departmentId, onInvestigate, onInvestigateDate }) {
-  const [startDate, setStartDate] = useState(defaultStart);
-  const [endDate, setEndDate] = useState(defaultEnd);
-  const [violationsByStaff, setViolationsByStaff] = useState(null); // Map staff_id -> violations[]
-  const [staffingViolations, setStaffingViolations] = useState([]); // [{ date, rule, message, key }]
-  const [dismissed, setDismissed] = useState(new Set()); // "staffId|violationKey" ('null' for staffing-level)
-  const [staffById, setStaffById] = useState(new Map());
+// shortfalls, which have no single person to select. `state`/`setState`
+// come from the parent — see createDefaultRuleCheckState above.
+export default function RuleViolationsReport({ departmentId, state, setState, onInvestigate, onInvestigateDate }) {
+  const { startDate, endDate, violationsByStaff, staffingViolations, dismissed, staffById } = state;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [selectedStaffId, setSelectedStaffId] = useState(null);
   const [dismissingKey, setDismissingKey] = useState(null);
+
+  const setStartDate = (value) => setState(prev => ({ ...prev, startDate: value }));
+  const setEndDate = (value) => setState(prev => ({ ...prev, endDate: value }));
 
   const runCheck = async () => {
     if (!departmentId || !startDate || !endDate) return;
@@ -53,10 +72,13 @@ export default function RuleViolationsReport({ departmentId, onInvestigate, onIn
       if (dismissError) throw dismissError;
 
       const byId = new Map(data.staff.map(s => [s.staff_id, s]));
-      setStaffById(byId);
-      setDismissed(dismissedSet);
-      setViolationsByStaff(checkEdRuleViolations(data.assignments, byId));
-      setStaffingViolations(checkEdStaffingLevels(data.assignments));
+      setState(prev => ({
+        ...prev,
+        staffById: byId,
+        dismissed: dismissedSet,
+        violationsByStaff: checkEdRuleViolations(data.assignments, byId),
+        staffingViolations: checkEdStaffingLevels(data.assignments),
+      }));
     } catch (err) {
       setError(`Failed to check rules: ${err.message}`);
     } finally {
@@ -71,7 +93,7 @@ export default function RuleViolationsReport({ departmentId, onInvestigate, onIn
     try {
       const { error: dismissError } = await dismissRuleViolation(departmentId, staffId, key);
       if (dismissError) throw dismissError;
-      setDismissed(prev => new Set(prev).add(`${staffId || 'null'}|${key}`));
+      setState(prev => ({ ...prev, dismissed: new Set(prev.dismissed).add(`${staffId || 'null'}|${key}`) }));
       setError(null);
     } catch (err) {
       setError(`Failed to accept violation: ${err.message}`);
