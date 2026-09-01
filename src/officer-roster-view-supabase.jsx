@@ -8,6 +8,7 @@ import CaseMixReport from './CaseMixReport';
 import FairnessReport from './FairnessReport';
 import RuleViolationsReport, { createDefaultRuleCheckState } from './RuleViolationsReport';
 import InvestigateViolationModal from './InvestigateViolationModal';
+import DayReviewModal from './DayReviewModal';
 import RosterExcelImportTab from './RosterExcelImportTab';
 import RosterExcelExportTab from './RosterExcelExportTab';
 import CollapsibleSection from './CollapsibleSection';
@@ -138,6 +139,10 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   // (no tab switch) until a specific day is actually picked, at which
   // point it hands off to the existing Fortnight day modal.
   const [investigatingViolation, setInvestigatingViolation] = useState(null); // { staffId, staffName, dateStr }
+  // A specific day's full roster-and-remove view, opened from within the
+  // investigate modal above (layered on top of it, not replacing it, so
+  // closing this returns to the 3-week view rather than losing it).
+  const [reviewingDay, setReviewingDay] = useState(null); // Date
   // Week Template Management State (Settings) — list itself lives in
   // refData.weekTemplates; entries are fetched on demand per selected
   // template, since a department could have several and there's no reason
@@ -4883,13 +4888,16 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                 staffName={investigatingViolation.staffName}
                 centerDate={investigatingViolation.dateStr}
                 onClose={() => setInvestigatingViolation(null)}
-                onOpenDay={(date) => {
-                  setFortnightSelectedStaffId(investigatingViolation.staffId);
-                  setFortnightStart(getMondayOfWeek(date));
-                  setActiveTab('fortnight');
-                  handleOpenFortnightModal(date);
-                  setInvestigatingViolation(null);
-                }}
+                onOpenDay={(date) => setReviewingDay(date)}
+              />
+            )}
+
+            {reviewingDay && (
+              <DayReviewModal
+                departmentId={departmentId}
+                department={refData.department}
+                date={reviewingDay}
+                onClose={() => setReviewingDay(null)}
               />
             )}
 
