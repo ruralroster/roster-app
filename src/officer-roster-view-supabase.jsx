@@ -6,6 +6,7 @@ import StaffAvailabilityTab from './StaffAvailabilityTab';
 import ShiftPatternRulesUI from './ShiftPatternRulesUI';
 import CaseMixReport from './CaseMixReport';
 import FairnessReport from './FairnessReport';
+import RuleViolationsReport from './RuleViolationsReport';
 import RosterExcelImportTab from './RosterExcelImportTab';
 import RosterExcelExportTab from './RosterExcelExportTab';
 import CollapsibleSection from './CollapsibleSection';
@@ -4787,6 +4788,18 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
             <CollapsibleSection title="On-Call & Weekend Fairness">
               <FairnessReport departmentId={departmentId} refreshKey={staffVersion} />
             </CollapsibleSection>
+
+            {/* Rule Violations Section — ED-specific hard scheduling rules
+                (see edRuleChecks.js), gated on this department actually
+                using the ED shift-code vocabulary those rules are written
+                against (roster_import_format doubles as that signal —
+                confirmed 2026-09-01 these rules are department-specific,
+                not generic). */}
+            {refData.department?.roster_import_format === 'ed' && (
+              <CollapsibleSection title="Rule Violations">
+                <RuleViolationsReport departmentId={departmentId} />
+              </CollapsibleSection>
+            )}
             </CollapsibleSection>
 
             {/* Staff Settings Group — Ranks, Staff and Availability, Staff

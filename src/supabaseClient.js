@@ -2117,6 +2117,36 @@ export async function getFairnessReport(departmentId) {
   }
 }
 
+// Raw data for edRuleChecks.js's checkEdRuleViolations — every clinical
+// assignment in the range, joined with just enough to reconstruct each
+// one's shift-code letter/time (location name, shift start_time), plus
+// every staff member's rank (checkPersonViolations needs it for the TS4/
+// Locums-specific rules). Deliberately unfiltered by staff_id — the rule
+// checks work across the whole department at once.
+export async function getEdRuleCheckData(departmentId, startDateStr, endDateStr) {
+  try {
+    const [assignRes, staffRes] = await Promise.all([
+      supabase
+        .from('staff_assignments')
+        .select('staff_id, date, locations(name), shifts(start_time)')
+        .eq('department_id', departmentId)
+        .gte('date', startDateStr)
+        .lte('date', endDateStr),
+      supabase
+        .from('staff')
+        .select('staff_id, name, rank')
+        .eq('department_id', departmentId),
+    ]);
+    if (assignRes.error) throw assignRes.error;
+    if (staffRes.error) throw staffRes.error;
+
+    return { data: { assignments: assignRes.data || [], staff: staffRes.data || [] }, error: null };
+  } catch (err) {
+    console.error('getEdRuleCheckData error:', err);
+    return { data: null, error: err };
+  }
+}
+
 // ============================================================
 // FATIGUE / SHIFT-SEQUENCING CONSTRAINTS
 // ============================================================

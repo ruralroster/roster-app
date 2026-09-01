@@ -1,0 +1,234 @@
+// Checks an already-uploaded Emergency Department roster against the
+// department's own hard scheduling rules (confirmed 2026-09-01) —
+// deliberately NOT the softer "aim for"/"try to" optimization goals
+// (4-then-3 alternating night counts, working both weekend days, avoiding
+// back-to-back weekends, locums avoiding nights) since those were
+// explicitly called out as goals to skip for now, not rules to flag.
+//
+// Reconstructs each assignment's shift-code letter/time (the "0730B"
+// shorthand edRosterExcelImport.js parses on the way in) from the stored
+// location name + shift start_time, since that's not kept as its own
+// column anywhere — same LETTER_LOCATION_MAP/SHIFT_TIME_MAP the importer
+// uses, just inverted.
+//
+// This is deliberately ED-specific (tied to that department's own letter
+// vocabulary and rank names), not a generic multi-department rules engine
+// — confirmed 2026-09-01 that these rules only apply to the one
+// department for now.
+
+import { toLocalDateStr } from './dateUtils';
+
+const LOCATION_TO_LETTER = {
+  'Acute Team A': 'A',
+  'Acute Team B': 'B',
+  'Paediatrics': 'C',
+  'Fast Track': 'D',
+  'STTA': 'E',
+  'A STAR': 'ST',
+  'Teaching': 'T',
+};
+
+const START_TIME_TO_CODE = {
+  '07:30': 'Day',
+  '13:00': 'Evening',
+  '22:00': 'Night',
+};
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const NIGHT_SPACING_DAYS = 28;
+const DAYS_OFF_AFTER_NIGHTS = 3;
+
+function dateOnly(dateStr) {
+  return new Date(`${dateStr}T00:00:00`);
+}
+
+function addDays(date, n) {
+  const d = new Date(date);
+  d.setDate(d.getDate() + n);
+  return d;
+}
+
+function dayOfWeek(dateStr) {
+  return dateOnly(dateStr).getDay(); // 0 Sun .. 6 Sat
+}
+
+// Reconstructs { date, letter, timeCode } from an assignment row shaped
+// like staff_assignments joined with locations(name) and shifts(start_time)
+// — returns null for anything that isn't a recognized ED location/time
+// (e.g. a duty-type pick, or a department that isn't using this letter
+// vocabulary at all), so callers can just filter those out.
+export function reconstructShiftInfo(assignment) {
+  const locationName = assignment.locations?.name;
+  const startTime = assignment.shifts?.start_time?.slice(0, 5);
+  const letter = LOCATION_TO_LETTER[locationName];
+  const timeCode = START_TIME_TO_CODE[startTime];
+  if (!letter || !timeCode) return null;
+  return { date: assignment.date, letter, timeCode };
+}
+
+// Consecutive-calendar-day runs of Night-coded shifts, sorted chronologically.
+function findNightBlocks(shiftsByDate) {
+  const nightDates = Object.keys(shiftsByDate)
+    .filter(d => shiftsByDate[d].some(s => s.timeCode === 'Night'))
+    .sort();
+
+  const blocks = [];
+  let current = null;
+  for (const dateStr of nightDates) {
+    if (current && toLocalDateStr(addDays(dateOnly(current.end), 1)) === dateStr) {
+      current.end = dateStr;
+      current.dates.push(dateStr);
+    } else {
+      current = { start: dateStr, end: dateStr, dates: [dateStr] };
+      blocks.push(current);
+    }
+  }
+  return blocks;
+}
+
+const MON_THU = new Set([1, 2, 3, 4]);
+const FRI_SUN = new Set([5, 6, 0]);
+
+// Runs every rule against one person's shifts (already filtered to just
+// this staff member, spanning the whole checked range) and returns a flat
+// list of { rule, message, dates } violations for them.
+function checkPersonViolations(shiftsByDate, rank) {
+  const violations = [];
+  const isLocum = rank === 'Locums';
+  const isTS4 = rank === 'TS4';
+
+  // --- Night blocks: shape (Mon-Thu or Fri-Sun only), days off after,
+  // and spacing between separate blocks.
+  const nightBlocks = findNightBlocks(shiftsByDate);
+  nightBlocks.forEach((block, i) => {
+    const days = block.dates.map(dayOfWeek);
+    const spansMonThu = days.every(d => MON_THU.has(d));
+    const spansFriSun = days.every(d => FRI_SUN.has(d));
+    if (!spansMonThu && !spansFriSun) {
+      violations.push({
+        rule: 'Night shape',
+        message: `Night block ${block.start} to ${block.end} isn't confined to Mon-Thu or Fri-Sun`,
+        dates: block.dates,
+      });
+    }
+
+    const daysOffNeeded = Array.from({ length: DAYS_OFF_AFTER_NIGHTS }, (_, n) => toLocalDateStr(addDays(dateOnly(block.end), n + 1)));
+    const workedDuringRest = daysOffNeeded.filter(d => shiftsByDate[d]);
+    if (workedDuringRest.length > 0) {
+      violations.push({
+        rule: 'Rest after nights',
+        message: `Rostered on ${workedDuringRest.join(', ')} — fewer than 3 full days off after the night block ending ${block.end}`,
+        dates: workedDuringRest,
+      });
+    }
+
+    if (i > 0) {
+      const prevStart = dateOnly(nightBlocks[i - 1].start);
+      const gapDays = Math.round((dateOnly(block.start) - prevStart) / MS_PER_DAY);
+      if (gapDays < NIGHT_SPACING_DAYS) {
+        violations.push({
+          rule: 'Night spacing',
+          message: `Two separate night blocks within ${NIGHT_SPACING_DAYS} days: starting ${nightBlocks[i - 1].start} and ${block.start}`,
+          dates: [nightBlocks[i - 1].start, block.start],
+        });
+      }
+    }
+  });
+
+  // --- Weekly caps (Monday-anchored calendar weeks): at most one D shift,
+  // at most one non-night E shift.
+  const allDates = Object.keys(shiftsByDate).sort();
+  if (allDates.length > 0) {
+    const firstMonday = addDays(dateOnly(allDates[0]), -((dayOfWeek(allDates[0]) + 6) % 7));
+    const lastDate = dateOnly(allDates[allDates.length - 1]);
+    for (let weekStart = firstMonday; weekStart <= lastDate; weekStart = addDays(weekStart, 7)) {
+      const weekDates = Array.from({ length: 7 }, (_, n) => toLocalDateStr(addDays(weekStart, n)));
+      const weekShifts = weekDates.flatMap(d => shiftsByDate[d] || []);
+
+      const dShifts = weekShifts.filter(s => s.letter === 'D');
+      if (dShifts.length > 1) {
+        violations.push({
+          rule: 'D shift weekly cap',
+          message: `${dShifts.length} D shifts in the week of ${weekDates[0]} (max 1)`,
+          dates: weekDates.filter(d => (shiftsByDate[d] || []).some(s => s.letter === 'D')),
+        });
+      }
+
+      const eShifts = weekShifts.filter(s => s.letter === 'E' && s.timeCode !== 'Night');
+      if (eShifts.length > 1) {
+        violations.push({
+          rule: 'E shift weekly cap',
+          message: `${eShifts.length} non-night E shifts in the week of ${weekDates[0]} (max 1)`,
+          dates: weekDates.filter(d => (shiftsByDate[d] || []).some(s => s.letter === 'E' && s.timeCode !== 'Night')),
+        });
+      }
+    }
+
+    // --- Fortnightly minimums (also Monday-anchored, 14-day blocks): at
+    // least one C shift (nights count), at least one ST shift for TS4,
+    // and a locum's total shift count capped at 10.
+    for (let fnStart = firstMonday; fnStart <= lastDate; fnStart = addDays(fnStart, 14)) {
+      const fnDates = Array.from({ length: 14 }, (_, n) => toLocalDateStr(addDays(fnStart, n)));
+      const fnShifts = fnDates.flatMap(d => shiftsByDate[d] || []);
+      const fnLabel = `fortnight of ${fnDates[0]}`;
+
+      const cShifts = fnShifts.filter(s => s.letter === 'C');
+      if (cShifts.length === 0) {
+        violations.push({
+          rule: 'C shift fortnightly minimum',
+          message: `No C shifts in the ${fnLabel} (need at least 1)`,
+          dates: [],
+        });
+      }
+
+      if (isTS4) {
+        const stShifts = fnShifts.filter(s => s.letter === 'ST');
+        if (stShifts.length === 0) {
+          violations.push({
+            rule: 'ST fortnightly minimum (TS4)',
+            message: `No ST shifts in the ${fnLabel} (need at least 1 for TS4)`,
+            dates: [],
+          });
+        }
+      }
+
+      if (isLocum && fnShifts.length > 10) {
+        violations.push({
+          rule: 'Locum fortnightly cap',
+          message: `${fnShifts.length} shifts in the ${fnLabel} (locums capped at 10)`,
+          dates: [],
+        });
+      }
+    }
+  }
+
+  return violations;
+}
+
+// assignments: flat array of staff_assignments rows joined with
+// locations(name), shifts(start_time), and staff_id — same shape
+// getAllStaffAssignmentsForRange already returns. staffById: Map of
+// staff_id -> { name, rank }. Returns a Map of staff_id -> violations[],
+// omitting anyone with none.
+export function checkEdRuleViolations(assignments, staffById) {
+  const shiftsByStaffAndDate = new Map(); // staff_id -> { date -> [{letter,timeCode}] }
+
+  for (const assignment of assignments) {
+    const info = reconstructShiftInfo(assignment);
+    if (!info) continue;
+
+    if (!shiftsByStaffAndDate.has(assignment.staff_id)) shiftsByStaffAndDate.set(assignment.staff_id, {});
+    const byDate = shiftsByStaffAndDate.get(assignment.staff_id);
+    if (!byDate[info.date]) byDate[info.date] = [];
+    byDate[info.date].push(info);
+  }
+
+  const violationsByStaff = new Map();
+  for (const [staffId, byDate] of shiftsByStaffAndDate.entries()) {
+    const rank = staffById.get(staffId)?.rank;
+    const violations = checkPersonViolations(byDate, rank);
+    if (violations.length > 0) violationsByStaff.set(staffId, violations);
+  }
+
+  return violationsByStaff;
+}
