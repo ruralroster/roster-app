@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { AlertCircle, Loader, X } from 'lucide-react';
 import { getEdRuleCheckData } from './supabaseClient';
-import { checkEdRuleViolations } from './edRuleChecks';
+import { checkEdRuleViolations, checkEdStaffingLevels } from './edRuleChecks';
 import { toLocalDateStr } from './dateUtils';
 
 // ED-specific hard-rule violation checker (see edRuleChecks.js for exactly
@@ -27,6 +27,7 @@ export default function RuleViolationsReport({ departmentId }) {
   const [startDate, setStartDate] = useState(defaultStart);
   const [endDate, setEndDate] = useState(defaultEnd);
   const [violationsByStaff, setViolationsByStaff] = useState(null); // Map staff_id -> violations[]
+  const [staffingViolations, setStaffingViolations] = useState([]); // [{ date, rule, message }]
   const [staffById, setStaffById] = useState(new Map());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -44,6 +45,7 @@ export default function RuleViolationsReport({ departmentId }) {
       const byId = new Map(data.staff.map(s => [s.staff_id, s]));
       setStaffById(byId);
       setViolationsByStaff(checkEdRuleViolations(data.assignments, byId));
+      setStaffingViolations(checkEdStaffingLevels(data.assignments));
     } catch (err) {
       setError(`Failed to check rules: ${err.message}`);
     } finally {
@@ -101,8 +103,23 @@ export default function RuleViolationsReport({ departmentId }) {
         <p className="text-sm text-gray-500">No shifts found in that range.</p>
       )}
 
+      {violationsByStaff && staffingViolations.length > 0 && (
+        <div className="mb-4">
+          <p className="text-xs font-semibold text-gray-600 uppercase mb-2">Staffing shortfalls</p>
+          <div className="space-y-1">
+            {staffingViolations.map((v, i) => (
+              <div key={i} className="p-2 bg-amber-50 border border-amber-200 rounded-lg text-sm">
+                <span className="font-medium text-amber-900">{v.date}</span>
+                <span className="text-gray-700"> — {v.rule}: {v.message}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {violationsByStaff && staffList.length > 0 && (
         <>
+          <p className="text-xs font-semibold text-gray-600 uppercase mb-2">Individual rule violations</p>
           <p className="text-xs text-gray-500 mb-2">
             {violationsByStaff.size === 0 ? 'No violations found in this range.' : `${violationsByStaff.size} of ${staffList.length} people have at least one violation.`}
           </p>

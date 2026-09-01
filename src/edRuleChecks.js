@@ -232,3 +232,71 @@ export function checkEdRuleViolations(assignments, staffById) {
 
   return violationsByStaff;
 }
+
+// Day-level (not per-person) minimum headcounts, confirmed 2026-09-01:
+// Early = 0730, Late = 1300. Thursday's Early shift has its own split
+// (>=4 clinical, >=2 teaching) INSTEAD of the plain 6-total check — the
+// two minimums already add up to the same 6, with Teaching (which isn't
+// in the general Early letter set at all) now eligible to fill part of
+// it, so checking both the split AND the plain total would just be the
+// same requirement twice.
+const EARLY_LATE_LETTERS = new Set(['ST', 'A', 'B', 'C', 'D', 'E']);
+const NIGHT_LETTERS = new Set(['A', 'B', 'C', 'E']);
+const THURSDAY_CLINICAL_LETTERS = new Set(['A', 'B', 'D', 'E']);
+
+const MIN_EARLY = 6;
+const MIN_LATE = 6;
+const MIN_NIGHT = 4;
+const MIN_THURSDAY_CLINICAL = 4;
+const MIN_THURSDAY_TEACHING = 2;
+
+// assignments: same shape as checkEdRuleViolations expects. Returns a
+// flat, date-sorted array of { date, rule, message } — these aren't
+// anyone's individual fault, so they're not attached to a staff_id.
+export function checkEdStaffingLevels(assignments) {
+  const byDateAndTime = new Map(); // `${date}|${timeCode}` -> letter[]
+
+  for (const assignment of assignments) {
+    const info = reconstructShiftInfo(assignment);
+    if (!info) continue;
+    const key = `${info.date}|${info.timeCode}`;
+    if (!byDateAndTime.has(key)) byDateAndTime.set(key, []);
+    byDateAndTime.get(key).push(info.letter);
+  }
+
+  const violations = [];
+  const dates = [...new Set(assignments.map(a => a.date))].sort();
+
+  for (const date of dates) {
+    const earlyLetters = byDateAndTime.get(`${date}|Day`) || [];
+    if (dayOfWeek(date) === 4) {
+      const clinicalCount = earlyLetters.filter(l => THURSDAY_CLINICAL_LETTERS.has(l)).length;
+      const teachingCount = earlyLetters.filter(l => l === 'T').length;
+      if (clinicalCount < MIN_THURSDAY_CLINICAL) {
+        violations.push({ date, rule: 'Thursday Early — clinical minimum', message: `Only ${clinicalCount} on clinical shifts (A/B/D/E) — need at least ${MIN_THURSDAY_CLINICAL}` });
+      }
+      if (teachingCount < MIN_THURSDAY_TEACHING) {
+        violations.push({ date, rule: 'Thursday Early — teaching minimum', message: `Only ${teachingCount} on teaching (0730T) — need at least ${MIN_THURSDAY_TEACHING}` });
+      }
+    } else {
+      const earlyCount = earlyLetters.filter(l => EARLY_LATE_LETTERS.has(l)).length;
+      if (earlyCount < MIN_EARLY) {
+        violations.push({ date, rule: 'Early shift minimum', message: `Only ${earlyCount} reg on Early — need at least ${MIN_EARLY}` });
+      }
+    }
+
+    const lateLetters = byDateAndTime.get(`${date}|Evening`) || [];
+    const lateCount = lateLetters.filter(l => EARLY_LATE_LETTERS.has(l)).length;
+    if (lateCount < MIN_LATE) {
+      violations.push({ date, rule: 'Late shift minimum', message: `Only ${lateCount} reg on Late — need at least ${MIN_LATE}` });
+    }
+
+    const nightLetters = byDateAndTime.get(`${date}|Night`) || [];
+    const nightCount = nightLetters.filter(l => NIGHT_LETTERS.has(l)).length;
+    if (nightCount < MIN_NIGHT) {
+      violations.push({ date, rule: 'Night shift minimum', message: `Only ${nightCount} reg on Night — need at least ${MIN_NIGHT}` });
+    }
+  }
+
+  return violations;
+}
