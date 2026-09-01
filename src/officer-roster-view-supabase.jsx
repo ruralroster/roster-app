@@ -25,6 +25,7 @@ import { createTheatreActivity,
   updateTheatreActivity,
   updateTheatreActivityTimes,
   copyLastWeekActivities,
+  copyWeekActivities,
   createShift,
   updateShift,
   deactivateShift,
@@ -120,6 +121,11 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   const [calendarRefreshKey, setCalendarRefreshKey] = useState(0);
   const [applyTemplateId, setApplyTemplateId] = useState('');
   const [applyingTemplateWeek, setApplyingTemplateWeek] = useState(null); // week_start_date currently being applied, for a disabled/loading button state
+  // Copy an arbitrary week's real cards (not a saved template) onto
+  // another week — the source Monday is picked once, then "Copy" can be
+  // hit on any week row, same shape as the template-apply picker above.
+  const [copyFromWeekInput, setCopyFromWeekInput] = useState('');
+  const [copyingWeek, setCopyingWeek] = useState(null);
   // Week Template Management State (Settings) — list itself lives in
   // refData.weekTemplates; entries are fetched on demand per selected
   // template, since a department could have several and there's no reason
@@ -1930,6 +1936,29 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     }
   };
 
+  const handleCopyWeek = async (weekStartDate) => {
+    if (!copyFromWeekInput || !departmentId) return;
+    const weekStartStr = toLocalDateStr(weekStartDate);
+    const fromWeekStart = new Date(`${copyFromWeekInput}T00:00:00`);
+    if (weekStartStr === copyFromWeekInput) return; // copying a week onto itself would be a no-op anyway
+
+    if (!window.confirm(`Copy the week of ${copyFromWeekInput}'s cards onto the week of ${weekStartStr}? Only empty location/activity cards come across — no staff — and anything the destination week already has stays untouched.`)) return;
+
+    setCopyingWeek(weekStartStr);
+    try {
+      const { data, error } = await copyWeekActivities(departmentId, fromWeekStart, weekStartDate);
+      if (error) throw error;
+
+      setCalendarRefreshKey(k => k + 1);
+      setError(null);
+      window.alert(`Copied ${data.copied} card${data.copied === 1 ? '' : 's'}${data.skipped > 0 ? ` (${data.skipped} already existed and were left alone)` : ''}.`);
+    } catch (err) {
+      setError(`Failed to copy week: ${err.message}`);
+    } finally {
+      setCopyingWeek(null);
+    }
+  };
+
   // Sick Report Handlers (Day view approval banner)
   const handleResolveSickReport = async (sickReportId, status) => {
     try {
@@ -2356,11 +2385,20 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                 >
                   Export to Payroll
                 </button>
+                <div className="ml-auto flex items-center gap-2">
+                  <label className="text-xs text-gray-600 whitespace-nowrap">Copy from week starting</label>
+                  <input
+                    type="date"
+                    value={copyFromWeekInput}
+                    onChange={(e) => setCopyFromWeekInput(e.target.value)}
+                    className="px-2 py-2 border border-gray-300 rounded-lg text-sm"
+                  />
+                </div>
                 {refData.weekTemplates.length > 0 && (
                   <select
                     value={applyTemplateId}
                     onChange={(e) => setApplyTemplateId(e.target.value)}
-                    className="ml-auto px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
                   >
                     <option value="">— Pick a template to apply —</option>
                     {refData.weekTemplates.map(t => (
@@ -2369,6 +2407,9 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                   </select>
                 )}
               </div>
+              <p className="text-xs text-gray-500 mb-4 -mt-2">
+                Copying a week brings across that week's actual location/activity cards (no staff, no template needed) — pick any Monday above, then hit <strong>Copy</strong> on whichever week row below should receive it.
+              </p>
 
               <div className="grid grid-cols-7 gap-2 mb-1">
                 {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(day => (
@@ -2388,15 +2429,25 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                           <span className="text-purple-700 font-medium">{application.week_templates?.name} applied</span>
                         )}
                       </p>
-                      {refData.weekTemplates.length > 0 && (
+                      <div className="flex gap-1.5">
                         <button
-                          onClick={() => handleApplyTemplate(week.weekStart)}
-                          disabled={!applyTemplateId || applyingTemplateWeek === week.weekStartStr}
-                          className="text-xs px-2 py-0.5 bg-purple-100 hover:bg-purple-200 disabled:opacity-40 text-purple-900 font-medium rounded transition"
+                          onClick={() => handleCopyWeek(week.weekStart)}
+                          disabled={!copyFromWeekInput || copyFromWeekInput === week.weekStartStr || copyingWeek === week.weekStartStr}
+                          title={!copyFromWeekInput ? 'Pick a source week above first' : undefined}
+                          className="text-xs px-2 py-0.5 bg-blue-100 hover:bg-blue-200 disabled:opacity-40 text-blue-900 font-medium rounded transition"
                         >
-                          {applyingTemplateWeek === week.weekStartStr ? 'Applying…' : 'Apply'}
+                          {copyingWeek === week.weekStartStr ? 'Copying…' : 'Copy'}
                         </button>
-                      )}
+                        {refData.weekTemplates.length > 0 && (
+                          <button
+                            onClick={() => handleApplyTemplate(week.weekStart)}
+                            disabled={!applyTemplateId || applyingTemplateWeek === week.weekStartStr}
+                            className="text-xs px-2 py-0.5 bg-purple-100 hover:bg-purple-200 disabled:opacity-40 text-purple-900 font-medium rounded transition"
+                          >
+                            {applyingTemplateWeek === week.weekStartStr ? 'Applying…' : 'Apply'}
+                          </button>
+                        )}
+                      </div>
                     </div>
                     <div className="grid grid-cols-7 gap-2">
                       {week.days.map((date, idx) => {

@@ -907,18 +907,96 @@ export async function validateSupervision(departmentId, date, locationId, shiftI
 // UTILITY
 // ============================================================
 
-export async function copyLastWeekActivities(departmentId, fromDate) {
-  try {
-    const { data, error } = await supabase
-      .rpc('copy_week_activities', {
-        p_department_id: departmentId,
-        p_from_date: toLocalDateStr(fromDate),
-      });
+// Copies each of fromDate's theatre_activities cards (location, activity,
+// shift, times — never the staff on them, this is meant as an empty
+// starting point per the Day view button's own label) onto toDate, in the
+// same department. Skips anything toDate already has an equivalent card
+// for (same location+activity+times), so re-running this is harmless
+// rather than creating duplicates.
+//
+// This used to be a `copy_week_activities` Postgres RPC, called with just
+// one date — but that function was never actually created by any tracked
+// migration (confirmed 2026-09-01, the same "predates migration tracking,
+// and in this case was never created at all" problem already hit this
+// session for validate_supervision/rank_supervision_rules/the staff
+// table). Rewritten as plain client-side code instead of writing a new
+// migration for it, consistent with how every other roster-mutating
+// operation in this app already works — nothing else here goes through a
+// stored procedure.
+export async function copyDayActivities(departmentId, fromDate, toDate) {
+  const fromDateStr = toLocalDateStr(fromDate);
+  const toDateStr = toLocalDateStr(toDate);
 
-    return { data, error };
+  try {
+    const [{ data: sourceCards, error: sourceError }, { data: existingCards, error: existingError }] = await Promise.all([
+      supabase
+        .from('theatre_activities')
+        .select('location_id, activity_id, shift_id, start_time, end_time')
+        .eq('department_id', departmentId)
+        .eq('date', fromDateStr),
+      supabase
+        .from('theatre_activities')
+        .select('location_id, activity_id, start_time, end_time')
+        .eq('department_id', departmentId)
+        .eq('date', toDateStr),
+    ]);
+    if (sourceError) throw sourceError;
+    if (existingError) throw existingError;
+
+    const cardKey = (c) => `${c.location_id}|${c.activity_id}|${c.start_time}|${c.end_time}`;
+    const existingKeys = new Set((existingCards || []).map(cardKey));
+
+    const toInsert = (sourceCards || [])
+      .filter(c => !existingKeys.has(cardKey(c)))
+      .map(c => ({
+        department_id: departmentId,
+        date: toDateStr,
+        location_id: c.location_id,
+        activity_id: c.activity_id,
+        shift_id: c.shift_id,
+        start_time: c.start_time,
+        end_time: c.end_time,
+      }));
+
+    if (toInsert.length > 0) {
+      const { error: insertError } = await supabase.from('theatre_activities').insert(toInsert);
+      if (insertError) throw insertError;
+    }
+
+    return { data: { copied: toInsert.length, skipped: (sourceCards || []).length - toInsert.length }, error: null };
   } catch (err) {
     return { data: null, error: err };
   }
+}
+
+// The Day view button: copies exactly one day, one week earlier, onto
+// whichever date is currently open.
+export async function copyLastWeekActivities(departmentId, targetDate) {
+  const fromDate = new Date(targetDate);
+  fromDate.setDate(fromDate.getDate() - 7);
+  return copyDayActivities(departmentId, fromDate, targetDate);
+}
+
+// The Calendar view's week-to-week copy: same operation, once per day of
+// the week, from an arbitrary source Monday onto an arbitrary destination
+// Monday — not restricted to "last week" the way the Day view button is.
+export async function copyWeekActivities(departmentId, fromWeekStart, toWeekStart) {
+  let totalCopied = 0;
+  let totalSkipped = 0;
+
+  for (let i = 0; i < 7; i++) {
+    const fromDate = new Date(fromWeekStart);
+    fromDate.setDate(fromDate.getDate() + i);
+    const toDate = new Date(toWeekStart);
+    toDate.setDate(toDate.getDate() + i);
+
+    const { data, error } = await copyDayActivities(departmentId, fromDate, toDate);
+    if (error) return { data: null, error };
+    totalCopied += data.copied;
+    totalSkipped += data.skipped;
+  }
+
+  return { data: { copied: totalCopied, skipped: totalSkipped }, error: null };
 }
 // ============================================================
 // STAFF MANAGEMENT
