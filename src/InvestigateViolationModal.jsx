@@ -67,6 +67,17 @@ export default function InvestigateViolationModal({ staffId, staffName, centerDa
           <div>
             <h2 className="text-xl font-bold text-gray-900">{staffName}</h2>
             <p className="text-sm text-gray-500">Week before, the violation's week, and the week after — click a day to open it</p>
+            <div className="flex items-center gap-3 mt-2">
+              <span className="flex items-center gap-1.5 text-xs text-gray-600">
+                <span className="w-3 h-3 rounded border-2 border-green-300 bg-green-50" /> Working
+              </span>
+              <span className="flex items-center gap-1.5 text-xs text-gray-600">
+                <span className="w-3 h-3 rounded border-2 border-gray-200 bg-white" /> Not working
+              </span>
+              <span className="flex items-center gap-1.5 text-xs text-gray-600">
+                <span className="w-3 h-3 rounded border-2 border-gray-200 bg-white ring-2 ring-red-500 ring-offset-1" /> The violation
+              </span>
+            </div>
           </div>
           <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded-lg">
             <X size={20} />
@@ -98,13 +109,14 @@ export default function InvestigateViolationModal({ staffId, staffName, centerDa
                     const dateStr = toLocalDateStr(d);
                     const isCenter = dateStr === centerDate;
                     const dayAssignments = byDate.get(dateStr) || [];
+                    const isWorking = dayAssignments.length > 0;
                     return (
                       <button
                         key={dateStr}
                         onClick={() => onOpenDay(d)}
-                        className={`p-2 rounded-lg border-2 text-left transition hover:bg-blue-50 ${
-                          isCenter ? 'border-red-400 bg-red-50' : 'border-gray-200 bg-white'
-                        }`}
+                        className={`p-2 rounded-lg border-2 text-left transition hover:opacity-80 ${
+                          isWorking ? 'border-green-300 bg-green-50' : 'border-gray-200 bg-white'
+                        } ${isCenter ? 'ring-2 ring-red-500 ring-offset-1' : ''}`}
                       >
                         <p className="text-[10px] font-semibold text-gray-500 uppercase">{DAY_LABELS[i]} {d.getDate()}</p>
                         {dayAssignments.length === 0 ? (
