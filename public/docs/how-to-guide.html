@@ -305,12 +305,15 @@
       <ul>
         <li><a href="#officer-calendar">Calendar</a></li>
         <li><a href="#officer-day">Day view</a></li>
+        <li><a href="#officer-copy-week">Reusing a week</a></li>
         <li><a href="#officer-fortnight">Fortnight view</a></li>
         <li><a href="#officer-settings">Settings</a></li>
         <li><a href="#officer-skills">Advanced Skills</a></li>
         <li><a href="#officer-ranks">Ranks</a></li>
+        <li><a href="#officer-supervision">Supervision requirement</a></li>
         <li><a href="#officer-session-times">Session Times</a></li>
         <li><a href="#officer-import">Excel roster import</a></li>
+        <li><a href="#officer-rule-violations">Rule Violations</a></li>
         <li><a href="#officer-payroll">Payroll export</a></li>
       </ul>
     </div>
@@ -356,6 +359,17 @@
         <h3>Applying a Week Template</h3>
         <p>If you've set up a Week Template in Settings (see below), pick it from the dropdown above the grid, then hit <strong>Apply</strong> on whichever week row needs it. This creates the empty cards for that template's locations and activities across the week — nobody's assigned yet, but red will now correctly flag anything the template says must be covered.</p>
         <p>Applying never touches or removes anything already on the roster — it only fills in gaps the template expects and nothing's been created for yet.</p>
+      </article>
+
+      <article class="topic" id="officer-copy-week">
+        <span class="eyebrow">Calendar &amp; Day view</span>
+        <h3>Reusing a week's activities</h3>
+        <p>Two different ways to reuse an existing week, for two different situations:</p>
+        <ul>
+          <li><strong>Copy Last Week's Activities</strong> (top of Day view) copies just that one day's cards from seven days earlier — a quick way to start a day that looks like the same day last week.</li>
+          <li><strong>Copy a week</strong> (Calendar tab, below the grid) copies every card from any source Monday to any destination Monday — useful for a one-off "this week should look like that week" copy that isn't part of the recurring pattern a Week Template captures.</li>
+        </ul>
+        <p>Both only add cards (location, activity, shift, times) — never staff — and both skip anything the destination day/week already has an equivalent card for, so re-running either is harmless rather than creating duplicates.</p>
       </article>
 
       <article class="topic" id="officer-day">
@@ -408,27 +422,25 @@
           <li>After picking a shift, you'll see <strong>everything already happening in that session</strong> — pick one to join it as registrar.</li>
           <li>If nothing's on that session yet, but someone's on call, you'll be offered a fallback: pick the on-call consultant, then choose a location and activity to build a fresh card. That card gets both the junior and the on-call consultant (ticked on-call) automatically.</li>
         </ul>
+        <p>If this department has at least one location with <strong>Requires senior supervision</strong> unchecked (see below), that fallback step is skipped and you go straight to picking a location — a junior can be placed on an unsupervised location with nobody on call at all.</p>
       </article>
 
       <article class="topic" id="officer-settings">
         <span class="eyebrow">Settings</span>
         <h3>Where everything lives</h3>
-        <p>Settings is grouped into collapsed sections — tap a heading to open it:</p>
+        <p>Settings is grouped into six collapsed categories, roughly in the order you'd set a new department up — tap a heading to open it:</p>
         <ul>
-          <li><strong>Department Settings</strong> — pay centre number.</li>
-          <li><strong>Session Times</strong> — the Morning/Afternoon/Night boundary times, see below.</li>
-          <li><strong>Shift Properties</strong> — Shifts, Shift Pattern Rules (fatigue rules), Duty Types (on-call slots, their abbreviations, and which Advanced Skill each one requires), Leave Types.</li>
-          <li><strong>Week Templates</strong> — the recurring coverage skeleton (see Calendar, above).</li>
-          <li><strong>Phone Book</strong> — the Coffee Place number, plus any other numbers staff should be able to tap-to-call (nearest tertiary ED, NUM, etc.).</li>
-          <li><strong>Card Properties</strong> — Locations and Activities: which activities are allowed at which location, and (via each one's <strong>Skills</strong> button) which Advanced Skill an activity requires.</li>
-          <li><strong>Audit Balance</strong> — Case Mix Report and On-Call &amp; Weekend Fairness, for checking the roster is spreading load evenly.</li>
-          <li><strong>Staff Settings</strong> — Ranks (see below), Staff and Availability (day-by-day availability, rank, FTE, email, and which Advanced Skills each person holds), Staff Activity Profiles, and Staff Accounts (inviting people, setting officer vs staff permission, correcting rank, resending an invite or generating a one-time password).</li>
-          <li><strong>Staff Filters</strong> — the Advanced Skill list itself (e.g. Anaesthetics, Obstetrics, Endoscopy) — add, rename, or remove the skills the two sections above reference.</li>
+          <li><strong>Department</strong> — Department Settings (pay centre number) and Session Times (the Morning/Afternoon/Night boundary times, see below).</li>
+          <li><strong>Locations &amp; Activities</strong> — Locations (including each one's <strong>Requires senior supervision</strong> checkbox, see below) and Activities: which activities are allowed at which location, and (via each one's <strong>Skills</strong> button) which Advanced Skill an activity requires.</li>
+          <li><strong>Shifts &amp; Rules</strong> — Shifts, Shift Pattern Rules (fatigue rules), Duty Types (on-call slots, their abbreviations, and which Advanced Skill each one requires), Leave Types, and the Advanced Skill list itself (e.g. Anaesthetics, Obstetrics, Endoscopy).</li>
+          <li><strong>Rostering Tools</strong> — Week Templates (the recurring coverage skeleton, see Calendar above), and Excel Roster Import/Export.</li>
+          <li><strong>Staff &amp; Contacts</strong> — Ranks (see below), Staff and Availability (day-by-day availability, rank, FTE, email, and which Advanced Skills each person holds), Staff Activity Profiles, Staff Accounts (inviting people, setting officer vs staff permission, correcting rank, resending an invite or generating a one-time password), and the Phone Book (the Coffee Place number plus any other tap-to-call numbers).</li>
+          <li><strong>Reports &amp; Compliance</strong> — Case Mix Report, On-Call &amp; Weekend Fairness, and (Emergency Department roster format only) Rule Violations — see below.</li>
         </ul>
       </article>
 
       <article class="topic" id="officer-ranks">
-        <span class="eyebrow">Staff Settings → Ranks</span>
+        <span class="eyebrow">Staff &amp; Contacts → Ranks</span>
         <h3>Setting up your rank list</h3>
         <p>Every department defines its own ranks — there's no fixed Consultant/Fellow/Trainee/Intern list underneath. A brand-new department starts with five common ones already there; add, rename, reorder (↑/↓), or delete from that same screen.</p>
         <ul>
@@ -438,18 +450,29 @@
         </ul>
       </article>
 
+      <article class="topic" id="officer-supervision">
+        <span class="eyebrow">Locations &amp; Activities → Locations</span>
+        <h3>Turning off the supervision requirement for a location</h3>
+        <p>The rank-level "requires supervision" flag above assumes a supervising colleague is available <em>somewhere</em> — but some locations genuinely never have one, e.g. a junior-only clinic, or a rural site run without a consultant on-call structure at all. Each location has its own <strong>Requires senior supervision</strong> checkbox, ticked by default so nothing about any existing location changes until you touch it.</p>
+        <p>Unchecking it for a location means:</p>
+        <ul>
+          <li>Completing an allocation on a card at that location never warns about missing a consultant, whether one's present or on call or not.</li>
+          <li>The Fortnight wizard's on-call fallback for junior staff (see above) is skipped — a junior can be placed there directly, with nobody on call.</li>
+        </ul>
+        <p>A junior placed on a location that still <em>does</em> require supervision is unaffected — the usual warnings still apply there.</p>
+      </article>
+
       <article class="topic" id="officer-session-times">
-        <span class="eyebrow">Department Settings → Session Times</span>
+        <span class="eyebrow">Department → Session Times</span>
         <h3>Morning, Afternoon, and Night boundaries</h3>
         <p>These six times decide which "Allocations" section a shift falls under in Day view, and which shifts show up in the staff Coffee session filters. Set them to match how your department's shifts actually run — a department whose Day shift starts at 07:30 will want Morning starting well before the default 09:00.</p>
         <p>A gap between two windows (Morning ending before Afternoon starts, for instance) belongs to neither section — an activity scheduled entirely inside that gap won't show under any Allocations heading.</p>
       </article>
 
       <article class="topic" id="officer-import">
-        <span class="eyebrow">Settings → Excel Roster Import</span>
+        <span class="eyebrow">Settings → Rostering Tools → Excel Roster Import</span>
         <h3>Bringing in a roster built outside the app</h3>
         <ol>
-          <li>Pick the <strong>Roster format</strong> that matches your department's spreadsheet — each department's layout is different, so this isn't automatic.</li>
           <li>Upload the file. If the format has more than one tab (sheet) per file, a Sheet dropdown appears.</li>
           <li><strong>Check for Missing Staff</strong> — for a brand-new department, this reads every name off the roster and lists anyone with no staff record yet, with FTE and a suggested rank pre-filled from the sheet. Review, adjust the rank if needed, and <strong>Create Selected Staff</strong>.</li>
           <li>Pick a week and hit <strong>Dry Run</strong> — this previews exactly what would be written, with nothing actually saved yet. A progress bar shows how far through it's got on a large file.</li>
@@ -459,22 +482,41 @@
           <span class="mark">Unmapped codes are never guessed</span>
           <p>A shift code the importer doesn't recognise shows up as an error in the results list rather than being silently skipped or guessed at — check with whoever built the spreadsheet what it means, then it can be added.</p>
         </div>
+        <p>Each department has one fixed spreadsheet layout, matching whichever roster it was originally built from — a super-admin sets this once for the department; other officers just see the import tab ready to go, with no format to pick.</p>
+      </article>
+
+      <article class="topic" id="officer-rule-violations">
+        <span class="eyebrow">Settings → Reports &amp; Compliance → Rule Violations</span>
+        <h3>Checking hard scheduling rules</h3>
+        <p>Available to departments using the Emergency Department roster format. Unlike Case Mix/Fairness (a fixed trailing-12-months view), this checks a date range you choose against the department's own hard rules — things that must never happen, not the softer "aim for" goals a good roster tries to optimise for:</p>
+        <ul>
+          <li>Night blocks confined to Monday–Thursday or Friday–Sunday, with at least three full days off afterwards, and no two separate blocks within the same fortnight.</li>
+          <li>Weekly caps and fortnightly minimums on specific shift types, each with its own rule for whether a night shift counts towards it.</li>
+          <li>A locum's fortnightly shift cap.</li>
+          <li>Day-level staffing minimums — enough people rostered across the right shift types for Early, Late, and Night, with Thursday's Early shift held to its own clinical/teaching split.</li>
+        </ul>
+        <ol>
+          <li>Pick a date range and hit <strong>Check Roster</strong>. A name goes red if it has at least one violation in range; staffing shortfalls (no single person responsible) list separately above the names.</li>
+          <li>Click a red name to see their violations. <strong>Accept</strong> dismisses one permanently — use it for a violation that's fine in context and doesn't need chasing again. <strong>Investigate</strong> opens that person's own shifts for the week before, the week of, and the week after the violation, with every day actually involved in it ringed in red and working days shaded green.</li>
+          <li>Click any day inside the Investigate view to open it in full — everyone rostered that day, abbreviated, with a <strong>Remove</strong> button per person — without leaving the Rule Violations screen.</li>
+        </ol>
+        <p>Your date range and results stay put if you switch away to Day or Fortnight view to fix something and come back.</p>
       </article>
 
       <article class="topic" id="officer-skills">
-        <span class="eyebrow">Staff Filters + Card Properties</span>
+        <span class="eyebrow">Shifts &amp; Rules + Locations &amp; Activities</span>
         <h3>Advanced Skills</h3>
         <p>An Advanced Skill is a tag (e.g. <span class="skill-chip">Anaesthetics</span>) an officer puts on a staff member, and can then require — one-of-a-set — on an Activity or Duty Type to limit who's offered for it. Unlike Staff Activity Profiles (below), which only <em>warns</em> that someone marked themselves unable to do an activity, a required Advanced Skill is a hard rule: without it, that person doesn't appear in the dropdown at all.</p>
         <ol>
-          <li>Add skills to the department's list under <strong>Settings → Staff Filters → Advanced Skill</strong>. New departments start with just <strong>Emergency</strong>.</li>
-          <li>Tag each staff member under <strong>Settings → Staff Settings → Staff and Availability</strong> — the <strong>Adv Skill</strong> row of toggles on their profile. Most junior doctors, and some fellows, will rightly have none checked.</li>
+          <li>Add skills to the department's list under <strong>Settings → Shifts &amp; Rules → Advanced Skill</strong>. New departments start with just <strong>Emergency</strong>.</li>
+          <li>Tag each staff member under <strong>Settings → Staff &amp; Contacts → Staff and Availability</strong> — the <strong>Adv Skill</strong> row of toggles on their profile. Most junior doctors, and some fellows, will rightly have none checked.</li>
           <li>Require a skill on an Activity from either place — whichever's more convenient at the time:
             <ul>
-              <li>the <strong>Skills</strong> button next to the activity itself, under <strong>Card Properties → Activities</strong>; or</li>
-              <li>the <strong>Skills</strong> button next to a location, under <strong>Card Properties → Locations</strong>, which shows a table of every activity used at that location so you can set several at once. Either one edits the same setting — an activity's requirement is the same wherever it's used, not specific to one location.</li>
+              <li>the <strong>Skills</strong> button next to the activity itself, under <strong>Locations &amp; Activities → Activities</strong>; or</li>
+              <li>the <strong>Skills</strong> button next to a location, under <strong>Locations &amp; Activities → Locations</strong>, which shows a table of every activity used at that location so you can set several at once. Either one edits the same setting — an activity's requirement is the same wherever it's used, not specific to one location.</li>
             </ul>
           </li>
-          <li>Require a skill on an on-call slot the same way, from its own <strong>Skills</strong> button under <strong>Shift Properties → Duty Types</strong>.</li>
+          <li>Require a skill on an on-call slot the same way, from its own <strong>Skills</strong> button under <strong>Shifts &amp; Rules → Duty Types</strong>.</li>
         </ol>
         <p>Leaving an activity or duty type with nothing checked means it's open to anyone, exactly as before — this is opt-in per slot, nothing changes until you set one.</p>
         <div class="example-row"><span class="skill-chip">Anaesthetics</span><span class="arrow">or</span><span class="skill-chip">Endoscopy</span><span class="arrow">→</span>Endoscopy consultant slot</div>

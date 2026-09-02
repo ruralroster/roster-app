@@ -223,7 +223,11 @@
     </div>
     <div class="feature">
       <div class="feature-head"><span class="feature-name">Excel roster import &amp; export</span><span class="tag officer">Officer</span></div>
-      <p>Bring an externally built roster in from Excel — pick the format that matches your department's spreadsheet layout — or export the department's roster back out. A dry run previews every change before anything's written, and any staff the sheet mentions but the department doesn't have yet can be created straight from the import, with FTE and a suggested rank pre-filled.</p>
+      <p>Bring an externally built roster in from Excel — each department has its own fixed spreadsheet layout, set once by a super-admin — or export the department's roster back out. A progress bar tracks large files, a dry run previews every change before anything's written, and any staff the sheet mentions but the department doesn't have yet can be created straight from the import, with FTE and a suggested rank pre-filled.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-head"><span class="feature-name">Reuse a week's activities</span><span class="tag officer">Officer</span></div>
+      <p><strong>Copy Last Week's Activities</strong> (Day view) brings across last week's same-day cards, empty, as a quick starting point. Calendar's own week-to-week copy does the same thing for any two arbitrary weeks — separate from Week Templates, which apply a fixed recurring skeleton rather than copying a specific week.</p>
     </div>
     <div class="feature">
       <div class="feature-head"><span class="feature-name">Jump to any date</span><span class="tag both">Both</span></div>
@@ -249,15 +253,23 @@
     </div>
     <div class="feature">
       <div class="feature-head"><span class="feature-name">On-Call &amp; Weekend Fairness Report</span><span class="tag officer">Officer</span></div>
-      <p>Tallies on-call and weekend load per person, so it stays visibly even across the department.</p>
+      <p>Tallies on-call and weekend load per person, so it stays visibly even across the department. Exportable to CSV.</p>
     </div>
     <div class="feature">
       <div class="feature-head"><span class="feature-name">Case Mix Report</span><span class="tag officer">Officer</span></div>
-      <p>Tracks each staff member's exposure by activity — the same ranking that powers the Consultant/Registrar dropdowns.</p>
+      <p>Tracks each staff member's exposure by activity — the same ranking that powers the Consultant/Registrar dropdowns. Exportable to CSV.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-head"><span class="feature-name">Rule Violations</span><span class="tag officer">Officer</span></div>
+      <p>Checks a department's hard scheduling rules over a date range — night-block shape and spacing, mandatory rest after nights, weekly/fortnightly shift-type caps and minimums, and day-level staffing minimums — and flags who's affected. Accept a violation to dismiss it permanently, or Investigate to see that person's own shifts for the surrounding three weeks (every day involved in the violation highlighted) and drill into any one day to see and adjust everyone rostered on it. Exportable to CSV. Currently available to departments using the Emergency Department roster format.</p>
     </div>
     <div class="feature">
       <div class="feature-head"><span class="feature-name">Configurable Ranks</span><span class="tag officer">Officer</span></div>
       <p>Each department defines its own rank list — add, rename, reorder, or remove ranks, and flag which ones need a supervising colleague present. Not locked to the classic Consultant/Fellow/Trainee/Intern set.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-head"><span class="feature-name">Per-location supervision requirement</span><span class="tag officer">Officer</span></div>
+      <p>Most locations need a consultant (present or on-call) whenever a junior's rostered there. Uncheck "Requires senior supervision" on a location to roster junior staff there freely — a junior-only clinic, or a site with no consultant structure at all — without the no-consultant warnings. Defaults to on for every existing location.</p>
     </div>
     <div class="feature">
       <div class="feature-head"><span class="feature-name">Session Times</span><span class="tag officer">Officer</span></div>
