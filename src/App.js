@@ -56,6 +56,29 @@ function App() {
   // Week / Add Activity) into this top bar, so they stay visible while
   // scrolled down the page instead of only living next to the date header.
   const topBarActionsRef = useRef(null);
+  // The fixed top bar's real height varies — it wraps onto 2-3 lines on a
+  // narrow phone once the officer/staff buttons plus any portaled Day-tab
+  // actions no longer fit one row — so the content below it can't use a
+  // fixed padding-top without risking exactly this: the app opening onto a
+  // tab with extra top-bar buttons, wrapping further than a static value
+  // assumed, and the bar's bottom edge overlapping the content underneath.
+  // Measuring the bar itself and using that as the offset keeps the two in
+  // sync regardless of how many lines it wraps to.
+  // A callback ref (not a plain useRef) because the bar itself doesn't
+  // exist yet during the loading/sign-in states rendered earlier in this
+  // component — a plain ref + effect with an empty dependency array would
+  // run once while topBarRef.current is still null and never re-attach
+  // once the real bar mounts.
+  const [topBarNode, setTopBarNode] = useState(null);
+  const topBarRef = useCallback((node) => setTopBarNode(node), []);
+  const [topBarHeight, setTopBarHeight] = useState(64);
+
+  useEffect(() => {
+    if (!topBarNode) return;
+    const observer = new ResizeObserver(([entry]) => setTopBarHeight(entry.contentRect.height));
+    observer.observe(topBarNode);
+    return () => observer.disconnect();
+  }, [topBarNode]);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session: s } }) => setSession(s));
@@ -217,7 +240,7 @@ function App() {
 
   return (
     <div>
-      <div className="fixed top-0 left-0 right-0 z-40 bg-white border-b border-gray-200 shadow-sm px-4 py-3 flex items-center justify-between gap-2 flex-wrap">
+      <div ref={topBarRef} className="fixed top-0 left-0 right-0 z-40 bg-white border-b border-gray-200 shadow-sm px-4 py-3 flex items-center justify-between gap-2 flex-wrap">
         <div ref={topBarActionsRef} className="flex gap-2 flex-wrap" />
         <div className="flex gap-2 flex-wrap">
           {showSwitcher && (
@@ -263,7 +286,7 @@ function App() {
         </div>
       </div>
 
-      <div className="pt-16">
+      <div style={{ paddingTop: topBarHeight + 16 }}>
         {effectiveView === 'officer' ? (
           <OfficerRosterView departmentId={departmentId} staffId={staffId} topBarActionsRef={topBarActionsRef} isSuperAdmin={isSuperAdmin} />
         ) : (
