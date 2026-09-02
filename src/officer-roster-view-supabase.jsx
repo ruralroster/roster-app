@@ -4653,6 +4653,12 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
             <CollapsibleSection title="Card Properties">
             {/* Locations Section */}
             <CollapsibleSection title="Locations">
+              {error && (
+                <div className="mb-4 p-3 bg-red-50 border border-red-300 rounded-lg flex gap-2 items-start">
+                  <AlertCircle size={18} className="text-red-600 flex-shrink-0 mt-0.5" />
+                  <p className="text-sm text-red-700">{error}</p>
+                </div>
+              )}
               <div className="mb-4 p-3 border border-gray-200 rounded-lg space-y-2">
                 <input
                   type="text"
