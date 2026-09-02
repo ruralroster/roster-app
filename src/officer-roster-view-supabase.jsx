@@ -3804,6 +3804,8 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
               </div>
             )}
 
+            {/* Department Group — Department Settings, Session Times */}
+            <CollapsibleSection title="Department">
             {/* Department Settings Section */}
             <CollapsibleSection title="Department Settings">
               <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Pay Centre Number</label>
@@ -3900,10 +3902,252 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                 {savingSessionTimes ? 'Saving...' : 'Save'}
               </button>
             </CollapsibleSection>
+            </CollapsibleSection>
 
-            {/* Shift Properties Group — Shifts, Shift Pattern Rules, Duty
-                Types, Leave Types */}
-            <CollapsibleSection title="Shift Properties">
+            {/* Locations & Activities Group — Locations, Activities */}
+            <CollapsibleSection title="Locations & Activities">
+            {/* Locations Section */}
+            <CollapsibleSection title="Locations">
+              {error && (
+                <div className="mb-4 p-3 bg-red-50 border border-red-300 rounded-lg flex gap-2 items-start">
+                  <AlertCircle size={18} className="text-red-600 flex-shrink-0 mt-0.5" />
+                  <p className="text-sm text-red-700">{error}</p>
+                </div>
+              )}
+              <div className="mb-4 p-3 border border-gray-200 rounded-lg space-y-2">
+                <input
+                  type="text"
+                  placeholder="Location name (e.g., 'Theatre 1')"
+                  value={newLocationInput}
+                  onChange={(e) => setNewLocationInput(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                />
+                <div className="flex gap-2 items-center">
+                  <label className="text-xs text-gray-600">Default hours (optional — blank means always open):</label>
+                  <input
+                    type="time"
+                    value={newLocationDefaultStart}
+                    onChange={(e) => setNewLocationDefaultStart(e.target.value)}
+                    className="px-2 py-1 border border-gray-300 rounded text-sm"
+                  />
+                  <span className="text-gray-400">–</span>
+                  <input
+                    type="time"
+                    value={newLocationDefaultEnd}
+                    onChange={(e) => setNewLocationDefaultEnd(e.target.value)}
+                    className="px-2 py-1 border border-gray-300 rounded text-sm"
+                  />
+                  <button
+                    onClick={handleCreateLocation}
+                    className="ml-auto px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition text-sm"
+                  >
+                    Add
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                {refData.locations.map(loc => (
+                  <div key={loc.location_id} className={`p-3 border rounded-lg flex items-center justify-between gap-2 ${loc.active === false ? 'border-gray-200 bg-gray-50 opacity-60' : 'border-gray-200'}`}>
+                    {editingLocationId === loc.location_id ? (
+                      <div className="flex flex-wrap gap-2 items-center flex-1">
+                        <input
+                          type="text"
+                          value={editLocationName}
+                          onChange={(e) => setEditLocationName(e.target.value)}
+                          className="flex-1 min-w-[8rem] px-2 py-1 border border-gray-300 rounded text-sm"
+                        />
+                        <input
+                          type="time"
+                          value={editLocationDefaultStart}
+                          onChange={(e) => setEditLocationDefaultStart(e.target.value)}
+                          className="px-2 py-1 border border-gray-300 rounded text-sm"
+                        />
+                        <span className="text-gray-400">–</span>
+                        <input
+                          type="time"
+                          value={editLocationDefaultEnd}
+                          onChange={(e) => setEditLocationDefaultEnd(e.target.value)}
+                          className="px-2 py-1 border border-gray-300 rounded text-sm"
+                        />
+                        <button
+                          onClick={handleUpdateLocation}
+                          className="px-3 py-1 bg-green-600 hover:bg-green-700 text-white font-medium rounded text-xs transition"
+                        >
+                          Save
+                        </button>
+                        <button
+                          onClick={() => setEditingLocationId(null)}
+                          className="px-3 py-1 bg-gray-400 hover:bg-gray-500 text-white font-medium rounded text-xs transition"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <div>
+                          <p className="font-semibold text-sm text-gray-900">
+                            {loc.name}{loc.active === false && <span className="ml-2 text-xs font-normal text-gray-500">(inactive)</span>}
+                            <span className="ml-2 text-xs font-normal text-gray-500">
+                              {loc.default_start_time && loc.default_end_time
+                                ? `(default ${loc.default_start_time.slice(0, 5)}–${loc.default_end_time.slice(0, 5)})`
+                                : '(always open)'}
+                            </span>
+                            {loc.allowed_activity_ids?.length > 0 && (
+                              <span className="ml-2 text-xs font-normal text-purple-700">
+                                · {loc.allowed_activity_ids.length} activit{loc.allowed_activity_ids.length === 1 ? 'y' : 'ies'} allowed
+                              </span>
+                            )}
+                          </p>
+                          <label className="flex items-center gap-1.5 text-xs text-gray-600 mt-1">
+                            <input
+                              type="checkbox"
+                              checked={loc.requires_supervision !== false}
+                              onChange={() => handleToggleLocationSupervision(loc.location_id, loc.requires_supervision === false)}
+                            />
+                            Requires senior supervision (junior staff need a consultant/on-call here)
+                          </label>
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => setEditingLocationActivitiesId(loc.location_id)}
+                            className="px-3 py-1 bg-purple-100 hover:bg-purple-200 text-purple-900 font-medium rounded text-xs transition"
+                          >
+                            Activities
+                          </button>
+                          <button
+                            onClick={() => setEditingLocationSkillsId(loc.location_id)}
+                            className="px-3 py-1 bg-purple-100 hover:bg-purple-200 text-purple-900 font-medium rounded text-xs transition"
+                          >
+                            Skills
+                          </button>
+                          <button
+                            onClick={() => handleStartEditLocation(loc)}
+                            className="px-3 py-1 bg-blue-100 hover:bg-blue-200 text-blue-900 font-medium rounded text-xs transition"
+                          >
+                            Edit
+                          </button>
+                          {loc.active === false ? (
+                            <button
+                              onClick={() => handleReactivateLocation(loc.location_id)}
+                              className="px-3 py-1 bg-green-100 hover:bg-green-200 text-green-900 font-medium rounded text-xs transition"
+                            >
+                              Reactivate
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => handleDeactivateLocation(loc.location_id)}
+                              className="px-3 py-1 bg-red-100 hover:bg-red-200 text-red-900 font-medium rounded text-xs transition"
+                            >
+                              Deactivate
+                            </button>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </CollapsibleSection>
+
+            {/* Activities Section */}
+            <CollapsibleSection title="Activities">
+              <div className="flex gap-2 mb-4">
+                <input
+                  type="text"
+                  placeholder="Activity name (e.g., 'STOP')"
+                  value={newActivityInput}
+                  onChange={(e) => setNewActivityInput(e.target.value)}
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                />
+                <input
+                  type="text"
+                  placeholder="Abbrev. (e.g., 'ED')"
+                  value={newActivityAbbreviation}
+                  onChange={(e) => setNewActivityAbbreviation(e.target.value)}
+                  title="Short code shown in the Fortnight view's abridged day cells"
+                  className="w-28 px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                />
+                <button
+                  onClick={handleCreateActivity}
+                  className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition text-sm"
+                >
+                  Add
+                </button>
+              </div>
+
+              <div className="space-y-2">
+                {refData.activities.map(act => (
+                  <div key={act.activity_id} className="p-3 border border-gray-200 rounded-lg flex items-center justify-between gap-2">
+                    {editingActivityId === act.activity_id ? (
+                      <div className="flex gap-2 items-center flex-1">
+                        <input
+                          type="text"
+                          value={editActivityName}
+                          onChange={(e) => setEditActivityName(e.target.value)}
+                          className="flex-1 px-2 py-1 border border-gray-300 rounded text-sm"
+                        />
+                        <input
+                          type="text"
+                          value={editActivityAbbreviation}
+                          onChange={(e) => setEditActivityAbbreviation(e.target.value)}
+                          title="Short code shown in the Fortnight view's abridged day cells"
+                          className="w-24 px-2 py-1 border border-gray-300 rounded text-sm"
+                        />
+                        <button
+                          onClick={handleUpdateActivity}
+                          className="px-3 py-1 bg-green-600 hover:bg-green-700 text-white font-medium rounded text-xs transition"
+                        >
+                          Save
+                        </button>
+                        <button
+                          onClick={() => setEditingActivityId(null)}
+                          className="px-3 py-1 bg-gray-400 hover:bg-gray-500 text-white font-medium rounded text-xs transition"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <p className="font-semibold text-sm text-gray-900">
+                          {act.name}{act.abbreviation && <span className="ml-2 text-xs font-normal text-gray-500">({act.abbreviation})</span>}
+                          {act.required_advanced_skills?.length > 0 && (
+                            <span className="ml-2 text-xs font-normal text-purple-700">
+                              · requires {act.required_advanced_skills.length} skill{act.required_advanced_skills.length === 1 ? '' : 's'}
+                            </span>
+                          )}
+                        </p>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => setEditingActivitySkillsId(act.activity_id)}
+                            className="px-3 py-1 bg-purple-100 hover:bg-purple-200 text-purple-900 font-medium rounded text-xs transition"
+                          >
+                            Skills
+                          </button>
+                          <button
+                            onClick={() => handleStartEditActivity(act)}
+                            className="px-3 py-1 bg-blue-100 hover:bg-blue-200 text-blue-900 font-medium rounded text-xs transition"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => handleDeleteActivity(act.activity_id)}
+                            className="px-3 py-1 bg-red-100 hover:bg-red-200 text-red-900 font-medium rounded text-xs transition"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </CollapsibleSection>
+            </CollapsibleSection>
+
+            {/* Shifts & Rules Group — Shifts, Shift Pattern Rules, Duty
+                Types, Leave Types, Advanced Skill */}
+            <CollapsibleSection title="Shifts & Rules">
             {/* Shifts Section */}
             <CollapsibleSection title="Shifts">
               <div className="mb-6 p-4 bg-blue-50 rounded-lg">
@@ -4323,7 +4567,88 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                 )}
               </div>
             </CollapsibleSection>
+
+            {/* Advanced Skill Section — the configurable Advanced
+                Skill list used to tag staff (Staff and Availability tab)
+                and to restrict who's offered for an Activity/Duty Type
+                slot (the "Skills" button on each, in Locations &
+                Activities/Duty Types). */}
+            <CollapsibleSection title="Advanced Skill">
+              <div className="flex gap-2 mb-4">
+                <input
+                  type="text"
+                  placeholder="Skill name (e.g., 'Anaesthetics')"
+                  value={newAdvancedSkillName}
+                  onChange={(e) => setNewAdvancedSkillName(e.target.value)}
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                />
+                <button
+                  onClick={handleCreateAdvancedSkill}
+                  className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition text-sm"
+                >
+                  Add
+                </button>
+              </div>
+
+              <p className="text-xs text-gray-600 mb-4">
+                Officers check these against each staff member in Staff and Availability, then require one-or-more of them on an Activity or Duty Type to limit who's offered for that slot — e.g. only staff with Anaesthetics or Endoscopy show up for an Endoscopy consultant slot.
+              </p>
+
+              <div className="space-y-2">
+                {refData.advancedSkills.map(skill => (
+                  <div key={skill.advanced_skill_id} className="p-3 border border-gray-200 rounded-lg flex items-center justify-between gap-2">
+                    {editingAdvancedSkillId === skill.advanced_skill_id ? (
+                      <div className="flex gap-2 items-center flex-1">
+                        <input
+                          type="text"
+                          value={editAdvancedSkillName}
+                          onChange={(e) => setEditAdvancedSkillName(e.target.value)}
+                          className="flex-1 px-2 py-1 border border-gray-300 rounded text-sm"
+                        />
+                        <button
+                          onClick={handleUpdateAdvancedSkill}
+                          className="px-3 py-1 bg-green-600 hover:bg-green-700 text-white font-medium rounded text-xs transition"
+                        >
+                          Save
+                        </button>
+                        <button
+                          onClick={() => setEditingAdvancedSkillId(null)}
+                          className="px-3 py-1 bg-gray-400 hover:bg-gray-500 text-white font-medium rounded text-xs transition"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <p className="font-semibold text-sm text-gray-900">{skill.name}</p>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleStartEditAdvancedSkill(skill)}
+                            className="px-3 py-1 bg-blue-100 hover:bg-blue-200 text-blue-900 font-medium rounded text-xs transition"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => handleDeleteAdvancedSkill(skill.advanced_skill_id)}
+                            className="px-3 py-1 bg-red-100 hover:bg-red-200 text-red-900 font-medium rounded text-xs transition"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                ))}
+                {refData.advancedSkills.length === 0 && (
+                  <p className="text-sm text-gray-500">No advanced skills yet — add one above.</p>
+                )}
+              </div>
             </CollapsibleSection>
+            </CollapsibleSection>
+
+            {/* Rostering Tools Group — Week Templates, Excel Roster
+                Import, Excel Roster Export */}
+            <CollapsibleSection title="Rostering Tools">
 
             {/* Week Templates Section — the "what has to happen every
                 week" skeleton (locations + activities per day-of-week, no
@@ -4527,429 +4852,11 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                 leaveTypes={refData.leaveTypes}
               />
             </CollapsibleSection>
-
-            {/* Phone Book Section — non-staff numbers (nearest tertiary
-                ED, on-site ED SMO line, Nurse Unit Manager, etc.), shown to
-                everyone under the staff view's Phone Book tab. */}
-            <CollapsibleSection title="Phone Book">
-              {/* Coffee Place — separate from the general numbers list
-                  below: the Coffee Orders modal looks this up directly to
-                  build its "text the order" link. */}
-              <div className="mb-6 p-4 bg-amber-50 rounded-lg border border-amber-200">
-                <p className="text-xs font-semibold text-amber-900 uppercase mb-2">Coffee Place</p>
-                <div className="grid grid-cols-2 gap-3 mb-3">
-                  <input
-                    type="text"
-                    placeholder="Name (e.g., 'Roasted on Main')"
-                    value={coffeePlaceNameInput}
-                    onChange={(e) => setCoffeePlaceNameInput(e.target.value)}
-                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                  />
-                  <input
-                    type="tel"
-                    placeholder="Phone number"
-                    value={coffeePlacePhoneInput}
-                    onChange={(e) => setCoffeePlacePhoneInput(e.target.value)}
-                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                  />
-                </div>
-                <button
-                  onClick={handleSaveCoffeePlace}
-                  disabled={savingCoffeePlace}
-                  className="w-full px-4 py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-medium rounded-lg transition text-sm"
-                >
-                  {savingCoffeePlace ? 'Saving...' : 'Save'}
-                </button>
-                <p className="text-xs text-gray-500 mt-2">Where the staff view's Coffee Orders summary texts the order to.</p>
-              </div>
-
-              <div className="mb-6 p-4 bg-teal-50 rounded-lg">
-                <div className="grid grid-cols-2 gap-3 mb-3">
-                  <input
-                    type="text"
-                    placeholder="Name (e.g., 'Nearest Tertiary ED')"
-                    value={newPhoneBookLabel}
-                    onChange={(e) => setNewPhoneBookLabel(e.target.value)}
-                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                  />
-                  <input
-                    type="tel"
-                    placeholder="Phone number"
-                    value={newPhoneBookPhone}
-                    onChange={(e) => setNewPhoneBookPhone(e.target.value)}
-                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                  />
-                </div>
-                <button
-                  onClick={handleCreatePhoneBookEntry}
-                  disabled={!newPhoneBookLabel.trim() || !newPhoneBookPhone.trim()}
-                  className="w-full px-4 py-2 bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white font-medium rounded-lg transition text-sm"
-                >
-                  Add Number
-                </button>
-              </div>
-
-              <div className="space-y-2">
-                {refData.phoneBookEntries.length === 0 && (
-                  <p className="text-sm text-gray-500">No phone book entries yet — add one above.</p>
-                )}
-                {refData.phoneBookEntries.map(entry => (
-                  <div key={entry.phone_book_entry_id} className="p-3 border border-gray-200 rounded-lg flex items-center justify-between gap-2">
-                    {editingPhoneBookEntryId === entry.phone_book_entry_id ? (
-                      <div className="flex flex-wrap gap-2 items-center flex-1">
-                        <input
-                          type="text"
-                          value={editPhoneBookLabel}
-                          onChange={(e) => setEditPhoneBookLabel(e.target.value)}
-                          className="flex-1 min-w-[8rem] px-2 py-1 border border-gray-300 rounded text-sm"
-                        />
-                        <input
-                          type="tel"
-                          value={editPhoneBookPhone}
-                          onChange={(e) => setEditPhoneBookPhone(e.target.value)}
-                          className="px-2 py-1 border border-gray-300 rounded text-sm"
-                        />
-                        <button
-                          onClick={handleUpdatePhoneBookEntry}
-                          className="px-3 py-1 bg-green-600 hover:bg-green-700 text-white font-medium rounded text-xs transition"
-                        >
-                          Save
-                        </button>
-                        <button
-                          onClick={() => setEditingPhoneBookEntryId(null)}
-                          className="px-3 py-1 bg-gray-400 hover:bg-gray-500 text-white font-medium rounded text-xs transition"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    ) : (
-                      <>
-                        <div>
-                          <p className="font-semibold text-sm text-gray-900">{entry.label}</p>
-                          <p className="text-xs text-gray-600 font-mono">{entry.phone}</p>
-                        </div>
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => handleStartEditPhoneBookEntry(entry)}
-                            className="px-3 py-1 bg-blue-100 hover:bg-blue-200 text-blue-900 font-medium rounded text-xs transition"
-                          >
-                            Edit
-                          </button>
-                          <button
-                            onClick={() => handleDeletePhoneBookEntry(entry.phone_book_entry_id)}
-                            className="px-3 py-1 bg-red-100 hover:bg-red-200 text-red-900 font-medium rounded text-xs transition"
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                ))}
-              </div>
             </CollapsibleSection>
 
-            {/* Card Properties Group — Locations, Activities */}
-            <CollapsibleSection title="Card Properties">
-            {/* Locations Section */}
-            <CollapsibleSection title="Locations">
-              {error && (
-                <div className="mb-4 p-3 bg-red-50 border border-red-300 rounded-lg flex gap-2 items-start">
-                  <AlertCircle size={18} className="text-red-600 flex-shrink-0 mt-0.5" />
-                  <p className="text-sm text-red-700">{error}</p>
-                </div>
-              )}
-              <div className="mb-4 p-3 border border-gray-200 rounded-lg space-y-2">
-                <input
-                  type="text"
-                  placeholder="Location name (e.g., 'Theatre 1')"
-                  value={newLocationInput}
-                  onChange={(e) => setNewLocationInput(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                />
-                <div className="flex gap-2 items-center">
-                  <label className="text-xs text-gray-600">Default hours (optional — blank means always open):</label>
-                  <input
-                    type="time"
-                    value={newLocationDefaultStart}
-                    onChange={(e) => setNewLocationDefaultStart(e.target.value)}
-                    className="px-2 py-1 border border-gray-300 rounded text-sm"
-                  />
-                  <span className="text-gray-400">–</span>
-                  <input
-                    type="time"
-                    value={newLocationDefaultEnd}
-                    onChange={(e) => setNewLocationDefaultEnd(e.target.value)}
-                    className="px-2 py-1 border border-gray-300 rounded text-sm"
-                  />
-                  <button
-                    onClick={handleCreateLocation}
-                    className="ml-auto px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition text-sm"
-                  >
-                    Add
-                  </button>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                {refData.locations.map(loc => (
-                  <div key={loc.location_id} className={`p-3 border rounded-lg flex items-center justify-between gap-2 ${loc.active === false ? 'border-gray-200 bg-gray-50 opacity-60' : 'border-gray-200'}`}>
-                    {editingLocationId === loc.location_id ? (
-                      <div className="flex flex-wrap gap-2 items-center flex-1">
-                        <input
-                          type="text"
-                          value={editLocationName}
-                          onChange={(e) => setEditLocationName(e.target.value)}
-                          className="flex-1 min-w-[8rem] px-2 py-1 border border-gray-300 rounded text-sm"
-                        />
-                        <input
-                          type="time"
-                          value={editLocationDefaultStart}
-                          onChange={(e) => setEditLocationDefaultStart(e.target.value)}
-                          className="px-2 py-1 border border-gray-300 rounded text-sm"
-                        />
-                        <span className="text-gray-400">–</span>
-                        <input
-                          type="time"
-                          value={editLocationDefaultEnd}
-                          onChange={(e) => setEditLocationDefaultEnd(e.target.value)}
-                          className="px-2 py-1 border border-gray-300 rounded text-sm"
-                        />
-                        <button
-                          onClick={handleUpdateLocation}
-                          className="px-3 py-1 bg-green-600 hover:bg-green-700 text-white font-medium rounded text-xs transition"
-                        >
-                          Save
-                        </button>
-                        <button
-                          onClick={() => setEditingLocationId(null)}
-                          className="px-3 py-1 bg-gray-400 hover:bg-gray-500 text-white font-medium rounded text-xs transition"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    ) : (
-                      <>
-                        <div>
-                          <p className="font-semibold text-sm text-gray-900">
-                            {loc.name}{loc.active === false && <span className="ml-2 text-xs font-normal text-gray-500">(inactive)</span>}
-                            <span className="ml-2 text-xs font-normal text-gray-500">
-                              {loc.default_start_time && loc.default_end_time
-                                ? `(default ${loc.default_start_time.slice(0, 5)}–${loc.default_end_time.slice(0, 5)})`
-                                : '(always open)'}
-                            </span>
-                            {loc.allowed_activity_ids?.length > 0 && (
-                              <span className="ml-2 text-xs font-normal text-purple-700">
-                                · {loc.allowed_activity_ids.length} activit{loc.allowed_activity_ids.length === 1 ? 'y' : 'ies'} allowed
-                              </span>
-                            )}
-                          </p>
-                          <label className="flex items-center gap-1.5 text-xs text-gray-600 mt-1">
-                            <input
-                              type="checkbox"
-                              checked={loc.requires_supervision !== false}
-                              onChange={() => handleToggleLocationSupervision(loc.location_id, loc.requires_supervision === false)}
-                            />
-                            Requires senior supervision (junior staff need a consultant/on-call here)
-                          </label>
-                        </div>
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => setEditingLocationActivitiesId(loc.location_id)}
-                            className="px-3 py-1 bg-purple-100 hover:bg-purple-200 text-purple-900 font-medium rounded text-xs transition"
-                          >
-                            Activities
-                          </button>
-                          <button
-                            onClick={() => setEditingLocationSkillsId(loc.location_id)}
-                            className="px-3 py-1 bg-purple-100 hover:bg-purple-200 text-purple-900 font-medium rounded text-xs transition"
-                          >
-                            Skills
-                          </button>
-                          <button
-                            onClick={() => handleStartEditLocation(loc)}
-                            className="px-3 py-1 bg-blue-100 hover:bg-blue-200 text-blue-900 font-medium rounded text-xs transition"
-                          >
-                            Edit
-                          </button>
-                          {loc.active === false ? (
-                            <button
-                              onClick={() => handleReactivateLocation(loc.location_id)}
-                              className="px-3 py-1 bg-green-100 hover:bg-green-200 text-green-900 font-medium rounded text-xs transition"
-                            >
-                              Reactivate
-                            </button>
-                          ) : (
-                            <button
-                              onClick={() => handleDeactivateLocation(loc.location_id)}
-                              className="px-3 py-1 bg-red-100 hover:bg-red-200 text-red-900 font-medium rounded text-xs transition"
-                            >
-                              Deactivate
-                            </button>
-                          )}
-                        </div>
-                      </>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </CollapsibleSection>
-
-            {/* Activities Section */}
-            <CollapsibleSection title="Activities">
-              <div className="flex gap-2 mb-4">
-                <input
-                  type="text"
-                  placeholder="Activity name (e.g., 'STOP')"
-                  value={newActivityInput}
-                  onChange={(e) => setNewActivityInput(e.target.value)}
-                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                />
-                <input
-                  type="text"
-                  placeholder="Abbrev. (e.g., 'ED')"
-                  value={newActivityAbbreviation}
-                  onChange={(e) => setNewActivityAbbreviation(e.target.value)}
-                  title="Short code shown in the Fortnight view's abridged day cells"
-                  className="w-28 px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                />
-                <button
-                  onClick={handleCreateActivity}
-                  className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition text-sm"
-                >
-                  Add
-                </button>
-              </div>
-
-              <div className="space-y-2">
-                {refData.activities.map(act => (
-                  <div key={act.activity_id} className="p-3 border border-gray-200 rounded-lg flex items-center justify-between gap-2">
-                    {editingActivityId === act.activity_id ? (
-                      <div className="flex gap-2 items-center flex-1">
-                        <input
-                          type="text"
-                          value={editActivityName}
-                          onChange={(e) => setEditActivityName(e.target.value)}
-                          className="flex-1 px-2 py-1 border border-gray-300 rounded text-sm"
-                        />
-                        <input
-                          type="text"
-                          value={editActivityAbbreviation}
-                          onChange={(e) => setEditActivityAbbreviation(e.target.value)}
-                          title="Short code shown in the Fortnight view's abridged day cells"
-                          className="w-24 px-2 py-1 border border-gray-300 rounded text-sm"
-                        />
-                        <button
-                          onClick={handleUpdateActivity}
-                          className="px-3 py-1 bg-green-600 hover:bg-green-700 text-white font-medium rounded text-xs transition"
-                        >
-                          Save
-                        </button>
-                        <button
-                          onClick={() => setEditingActivityId(null)}
-                          className="px-3 py-1 bg-gray-400 hover:bg-gray-500 text-white font-medium rounded text-xs transition"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    ) : (
-                      <>
-                        <p className="font-semibold text-sm text-gray-900">
-                          {act.name}{act.abbreviation && <span className="ml-2 text-xs font-normal text-gray-500">({act.abbreviation})</span>}
-                          {act.required_advanced_skills?.length > 0 && (
-                            <span className="ml-2 text-xs font-normal text-purple-700">
-                              · requires {act.required_advanced_skills.length} skill{act.required_advanced_skills.length === 1 ? '' : 's'}
-                            </span>
-                          )}
-                        </p>
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => setEditingActivitySkillsId(act.activity_id)}
-                            className="px-3 py-1 bg-purple-100 hover:bg-purple-200 text-purple-900 font-medium rounded text-xs transition"
-                          >
-                            Skills
-                          </button>
-                          <button
-                            onClick={() => handleStartEditActivity(act)}
-                            className="px-3 py-1 bg-blue-100 hover:bg-blue-200 text-blue-900 font-medium rounded text-xs transition"
-                          >
-                            Edit
-                          </button>
-                          <button
-                            onClick={() => handleDeleteActivity(act.activity_id)}
-                            className="px-3 py-1 bg-red-100 hover:bg-red-200 text-red-900 font-medium rounded text-xs transition"
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </CollapsibleSection>
-            </CollapsibleSection>
-
-            {/* Audit Balance Group — Case Mix Report, On-Call & Weekend
-                Fairness */}
-            <CollapsibleSection title="Audit Balance">
-            {/* Case Mix Report Section */}
-            <CollapsibleSection title="Case Mix Report">
-              <CaseMixReport departmentId={departmentId} refreshKey={staffVersion} />
-            </CollapsibleSection>
-
-            {/* On-Call / Weekend Fairness Section */}
-            <CollapsibleSection title="On-Call & Weekend Fairness">
-              <FairnessReport departmentId={departmentId} refreshKey={staffVersion} />
-            </CollapsibleSection>
-
-            {/* Rule Violations Section — ED-specific hard scheduling rules
-                (see edRuleChecks.js), gated on this department actually
-                using the ED shift-code vocabulary those rules are written
-                against (roster_import_format doubles as that signal —
-                confirmed 2026-09-01 these rules are department-specific,
-                not generic). */}
-            {refData.department?.roster_import_format === 'ed' && (
-              <CollapsibleSection title="Rule Violations">
-                <RuleViolationsReport
-                  departmentId={departmentId}
-                  state={ruleCheckState}
-                  setState={setRuleCheckState}
-                  onInvestigate={(staffId, dates) => {
-                    const staffName = refData.staff.find(s => s.staff_id === staffId)?.name || '';
-                    setInvestigatingViolation({ staffId, staffName, dates });
-                  }}
-                  onInvestigateDate={(dateStr) => {
-                    setSelectedDate(new Date(`${dateStr}T00:00:00`));
-                    setActiveTab('day');
-                  }}
-                />
-              </CollapsibleSection>
-            )}
-            </CollapsibleSection>
-
-            {investigatingViolation && (
-              <InvestigateViolationModal
-                staffId={investigatingViolation.staffId}
-                staffName={investigatingViolation.staffName}
-                dates={investigatingViolation.dates}
-                onClose={() => setInvestigatingViolation(null)}
-                onOpenDay={(date) => setReviewingDay(date)}
-              />
-            )}
-
-            {reviewingDay && (
-              <DayReviewModal
-                departmentId={departmentId}
-                department={refData.department}
-                date={reviewingDay}
-                onClose={() => setReviewingDay(null)}
-              />
-            )}
-
-            {/* Staff Settings Group — Ranks, Staff and Availability, Staff
-                Activity Profiles, Staff Accounts */}
-            <CollapsibleSection title="Staff Settings">
+            {/* Staff & Contacts Group — Ranks, Staff and
+                Availability, Staff Activity Profiles, Staff Accounts, Phone Book */}
+            <CollapsibleSection title="Staff & Contacts">
             {/* Ranks Section — a prerequisite for adding staff at all (see
                 migrations/2026-08-31_staff_ranks.sql): a staff member's rank
                 must match one of this department's own configured ranks. */}
@@ -5083,53 +4990,93 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
             <CollapsibleSection title="Staff Accounts">
               <StaffAccountsTab departmentId={departmentId} refreshKey={staffVersion} staffRanks={refData.staffRanks} />
             </CollapsibleSection>
-            </CollapsibleSection>
 
-            {/* Staff Filters Group — the configurable Advanced Skill list
-                used to tag staff (Staff and Availability tab, above) and to
-                restrict who's offered for an Activity/Duty Type slot (the
-                "Skills" button on each, in Card Properties/Duty Types). */}
-            <CollapsibleSection title="Staff Filters">
-            <CollapsibleSection title="Advanced Skill">
-              <div className="flex gap-2 mb-4">
-                <input
-                  type="text"
-                  placeholder="Skill name (e.g., 'Anaesthetics')"
-                  value={newAdvancedSkillName}
-                  onChange={(e) => setNewAdvancedSkillName(e.target.value)}
-                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                />
+            <CollapsibleSection title="Phone Book">
+              {/* Coffee Place — separate from the general numbers list
+                  below: the Coffee Orders modal looks this up directly to
+                  build its "text the order" link. */}
+              <div className="mb-6 p-4 bg-amber-50 rounded-lg border border-amber-200">
+                <p className="text-xs font-semibold text-amber-900 uppercase mb-2">Coffee Place</p>
+                <div className="grid grid-cols-2 gap-3 mb-3">
+                  <input
+                    type="text"
+                    placeholder="Name (e.g., 'Roasted on Main')"
+                    value={coffeePlaceNameInput}
+                    onChange={(e) => setCoffeePlaceNameInput(e.target.value)}
+                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  />
+                  <input
+                    type="tel"
+                    placeholder="Phone number"
+                    value={coffeePlacePhoneInput}
+                    onChange={(e) => setCoffeePlacePhoneInput(e.target.value)}
+                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  />
+                </div>
                 <button
-                  onClick={handleCreateAdvancedSkill}
-                  className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition text-sm"
+                  onClick={handleSaveCoffeePlace}
+                  disabled={savingCoffeePlace}
+                  className="w-full px-4 py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-medium rounded-lg transition text-sm"
                 >
-                  Add
+                  {savingCoffeePlace ? 'Saving...' : 'Save'}
+                </button>
+                <p className="text-xs text-gray-500 mt-2">Where the staff view's Coffee Orders summary texts the order to.</p>
+              </div>
+
+              <div className="mb-6 p-4 bg-teal-50 rounded-lg">
+                <div className="grid grid-cols-2 gap-3 mb-3">
+                  <input
+                    type="text"
+                    placeholder="Name (e.g., 'Nearest Tertiary ED')"
+                    value={newPhoneBookLabel}
+                    onChange={(e) => setNewPhoneBookLabel(e.target.value)}
+                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  />
+                  <input
+                    type="tel"
+                    placeholder="Phone number"
+                    value={newPhoneBookPhone}
+                    onChange={(e) => setNewPhoneBookPhone(e.target.value)}
+                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  />
+                </div>
+                <button
+                  onClick={handleCreatePhoneBookEntry}
+                  disabled={!newPhoneBookLabel.trim() || !newPhoneBookPhone.trim()}
+                  className="w-full px-4 py-2 bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white font-medium rounded-lg transition text-sm"
+                >
+                  Add Number
                 </button>
               </div>
 
-              <p className="text-xs text-gray-600 mb-4">
-                Officers check these against each staff member in Staff and Availability, then require one-or-more of them on an Activity or Duty Type to limit who's offered for that slot — e.g. only staff with Anaesthetics or Endoscopy show up for an Endoscopy consultant slot.
-              </p>
-
               <div className="space-y-2">
-                {refData.advancedSkills.map(skill => (
-                  <div key={skill.advanced_skill_id} className="p-3 border border-gray-200 rounded-lg flex items-center justify-between gap-2">
-                    {editingAdvancedSkillId === skill.advanced_skill_id ? (
-                      <div className="flex gap-2 items-center flex-1">
+                {refData.phoneBookEntries.length === 0 && (
+                  <p className="text-sm text-gray-500">No phone book entries yet — add one above.</p>
+                )}
+                {refData.phoneBookEntries.map(entry => (
+                  <div key={entry.phone_book_entry_id} className="p-3 border border-gray-200 rounded-lg flex items-center justify-between gap-2">
+                    {editingPhoneBookEntryId === entry.phone_book_entry_id ? (
+                      <div className="flex flex-wrap gap-2 items-center flex-1">
                         <input
                           type="text"
-                          value={editAdvancedSkillName}
-                          onChange={(e) => setEditAdvancedSkillName(e.target.value)}
-                          className="flex-1 px-2 py-1 border border-gray-300 rounded text-sm"
+                          value={editPhoneBookLabel}
+                          onChange={(e) => setEditPhoneBookLabel(e.target.value)}
+                          className="flex-1 min-w-[8rem] px-2 py-1 border border-gray-300 rounded text-sm"
+                        />
+                        <input
+                          type="tel"
+                          value={editPhoneBookPhone}
+                          onChange={(e) => setEditPhoneBookPhone(e.target.value)}
+                          className="px-2 py-1 border border-gray-300 rounded text-sm"
                         />
                         <button
-                          onClick={handleUpdateAdvancedSkill}
+                          onClick={handleUpdatePhoneBookEntry}
                           className="px-3 py-1 bg-green-600 hover:bg-green-700 text-white font-medium rounded text-xs transition"
                         >
                           Save
                         </button>
                         <button
-                          onClick={() => setEditingAdvancedSkillId(null)}
+                          onClick={() => setEditingPhoneBookEntryId(null)}
                           className="px-3 py-1 bg-gray-400 hover:bg-gray-500 text-white font-medium rounded text-xs transition"
                         >
                           Cancel
@@ -5137,16 +5084,19 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                       </div>
                     ) : (
                       <>
-                        <p className="font-semibold text-sm text-gray-900">{skill.name}</p>
+                        <div>
+                          <p className="font-semibold text-sm text-gray-900">{entry.label}</p>
+                          <p className="text-xs text-gray-600 font-mono">{entry.phone}</p>
+                        </div>
                         <div className="flex gap-2">
                           <button
-                            onClick={() => handleStartEditAdvancedSkill(skill)}
+                            onClick={() => handleStartEditPhoneBookEntry(entry)}
                             className="px-3 py-1 bg-blue-100 hover:bg-blue-200 text-blue-900 font-medium rounded text-xs transition"
                           >
                             Edit
                           </button>
                           <button
-                            onClick={() => handleDeleteAdvancedSkill(skill.advanced_skill_id)}
+                            onClick={() => handleDeletePhoneBookEntry(entry.phone_book_entry_id)}
                             className="px-3 py-1 bg-red-100 hover:bg-red-200 text-red-900 font-medium rounded text-xs transition"
                           >
                             Delete
@@ -5156,12 +5106,66 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                     )}
                   </div>
                 ))}
-                {refData.advancedSkills.length === 0 && (
-                  <p className="text-sm text-gray-500">No advanced skills yet — add one above.</p>
-                )}
               </div>
             </CollapsibleSection>
             </CollapsibleSection>
+
+            {/* Reports & Compliance Group — Case Mix Report,
+                On-Call & Weekend Fairness, Rule Violations */}
+            <CollapsibleSection title="Reports & Compliance">
+            {/* Case Mix Report Section */}
+            <CollapsibleSection title="Case Mix Report">
+              <CaseMixReport departmentId={departmentId} refreshKey={staffVersion} />
+            </CollapsibleSection>
+
+            {/* On-Call / Weekend Fairness Section */}
+            <CollapsibleSection title="On-Call & Weekend Fairness">
+              <FairnessReport departmentId={departmentId} refreshKey={staffVersion} />
+            </CollapsibleSection>
+
+            {/* Rule Violations Section — ED-specific hard scheduling rules
+                (see edRuleChecks.js), gated on this department actually
+                using the ED shift-code vocabulary those rules are written
+                against (roster_import_format doubles as that signal —
+                confirmed 2026-09-01 these rules are department-specific,
+                not generic). */}
+            {refData.department?.roster_import_format === 'ed' && (
+              <CollapsibleSection title="Rule Violations">
+                <RuleViolationsReport
+                  departmentId={departmentId}
+                  state={ruleCheckState}
+                  setState={setRuleCheckState}
+                  onInvestigate={(staffId, dates) => {
+                    const staffName = refData.staff.find(s => s.staff_id === staffId)?.name || '';
+                    setInvestigatingViolation({ staffId, staffName, dates });
+                  }}
+                  onInvestigateDate={(dateStr) => {
+                    setSelectedDate(new Date(`${dateStr}T00:00:00`));
+                    setActiveTab('day');
+                  }}
+                />
+              </CollapsibleSection>
+            )}
+            </CollapsibleSection>
+
+            {investigatingViolation && (
+              <InvestigateViolationModal
+                staffId={investigatingViolation.staffId}
+                staffName={investigatingViolation.staffName}
+                dates={investigatingViolation.dates}
+                onClose={() => setInvestigatingViolation(null)}
+                onOpenDay={(date) => setReviewingDay(date)}
+              />
+            )}
+
+            {reviewingDay && (
+              <DayReviewModal
+                departmentId={departmentId}
+                department={refData.department}
+                date={reviewingDay}
+                onClose={() => setReviewingDay(null)}
+              />
+            )}
           </div>
         </div>
       );
