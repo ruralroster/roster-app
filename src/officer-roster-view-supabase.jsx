@@ -2638,19 +2638,31 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
         const byStaff = new Map();
         const getOrCreate = (staffId, name) => {
           if (!byStaff.has(staffId)) {
-            byStaff.set(staffId, { staffId, name, activityGroups: new Map(), assignmentIds: [], dutyKeys: [], earliestStartTime: null });
+            byStaff.set(staffId, {
+              staffId, name, activityGroups: new Map(), assignmentIds: [], dutyKeys: [],
+              earliestStartTime: null,
+              // The session (morning/afternoon/night) and location of
+              // whichever shift starts earliest in the day, used to sort
+              // and colour the fortnight grid's day cells — see
+              // dayColumnMinWidth's callers below.
+              startSessionGroup: null, startLocationName: null,
+            });
           }
           return byStaff.get(staffId);
         };
-        const noteStartTime = (person, startTime) => {
+        const noteStartTime = (person, startTime, sessionGroup, locationName) => {
           if (!startTime) return;
-          if (!person.earliestStartTime || startTime < person.earliestStartTime) person.earliestStartTime = startTime;
+          if (!person.earliestStartTime || startTime < person.earliestStartTime) {
+            person.earliestStartTime = startTime;
+            person.startSessionGroup = sessionGroup || null;
+            if (locationName !== undefined) person.startLocationName = locationName || null;
+          }
         };
 
         allocations.forEach(a => {
           const person = getOrCreate(a.staff_id, a.staff?.name);
           person.assignmentIds.push(a.assignment_id);
-          noteStartTime(person, a.shifts?.start_time);
+          noteStartTime(person, a.shifts?.start_time, getSessionGroups(a.shifts, sessionBoundaries)[0], a.locations?.name);
           const activityKey = a.theatre_activities?.activity_id || 'none';
           if (!person.activityGroups.has(activityKey)) {
             person.activityGroups.set(activityKey, { label: activityLabelFor(a), sessions: new Set() });
@@ -2665,11 +2677,12 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
           person.dutyKeys.push(d.duty_type);
           const groupKey = `duty:${d.duty_type}`;
           const dutyType = dutyTypeByKey.get(d.duty_type);
-          noteStartTime(person, dutyType?.start_time);
+          const dutyHasTimes = dutyType?.start_time && dutyType?.end_time;
+          noteStartTime(person, dutyType?.start_time, dutyHasTimes ? getSessionGroups(dutyType, sessionBoundaries)[0] : null);
           if (!person.activityGroups.has(groupKey)) {
             person.activityGroups.set(groupKey, { label: dutyType?.label || d.duty_type, sessions: new Set() });
           }
-          if (dutyType?.start_time && dutyType?.end_time) {
+          if (dutyHasTimes) {
             const group = person.activityGroups.get(groupKey);
             sessionLabelsForTimes(dutyType).forEach(s => group.sessions.add(s));
           }
@@ -2694,14 +2707,56 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
         return `${getFirstName(person.name)}${groups}`;
       };
 
+      // Which of the three broad location groups a location's name falls
+      // into, for sorting the day cell's entries — ED first, then Theatre,
+      // then everything else (wards, and any location without a name).
+      // There's no location "type" field in the schema, so this is a
+      // name-based heuristic rather than a stored category.
+      const LOCATION_CATEGORY_ORDER = ['ed', 'theatre', 'ward'];
+      const locationCategoryFor = (name) => {
+        if (!name) return 'ward';
+        if (/\bed\b|emergency/i.test(name)) return 'ed';
+        if (/theatre|theater/i.test(name)) return 'theatre';
+        return 'ward';
+      };
+
+      // High-contrast fills for the day cell's per-person pills, one per
+      // starting session, plus on-call's own colour — chosen dark enough
+      // that white text on top stays easily readable.
+      const SESSION_COLOR_CLASSES = {
+        morning: 'bg-emerald-700 text-white',
+        afternoon: 'bg-blue-700 text-white',
+        night: 'bg-fuchsia-700 text-white',
+      };
+      const NO_SESSION_COLOR_CLASS = 'bg-gray-500 text-white';
+      const ON_CALL_COLOR_CLASS = 'bg-orange-600 text-white';
+      const SELECTED_STAFF_RING_CLASS = 'ring-2 ring-inset ring-gray-900';
+
+      // Sorts a day's regular (non-duty) entries by the location group
+      // they start in (ED, then Theatre, then Ward), then by the specific
+      // location's name, then by starting session, then by name — so the
+      // grid reads as distinct location blocks with sessions clustered
+      // together within each.
+      const sortByLocationThenSession = (a, b) => {
+        const catDiff = LOCATION_CATEGORY_ORDER.indexOf(locationCategoryFor(a.startLocationName))
+          - LOCATION_CATEGORY_ORDER.indexOf(locationCategoryFor(b.startLocationName));
+        if (catDiff !== 0) return catDiff;
+        const locDiff = (a.startLocationName || '').localeCompare(b.startLocationName || '');
+        if (locDiff !== 0) return locDiff;
+        const sessDiff = SESSION_GROUP_ORDER.indexOf(a.startSessionGroup) - SESSION_GROUP_ORDER.indexOf(b.startSessionGroup);
+        if (sessDiff !== 0) return sessDiff;
+        return (a.name || '').localeCompare(b.name || '');
+      };
+
       // Widest single entry anywhere in the fortnight, in characters — the
       // user wants to see the whole roster at a glance rather than
       // truncated names, so every day column is sized to fit this one.
       let longestEntryChars = 0;
       days.forEach(date => {
         const dateStr = toLocalDateStr(date);
-        const byStaffForDay = groupAllocationsByStaff(allocationsByDate[dateStr] || [], dutyAllocationsByDate[dateStr] || []);
-        byStaffForDay.forEach(person => {
+        const byStaffOnCallForDay = groupAllocationsByStaff([], dutyAllocationsByDate[dateStr] || []);
+        const byStaffLocationForDay = groupAllocationsByStaff(allocationsByDate[dateStr] || [], []);
+        [...byStaffOnCallForDay.values(), ...byStaffLocationForDay.values()].forEach(person => {
           longestEntryChars = Math.max(longestEntryChars, formatPersonEntry(person).length);
         });
       });
@@ -2858,9 +2913,18 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                     const staffOwnAllocation = dayAllocations.find(a => a.staff_id === fortnightSelectedStaffId)
                       || dayDutyAssignments.find(d => d.staff_id === fortnightSelectedStaffId);
 
-                    // One line per person per day, grouped further by
-                    // activity — see groupAllocationsByStaff.
-                    const byStaff = groupAllocationsByStaff(dayAllocations, dayDutyAssignments);
+                    // Two separate lists, not one merged one: on-call is
+                    // kept apart from the day's regular location work so an
+                    // on-call person who's also rostered somewhere that day
+                    // shows up in both places — once at the top in orange,
+                    // once in their location's group — rather than one
+                    // line trying to represent both. See
+                    // sortByLocationThenSession for the location list's
+                    // ordering and SESSION_COLOR_CLASSES for its colours.
+                    const onCallPeople = Array.from(groupAllocationsByStaff([], dayDutyAssignments).values())
+                      .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+                    const locationPeople = Array.from(groupAllocationsByStaff(dayAllocations, []).values())
+                      .sort(sortByLocationThenSession);
 
                     return (
                       <div
@@ -2880,11 +2944,28 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                       >
                         <div className="text-xs font-semibold text-gray-700 mb-1">{date.getDate()}</div>
                         <div className="space-y-0.5">
-                          {Array.from(byStaff.values()).map(person => (
+                          {onCallPeople.map(person => (
                             <div
-                              key={person.staffId}
-                              className={`text-[10px] leading-tight px-1 py-0.5 rounded whitespace-nowrap flex items-center justify-between gap-1 ${
-                                person.staffId === fortnightSelectedStaffId ? 'bg-blue-600 text-white font-semibold' : 'bg-gray-100 text-gray-700'
+                              key={`oncall-${person.staffId}`}
+                              className={`text-[10px] leading-tight px-1 py-0.5 rounded whitespace-nowrap flex items-center justify-between gap-1 ${ON_CALL_COLOR_CLASS} ${
+                                person.staffId === fortnightSelectedStaffId ? SELECTED_STAFF_RING_CLASS : ''
+                              }`}
+                            >
+                              <span>{formatPersonEntry(person)}</span>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); handleRemoveFortnightPersonDay(person, date); }}
+                                title={`Remove ${person.name}'s on-call allocation for this day`}
+                                className="flex-shrink-0 leading-none opacity-70 hover:opacity-100"
+                              >
+                                ×
+                              </button>
+                            </div>
+                          ))}
+                          {locationPeople.map(person => (
+                            <div
+                              key={`loc-${person.staffId}`}
+                              className={`text-[10px] leading-tight px-1 py-0.5 rounded whitespace-nowrap flex items-center justify-between gap-1 ${SESSION_COLOR_CLASSES[person.startSessionGroup] || NO_SESSION_COLOR_CLASS} ${
+                                person.staffId === fortnightSelectedStaffId ? SELECTED_STAFF_RING_CLASS : ''
                               }`}
                             >
                               <span>{formatPersonEntry(person)}</span>
