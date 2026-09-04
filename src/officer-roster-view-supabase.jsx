@@ -2682,6 +2682,32 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
         );
       };
 
+      // Plain-text version of a day cell's per-person line — used both to
+      // render it and (below) to measure the widest entry across the whole
+      // fortnight, so every day column can be sized to fit it instead of
+      // truncating.
+      const formatPersonEntry = (person) => {
+        const groups = Array.from(person.activityGroups.values()).map(group => {
+          const sessions = Array.from(group.sessions).join('/');
+          return ` (${group.label ? `${group.label} - ` : ''}${sessions})`;
+        }).join('');
+        return `${getFirstName(person.name)}${groups}`;
+      };
+
+      // Widest single entry anywhere in the fortnight, in characters — the
+      // user wants to see the whole roster at a glance rather than
+      // truncated names, so every day column is sized to fit this one.
+      let longestEntryChars = 0;
+      days.forEach(date => {
+        const dateStr = toLocalDateStr(date);
+        const byStaffForDay = groupAllocationsByStaff(allocationsByDate[dateStr] || [], dutyAllocationsByDate[dateStr] || []);
+        byStaffForDay.forEach(person => {
+          longestEntryChars = Math.max(longestEntryChars, formatPersonEntry(person).length);
+        });
+      });
+      // +3ch covers the entry's padding and the trailing "×" remove button.
+      const dayColumnMinWidth = longestEntryChars ? `${longestEntryChars + 3}ch` : '0px';
+
       const selectedStaff = refData.staff.find(s => s.staff_id === fortnightSelectedStaffId);
       const selectedStaffAllocations = fortnightAllocations.filter(a => a.staff_id === fortnightSelectedStaffId);
       const selectedStaffDutyAssignments = fortnightDutyAssignments.filter(d => d.staff_id === fortnightSelectedStaffId);
@@ -2768,9 +2794,13 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                 <p className="text-xs text-gray-500 mt-3">Select a staff member, then click a day below to allocate them a shift.</p>
               )}
             </div>
+          </div>
 
-            {/* Fortnight grid */}
-            <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
+          {/* Fortnight grid — sits outside the max-w-3xl wrapper above so it
+              can use the full page width; every day column is sized to fit
+              its widest entry rather than truncating it (dayColumnMinWidth,
+              computed above). */}
+          <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
               <div className="flex items-center justify-between mb-4">
                 <button
                   onClick={() => {
@@ -2816,7 +2846,8 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                   <Loader size={32} className="text-blue-600 animate-spin mx-auto mb-2" />
                 </div>
               ) : (
-                <div className="grid grid-cols-7 gap-2">
+                <div className="overflow-x-auto">
+                <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(7, minmax(${dayColumnMinWidth}, 1fr))` }}>
                   {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(day => (
                     <div key={day} className="text-center text-xs font-bold text-gray-600 py-1">{day}</div>
                   ))}
@@ -2852,19 +2883,11 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                           {Array.from(byStaff.values()).map(person => (
                             <div
                               key={person.staffId}
-                              className={`text-[10px] leading-tight px-1 py-0.5 rounded truncate flex items-center justify-between gap-1 ${
+                              className={`text-[10px] leading-tight px-1 py-0.5 rounded whitespace-nowrap flex items-center justify-between gap-1 ${
                                 person.staffId === fortnightSelectedStaffId ? 'bg-blue-600 text-white font-semibold' : 'bg-gray-100 text-gray-700'
                               }`}
                             >
-                              <span className="truncate">
-                                {getFirstName(person.name)}
-                                {Array.from(person.activityGroups.values()).map((group, i) => {
-                                  const sessions = Array.from(group.sessions).join('/');
-                                  return (
-                                    <span key={i}> ({group.label ? `${group.label} - ` : ''}{sessions})</span>
-                                  );
-                                })}
-                              </span>
+                              <span>{formatPersonEntry(person)}</span>
                               <button
                                 onClick={(e) => { e.stopPropagation(); handleRemoveFortnightPersonDay(person, date); }}
                                 title={`Remove ${person.name}'s allocations for this day`}
@@ -2879,9 +2902,9 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                     );
                   })}
                 </div>
+                </div>
               )}
             </div>
-          </div>
 
           {/* Fortnight Assignment Wizard — shift, then location, then
               activity, writing straight into staff_assignments/
