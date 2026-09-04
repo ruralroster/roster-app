@@ -3713,6 +3713,27 @@ export async function assignStaffFortnight(departmentId, date, staffId, shiftId,
 // do (or did) per person/day, rather than silently succeeding or
 // failing partway through with no record of what happened.
 //
+// The file being imported is treated as that date range's source of
+// truth, not a patch: before writing anything new, every existing
+// staff_assignments/theatre_activities row for the exact dates the file
+// covers is deleted (see replaceExistingRosterForDates), so a re-issued
+// roster fully replaces whatever was there rather than layering on top
+// of it — a person dropped from a shift, or moved to a different
+// location, in the new file shouldn't leave their old assignment sitting
+// alongside the new one. Scoped tightly to those two tables and those
+// exact dates/this department only: duty_assignments (on-call) and
+// staff_availability (leave) are deliberately left untouched — the
+// importer never wrote duty_assignments at all, and blanket-clearing
+// availability risks silently un-flagging a manually-recorded absence
+// (e.g. a same-day sick call) that the sheet has no way to know about.
+//
+// This delete-then-insert isn't wrapped in a single DB transaction — it's
+// a plain sequence of awaited Supabase calls, same as the rest of this
+// function. In practice that's fine because the Write button only
+// unlocks after a dry run the officer has reviewed; a real import is
+// expected to already be free of the blocking errors (unmapped codes,
+// missing staff) that dry run would have surfaced.
+//
 // Resolution order per segment: staff name -> location name -> activity
 // name -> an exact-matching (or newly created) shift -> a card via
 // assignStaffFortnight, which already handles finding-or-joining an
@@ -3775,6 +3796,70 @@ export async function findOrCreateShift(departmentId, startTime, endTime) {
   }
 }
 
+// Every distinct date the parsed week actually covers, as toLocalDateStr
+// strings — scopes importRosterWeek's delete-then-replace to exactly the
+// dates on the file, never a wider window. Reads dates off every person
+// (not just the first) purely defensively; in practice
+// parseConsultantWeek/parseRmoWeek/parseInternWeek/parseEdWeek all stamp
+// the same 7 dates onto every person for a given week.
+function rosterDateStrsFromPeople(people) {
+  const dateStrs = new Set();
+  people.forEach(person => {
+    person.days.forEach(day => {
+      const date = parseExcelDate(day.date);
+      if (date) dateStrs.add(toLocalDateStr(date));
+    });
+  });
+  return Array.from(dateStrs);
+}
+
+// Counts (and, unless dryRun, deletes) every staff_assignments/
+// theatre_activities row for this department across exactly these dates —
+// see importRosterWeek's header for why a re-import replaces rather than
+// merges. Always counts first, dry run or not: the dry-run preview needs
+// the number even though it isn't deleting anything yet.
+async function replaceExistingRosterForDates(departmentId, dateStrs, dryRun) {
+  if (dateStrs.length === 0) return { existingAssignmentCount: 0, existingCardCount: 0 };
+
+  const { count: existingAssignmentCount, error: assignCountError } = await supabase
+    .from('staff_assignments')
+    .select('assignment_id', { count: 'exact', head: true })
+    .eq('department_id', departmentId)
+    .in('date', dateStrs);
+  if (assignCountError) throw assignCountError;
+
+  const { count: existingCardCount, error: cardCountError } = await supabase
+    .from('theatre_activities')
+    .select('theatre_activity_id', { count: 'exact', head: true })
+    .eq('department_id', departmentId)
+    .in('date', dateStrs);
+  if (cardCountError) throw cardCountError;
+
+  if (!dryRun) {
+    // Assignments first, then their cards — not relying on the FK's own
+    // ON DELETE CASCADE (theatre_activities -> staff_assignments) since a
+    // pre-migration or otherwise cardless assignment row (null
+    // theatre_activity_id) wouldn't be reached by that cascade anyway;
+    // deleting both directly by department+date covers every row either
+    // way.
+    const { error: deleteAssignError } = await supabase
+      .from('staff_assignments')
+      .delete()
+      .eq('department_id', departmentId)
+      .in('date', dateStrs);
+    if (deleteAssignError) throw deleteAssignError;
+
+    const { error: deleteCardsError } = await supabase
+      .from('theatre_activities')
+      .delete()
+      .eq('department_id', departmentId)
+      .in('date', dateStrs);
+    if (deleteCardsError) throw deleteCardsError;
+  }
+
+  return { existingAssignmentCount: existingAssignmentCount || 0, existingCardCount: existingCardCount || 0 };
+}
+
 // people: the array returned by parseConsultantWeek/parseRmoWeek/
 // parseInternWeek. refLists: { staffList, locations, activities,
 // leaveTypes } — already-loaded department reference data (e.g.
@@ -3783,6 +3868,15 @@ export async function findOrCreateShift(departmentId, startTime, endTime) {
 export async function importRosterWeek(departmentId, people, refLists, { dryRun = true, onProgress } = {}) {
   const { staffList, locations, activities, leaveTypes } = refLists;
   const results = [];
+
+  const dateStrs = rosterDateStrsFromPeople(people);
+  let deletionSummary;
+  try {
+    const { existingAssignmentCount, existingCardCount } = await replaceExistingRosterForDates(departmentId, dateStrs, dryRun);
+    deletionSummary = { dateStrs, existingAssignmentCount, existingCardCount, applied: !dryRun && dateStrs.length > 0 };
+  } catch (err) {
+    return { data: [], error: err, deletionSummary: null };
+  }
 
   for (let personIndex = 0; personIndex < people.length; personIndex++) {
     const person = people[personIndex];
@@ -3852,7 +3946,7 @@ export async function importRosterWeek(departmentId, people, refLists, { dryRun 
     onProgress?.(personIndex + 1, people.length);
   }
 
-  return { data: results, error: null };
+  return { data: results, error: null, deletionSummary };
 }
 
 // ============================================================

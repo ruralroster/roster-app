@@ -60,6 +60,11 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
   const [weekRanges, setWeekRanges] = useState([]);
   const [weekIndex, setWeekIndex] = useState(0);
   const [results, setResults] = useState(null); // dry-run or real results, from importRosterWeek
+  // What importRosterWeek found (dry run) or removed (real run) already on
+  // file for the exact dates being imported, before writing the new ones —
+  // see that function's header for why a re-import replaces rather than
+  // merges. Cleared alongside `results` everywhere below.
+  const [deletionSummary, setDeletionSummary] = useState(null);
   const [wasDryRun, setWasDryRun] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -79,11 +84,13 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
     setWeekIndex(0);
     setMissingStaff(null);
     setResults(null);
+    setDeletionSummary(null);
   };
 
   const handleFormatChange = (nextFormat) => {
     setFormat(nextFormat);
     setResults(null);
+    setDeletionSummary(null);
     setMissingStaff(null);
     if (workbook && nextFormat === 'ed') {
       const names = getEdSheetNames(workbook);
@@ -102,6 +109,7 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
     setLoading(true);
     setError(null);
     setResults(null);
+    setDeletionSummary(null);
     setMissingStaff(null);
     try {
       const buffer = await file.arrayBuffer();
@@ -187,13 +195,14 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
     try {
       const people = format === 'ed' ? parseEdWeek(workbook, sheetName, weekIndex) : parseRosterWeek(workbook, weekIndex);
       setImportProgress({ current: 0, total: people.length });
-      const { data, error: importError } = await importRosterWeek(
+      const { data, error: importError, deletionSummary: nextDeletionSummary } = await importRosterWeek(
         departmentId, people,
         { staffList, locations, activities, leaveTypes },
         { dryRun, onProgress: (current, total) => setImportProgress({ current, total }) }
       );
       if (importError) throw importError;
       setResults(data);
+      setDeletionSummary(nextDeletionSummary);
       setWasDryRun(dryRun);
     } catch (err) {
       setError(`Import failed: ${err.message}`);
@@ -264,7 +273,7 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
           <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Week to import</label>
           <select
             value={weekIndex}
-            onChange={(e) => { setWeekIndex(parseInt(e.target.value, 10)); setResults(null); }}
+            onChange={(e) => { setWeekIndex(parseInt(e.target.value, 10)); setResults(null); setDeletionSummary(null); }}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
           >
             {weekRanges.map((range, i) => (
@@ -354,6 +363,31 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
             </button>
           </div>
           {importProgress && <ProgressBar current={importProgress.current} total={importProgress.total} label={`${importProgress.current} of ${importProgress.total} people`} />}
+        </div>
+      )}
+
+      {deletionSummary && (
+        <div className={`mb-3 p-3 rounded-lg border flex gap-2 items-start ${
+          deletionSummary.existingAssignmentCount === 0 && deletionSummary.existingCardCount === 0
+            ? 'bg-gray-50 border-gray-200'
+            : 'bg-amber-50 border-amber-300'
+        }`}>
+          <AlertCircle size={16} className={`flex-shrink-0 mt-0.5 ${
+            deletionSummary.existingAssignmentCount === 0 && deletionSummary.existingCardCount === 0 ? 'text-gray-400' : 'text-amber-600'
+          }`} />
+          <p className="text-xs text-gray-700">
+            {deletionSummary.existingAssignmentCount === 0 && deletionSummary.existingCardCount === 0 ? (
+              <>No existing roster data found for the {deletionSummary.dateStrs.length} date{deletionSummary.dateStrs.length === 1 ? '' : 's'} in this file — nothing to replace.</>
+            ) : deletionSummary.applied ? (
+              <>
+                This file is the source of truth for these dates — <strong>{deletionSummary.existingAssignmentCount}</strong> existing assignment{deletionSummary.existingAssignmentCount === 1 ? '' : 's'} across <strong>{deletionSummary.existingCardCount}</strong> card{deletionSummary.existingCardCount === 1 ? '' : 's'} {deletionSummary.existingCardCount === 1 ? 'was' : 'were'} deleted before writing the roster below.
+              </>
+            ) : (
+              <>
+                This file is the source of truth for these dates — writing it for real will <strong>delete {deletionSummary.existingAssignmentCount}</strong> existing assignment{deletionSummary.existingAssignmentCount === 1 ? '' : 's'} across <strong>{deletionSummary.existingCardCount}</strong> card{deletionSummary.existingCardCount === 1 ? '' : 's'} before writing the roster below. On-call duty assignments and recorded leave are never touched by an import.
+              </>
+            )}
+          </p>
         </div>
       )}
 
