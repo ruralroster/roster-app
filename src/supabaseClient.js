@@ -1744,17 +1744,24 @@ export async function updateStaffRole(staffId, role) {
   }
 }
 
+// Routed through the update-staff-email Edge Function (not a direct table
+// update) so an edit here also updates auth.users.email/profiles.email when
+// this staff member has a linked login — otherwise their login email
+// silently drifts from what's shown here and every future login fails with
+// "Incorrect email or password". See
+// supabase/functions/update-staff-email/index.ts.
 export async function updateStaffEmail(staffId, email) {
   console.log('updateStaffEmail called', staffId, email);
 
   try {
-    const { data, error } = await supabase
-      .from('staff')
-      .update({ email: email || null })
-      .eq('staff_id', staffId)
-      .select();
+    const { data, error } = await supabase.functions.invoke('update-staff-email', {
+      body: { staffId, email },
+    });
 
-    return { data, error };
+    if (error) throw error;
+    if (data?.error) throw new Error(data.error);
+
+    return { data: data?.data ?? data, error: null };
   } catch (err) {
     return { data: null, error: err };
   }
@@ -4469,11 +4476,22 @@ export async function updateMyPhone(staffId, phone) {
   }
 }
 
+// Routed through the same update-staff-email Edge Function as the
+// officer-facing updateStaffEmail above (not the update_my_email RPC —
+// that can only reach the `staff` table, not auth.users, so it couldn't
+// keep the login email in sync). The Edge Function allows this because the
+// caller is editing their own staff row (staff.user_id = auth.uid()).
 export async function updateMyEmail(staffId, email) {
   console.log('updateMyEmail called', staffId, email);
   try {
-    const { error } = await supabase.rpc('update_my_email', { p_staff_id: staffId, p_email: email || null });
-    return { error };
+    const { data, error } = await supabase.functions.invoke('update-staff-email', {
+      body: { staffId, email },
+    });
+
+    if (error) throw error;
+    if (data?.error) throw new Error(data.error);
+
+    return { error: null };
   } catch (err) {
     console.error('updateMyEmail error:', err);
     return { error: err };
