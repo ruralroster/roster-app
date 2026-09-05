@@ -2752,9 +2752,10 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
       // actually on screen (dynamic sizing off the current fortnight kept
       // moving/stretching as the officer paged between weeks). Sized to fit
       // a real worst-case entry — someone covering two overlapping on-call
-      // duties — plus 10ch of headroom.
+      // duties — plus 10ch of headroom, then halved: the full-width
+      // version still read as too stretched out.
       const FORTNIGHT_WORST_CASE_ENTRY = 'Thomas (ED on call (Night) - ) (Anaesthetics on-call (Night) - )';
-      const FORTNIGHT_DAY_COLUMN_WIDTH = `${FORTNIGHT_WORST_CASE_ENTRY.length + 10}ch`;
+      const FORTNIGHT_DAY_COLUMN_WIDTH = `${Math.round((FORTNIGHT_WORST_CASE_ENTRY.length + 10) / 2)}ch`;
       const fortnightWeeks = [days.slice(0, 7), days.slice(7, 14)];
 
       const selectedStaff = refData.staff.find(s => s.staff_id === fortnightSelectedStaffId);
