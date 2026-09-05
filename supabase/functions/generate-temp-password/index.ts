@@ -1,19 +1,29 @@
-// Sets a random temporary password on an already-linked staff member's
-// account and flags it so they're forced through the SetPassword screen on
-// next login — a fallback for when the normal invite/reinvite email (sent
-// via Supabase Auth) gets spam-filtered. The officer relays the returned
-// password to the person out-of-band (WhatsApp, SMS, in person).
+// Sets a random temporary password on a staff member's account and flags
+// it so they're forced through the SetPassword screen on next login — a
+// fallback for when the normal invite/reinvite email (sent via Supabase
+// Auth) gets spam-filtered. The officer relays the returned password to
+// the person out-of-band (WhatsApp, SMS, in person).
 //
-// Runs server-side because setting another user's password needs the
-// service_role key, which must never reach the browser — same reasoning
-// as invite-staff.
+// Works two ways depending on whether the staff row is already linked
+// (has `user_id`):
+//  - Already linked: just resets the password on the existing account.
+//  - Not yet linked: an `email` must be supplied in the request body. If
+//    that email already has a profile (same person, another department),
+//    the account is linked without creating a duplicate; otherwise a new
+//    auth user is created directly (unlike invite-staff, this does NOT
+//    send a Supabase invite email — the whole point is to hand the officer
+//    a password to relay manually instead).
+//
+// Runs server-side because setting another user's password (or creating
+// one) needs the service_role key, which must never reach the browser —
+// same reasoning as invite-staff.
 //
 // Deploy: `supabase functions deploy generate-temp-password`
 // Required secret (shared with invite-staff, set once):
 //   supabase secrets set SUPABASE_SERVICE_ROLE_KEY=<service role key>
 // SUPABASE_URL is provided automatically to every Edge Function.
 //
-// Request body: { departmentId, staffId }
+// Request body: { departmentId, staffId, email? }  (email required only if not yet linked)
 // Response:     { data: { tempPassword, name } } | { error }
 
 import { createClient } from 'jsr:@supabase/supabase-js@2';
@@ -59,14 +69,14 @@ Deno.serve(async (req) => {
     return json({ error: 'Missing Authorization header' }, 401);
   }
 
-  let body: { departmentId?: string; staffId?: string };
+  let body: { departmentId?: string; staffId?: string; email?: string };
   try {
     body = await req.json();
   } catch {
     return json({ error: 'Invalid JSON body' }, 400);
   }
 
-  const { departmentId, staffId } = body;
+  const { departmentId, staffId, email } = body;
   if (!departmentId || !staffId) {
     return json({ error: 'departmentId and staffId are required' }, 400);
   }
@@ -107,13 +117,63 @@ Deno.serve(async (req) => {
   if (staffError || !staffRow) {
     return json({ error: 'No matching staff row in this department' }, 404);
   }
-  if (!staffRow.user_id) {
-    return json({ error: 'This staff member has no linked account yet — use Invite instead' }, 400);
+
+  let targetUserId = staffRow.user_id;
+
+  if (!targetUserId) {
+    const trimmedEmail = email?.trim();
+    if (!trimmedEmail) {
+      return json({ error: 'This staff member has no linked account yet — an email address is required' }, 400);
+    }
+
+    // Same person, another department — link without creating a second
+    // auth user (mirrors invite-staff's existing-profile check).
+    const { data: existingProfile, error: profileLookupError } = await adminClient
+      .from('profiles')
+      .select('user_id')
+      .eq('email', trimmedEmail)
+      .maybeSingle();
+    if (profileLookupError) {
+      return json({ error: `Profile lookup failed: ${profileLookupError.message}` }, 500);
+    }
+
+    if (existingProfile) {
+      targetUserId = existingProfile.user_id;
+    } else {
+      // Deliberately createUser rather than inviteUserByEmail — this path
+      // exists precisely to avoid depending on the invite email arriving,
+      // so no email is sent here at all; the temp password below is the
+      // only thing the officer relays, out-of-band.
+      const { data: createData, error: createError } = await adminClient.auth.admin.createUser({
+        email: trimmedEmail,
+        email_confirm: true,
+      });
+      if (createError) {
+        return json({ error: `Account creation failed: ${createError.message}` }, 500);
+      }
+      targetUserId = createData.user.id;
+
+      const { error: profileError } = await adminClient
+        .from('profiles')
+        .upsert({ user_id: targetUserId, email: trimmedEmail });
+      if (profileError) {
+        return json({ error: `Profile link failed: ${profileError.message}` }, 500);
+      }
+    }
+
+    const { error: linkError } = await adminClient
+      .from('staff')
+      .update({ email: trimmedEmail, user_id: targetUserId })
+      .eq('staff_id', staffId)
+      .eq('department_id', departmentId);
+    if (linkError) {
+      return json({ error: `Staff link failed: ${linkError.message}` }, 500);
+    }
   }
 
   const tempPassword = generateTempPassword();
 
-  const { error: pwError } = await adminClient.auth.admin.updateUserById(staffRow.user_id, {
+  const { error: pwError } = await adminClient.auth.admin.updateUserById(targetUserId, {
     password: tempPassword,
   });
   if (pwError) {
@@ -123,7 +183,7 @@ Deno.serve(async (req) => {
   const { error: flagError } = await adminClient
     .from('profiles')
     .update({ must_reset_password: true })
-    .eq('user_id', staffRow.user_id);
+    .eq('user_id', targetUserId);
   if (flagError) {
     return json({ error: `Password was set but failed to flag for reset: ${flagError.message}` }, 500);
   }

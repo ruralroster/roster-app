@@ -4599,17 +4599,21 @@ export async function inviteStaff(departmentId, name, email, rank, role, staffId
 }
 
 // Fallback for when the invite/reinvite email gets spam-filtered: sets a
-// random temporary password on an already-linked account (server-side —
-// see supabase/functions/generate-temp-password/index.ts) so the officer
-// can relay it out-of-band (WhatsApp, SMS, in person). Also flags the
-// account so the recipient is forced through SetPassword on next login
-// (see my_must_reset_password/clear_my_must_reset_password below).
-export async function generateTempPassword(departmentId, staffId) {
-  console.log('generateTempPassword called', departmentId, staffId);
+// random temporary password on an account (server-side — see
+// supabase/functions/generate-temp-password/index.ts) so the officer can
+// relay it out-of-band (WhatsApp, SMS, in person). Also flags the account
+// so the recipient is forced through SetPassword on next login (see
+// my_must_reset_password/clear_my_must_reset_password below).
+// email (optional): required only when staffId isn't linked to an account
+// yet — the Edge Function creates (or links) the account using it instead
+// of erroring, so this same call also covers "One-Time Password" for a
+// not-yet-linked staff member.
+export async function generateTempPassword(departmentId, staffId, email = null) {
+  console.log('generateTempPassword called', departmentId, staffId, email);
 
   try {
     const { data, error } = await supabase.functions.invoke('generate-temp-password', {
-      body: { departmentId, staffId },
+      body: { departmentId, staffId, email },
     });
 
     if (error) throw error;

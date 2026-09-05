@@ -55,8 +55,12 @@ export default function StaffAccountsTab({ departmentId, refreshKey, staffRanks 
 
   // Inviting an existing, not-yet-linked staff row (as opposed to the form
   // above, which creates a brand new one) — which row's inline email input
-  // is open, if any.
+  // is open, if any. linkMode distinguishes the two actions that share this
+  // same inline form: 'invite' (send a Supabase invite email) vs 'otp'
+  // (create/link the account directly and hand back a temp password,
+  // without depending on an invite email arriving).
   const [linkingStaffId, setLinkingStaffId] = useState(null);
+  const [linkMode, setLinkMode] = useState('invite');
   const [linkEmail, setLinkEmail] = useState('');
   const [linkRole, setLinkRole] = useState('staff');
   const [linking, setLinking] = useState(false);
@@ -121,8 +125,9 @@ export default function StaffAccountsTab({ departmentId, refreshKey, staffRanks 
     }
   };
 
-  const handleStartLink = (person) => {
+  const handleStartLink = (person, mode = 'invite') => {
     setLinkingStaffId(person.staff_id);
+    setLinkMode(mode);
     setLinkEmail(person.email || '');
     setLinkRole(person.role || 'staff');
     setLinkError(null);
@@ -134,14 +139,24 @@ export default function StaffAccountsTab({ departmentId, refreshKey, staffRanks 
     setLinking(true);
     setLinkError(null);
     try {
-      const { error: linkErr } = await inviteStaff(departmentId, person.name, linkEmail.trim(), person.rank, linkRole, person.staff_id);
-      if (linkErr) throw linkErr;
+      if (linkMode === 'otp') {
+        const { data, error: genErr } = await generateTempPassword(departmentId, person.staff_id, linkEmail.trim());
+        if (genErr) throw genErr;
 
-      setLinkingStaffId(null);
-      setLinkEmail('');
-      loadStaff();
+        setLinkingStaffId(null);
+        setLinkEmail('');
+        setTempPasswordResult({ staffId: person.staff_id, name: person.name, email: linkEmail.trim(), password: data.tempPassword });
+        loadStaff();
+      } else {
+        const { error: linkErr } = await inviteStaff(departmentId, person.name, linkEmail.trim(), person.rank, linkRole, person.staff_id);
+        if (linkErr) throw linkErr;
+
+        setLinkingStaffId(null);
+        setLinkEmail('');
+        loadStaff();
+      }
     } catch (err) {
-      setLinkError(`Failed to invite: ${err.message}`);
+      setLinkError(`Failed: ${err.message}`);
     } finally {
       setLinking(false);
     }
@@ -354,7 +369,7 @@ export default function StaffAccountsTab({ departmentId, refreshKey, staffRanks 
                         )}
                       </div>
                     ) : linkingStaffId === person.staff_id ? (
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <input
                           type="email"
                           placeholder="Email"
@@ -364,16 +379,18 @@ export default function StaffAccountsTab({ departmentId, refreshKey, staffRanks 
                           autoFocus
                           className="px-2 py-1 border border-gray-300 rounded text-sm w-40"
                         />
-                        <select
-                          value={linkRole}
-                          onChange={(e) => setLinkRole(e.target.value)}
-                          disabled={linking}
-                          className="px-2 py-1 border border-gray-300 rounded text-sm"
-                        >
-                          {ROLE_OPTIONS.map(r => (
-                            <option key={r.value} value={r.value}>{r.label}</option>
-                          ))}
-                        </select>
+                        {linkMode === 'invite' && (
+                          <select
+                            value={linkRole}
+                            onChange={(e) => setLinkRole(e.target.value)}
+                            disabled={linking}
+                            className="px-2 py-1 border border-gray-300 rounded text-sm"
+                          >
+                            {ROLE_OPTIONS.map(r => (
+                              <option key={r.value} value={r.value}>{r.label}</option>
+                            ))}
+                          </select>
+                        )}
                         <button
                           onClick={() => handleSendLink(person)}
                           disabled={linking || !linkEmail.trim()}
@@ -391,15 +408,22 @@ export default function StaffAccountsTab({ departmentId, refreshKey, staffRanks 
                         {linkError && <p className="text-xs text-red-700 basis-full">{linkError}</p>}
                       </div>
                     ) : (
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="inline-flex items-center gap-1 text-xs font-semibold text-gray-500">
                           <CircleDashed size={14} /> Not linked
                         </span>
                         <button
-                          onClick={() => handleStartLink(person)}
+                          onClick={() => handleStartLink(person, 'invite')}
                           className="px-2 py-0.5 bg-blue-100 hover:bg-blue-200 text-blue-900 font-medium rounded text-xs transition"
                         >
                           Invite
+                        </button>
+                        <button
+                          onClick={() => handleStartLink(person, 'otp')}
+                          title="Create their account and generate a one-time password to share manually (WhatsApp, SMS, etc.)"
+                          className="px-2 py-0.5 bg-purple-100 hover:bg-purple-200 text-purple-900 font-medium rounded text-xs transition"
+                        >
+                          One-Time Password
                         </button>
                       </div>
                     )}
