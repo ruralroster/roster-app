@@ -2748,20 +2748,25 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
         return (a.name || '').localeCompare(b.name || '');
       };
 
-      // Widest single entry anywhere in the fortnight, in characters — the
-      // user wants to see the whole roster at a glance rather than
-      // truncated names, so every day column is sized to fit this one.
-      let longestEntryChars = 0;
-      days.forEach(date => {
-        const dateStr = toLocalDateStr(date);
-        const byStaffOnCallForDay = groupAllocationsByStaff([], dutyAllocationsByDate[dateStr] || []);
-        const byStaffLocationForDay = groupAllocationsByStaff(allocationsByDate[dateStr] || [], []);
-        [...byStaffOnCallForDay.values(), ...byStaffLocationForDay.values()].forEach(person => {
-          longestEntryChars = Math.max(longestEntryChars, formatPersonEntry(person).length);
+      // Widest single entry within a week, in characters — sized per week
+      // rather than across the whole fortnight, so one busy day in week 2
+      // doesn't force week 1's columns (and everything on screen) wide too;
+      // each week's seven columns size to fit only that week's content.
+      const dayColumnMinWidthFor = (weekDays) => {
+        let longestEntryChars = 0;
+        weekDays.forEach(date => {
+          const dateStr = toLocalDateStr(date);
+          const byStaffOnCallForDay = groupAllocationsByStaff([], dutyAllocationsByDate[dateStr] || []);
+          const byStaffLocationForDay = groupAllocationsByStaff(allocationsByDate[dateStr] || [], []);
+          [...byStaffOnCallForDay.values(), ...byStaffLocationForDay.values()].forEach(person => {
+            longestEntryChars = Math.max(longestEntryChars, formatPersonEntry(person).length);
+          });
         });
-      });
-      // +3ch covers the entry's padding and the trailing "×" remove button.
-      const dayColumnMinWidth = longestEntryChars ? `${longestEntryChars + 3}ch` : '0px';
+        // +3ch covers the entry's padding and the trailing "×" remove button.
+        return longestEntryChars ? `${longestEntryChars + 3}ch` : '0px';
+      };
+      const fortnightWeeks = [days.slice(0, 7), days.slice(7, 14)];
+      const fortnightWeekColumnMinWidths = fortnightWeeks.map(dayColumnMinWidthFor);
 
       const selectedStaff = refData.staff.find(s => s.staff_id === fortnightSelectedStaffId);
       const selectedStaffAllocations = fortnightAllocations.filter(a => a.staff_id === fortnightSelectedStaffId);
@@ -2852,9 +2857,12 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
           </div>
 
           {/* Fortnight grid — sits outside the max-w-3xl wrapper above so it
-              can use the full page width; every day column is sized to fit
-              its widest entry rather than truncating it (dayColumnMinWidth,
-              computed above). */}
+              can use the full page width. Rendered as two independent
+              7-column grids (one per week) rather than one 14-cell grid, so
+              each week's columns size to fit only that week's widest entry
+              (fortnightWeekColumnMinWidths, computed above) — a busy day in
+              week 2 no longer forces week 1's columns wide too, and more
+              days fit on screen at once. */}
           <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
               <div className="flex items-center justify-between mb-4">
                 <button
@@ -2901,12 +2909,13 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                   <Loader size={32} className="text-blue-600 animate-spin mx-auto mb-2" />
                 </div>
               ) : (
-                <div className="overflow-x-auto">
-                <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(7, minmax(${dayColumnMinWidth}, 1fr))` }}>
+                <div className="overflow-x-auto space-y-3">
+                {fortnightWeeks.map((weekDays, weekIdx) => (
+                <div key={weekIdx} className="grid gap-2" style={{ gridTemplateColumns: `repeat(7, minmax(${fortnightWeekColumnMinWidths[weekIdx]}, 1fr))` }}>
                   {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(day => (
                     <div key={day} className="text-center text-xs font-bold text-gray-600 py-1">{day}</div>
                   ))}
-                  {days.map((date, idx) => {
+                  {weekDays.map((date, idx) => {
                     const dateStr = toLocalDateStr(date);
                     const dayAllocations = allocationsByDate[dateStr] || [];
                     const dayDutyAssignments = dutyAllocationsByDate[dateStr] || [];
@@ -2983,6 +2992,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                     );
                   })}
                 </div>
+                ))}
                 </div>
               )}
             </div>

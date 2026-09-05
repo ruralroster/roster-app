@@ -8,6 +8,33 @@ const ROLE_OPTIONS = [
   { value: 'intern', label: 'Intern' },
 ];
 
+const ROSTER_APP_URL = 'https://ruralroster.github.io/roster-app/';
+
+// "Dr Sarah Jones" -> "Sarah", for the temp-password email's greeting.
+function firstNameOf(name) {
+  if (!name) return 'there';
+  const words = name.split(' ').filter(Boolean).filter(w => !/^(Dr|Mr|Mrs|Ms|Prof)\.?$/i.test(w));
+  return words[0] || 'there';
+}
+
+// A mailto: link pre-filling subject/body so the officer reviews and sends
+// from their own mail client — deliberately not server-sent email, so this
+// needs no new infrastructure (no transactional email provider/secret) on
+// top of the temp password the Edge Function already generates.
+function tempPasswordMailto({ name, email, password }) {
+  const subject = 'Rostering app Password reset';
+  const body = [
+    `Dear ${firstNameOf(name)},`,
+    '',
+    'please find below your one-time password for the rostering app:',
+    '',
+    password,
+    '',
+    `You'll have to reset that as soon as you log in. Use this email address as your username and put it into the website ${ROSTER_APP_URL}`,
+  ].join('\n');
+  return `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
+
 // Officer-facing tool for creating logins. Deliberately separate from
 // StaffProfilesTab (which edits contact/coffee/activity-restriction fields
 // on staff who already exist) — this tab is about linking a `staff` row to
@@ -167,10 +194,11 @@ export default function StaffAccountsTab({ departmentId, refreshKey, staffRanks 
 
   // Sets a random temporary password on the account server-side (see
   // supabase/functions/generate-temp-password/index.ts) and returns it once
-  // for the officer to relay out-of-band — WhatsApp, SMS, in person — for a
-  // person whose invite/reinvite email keeps landing in spam. Also flags
-  // the account so App.js forces them through SetPassword on next login,
-  // same screen an invite link would have shown.
+  // for the officer to relay to a person whose invite/reinvite email keeps
+  // landing in spam — shown in a modal (below) with a mailto: link
+  // pre-filled to send it on. Also flags the account so App.js forces them
+  // through SetPassword on next login, same screen an invite link would
+  // have shown.
   const handleGenerateTempPassword = async (person) => {
     if (!window.confirm(
       `Generate a one-time password for ${person.name}? Their current password (if any) stops working immediately — only share the new one with them directly.`
@@ -182,9 +210,9 @@ export default function StaffAccountsTab({ departmentId, refreshKey, staffRanks 
       const { data, error: genErr } = await generateTempPassword(departmentId, person.staff_id);
       if (genErr) throw genErr;
 
-      setTempPasswordResult({ staffId: person.staff_id, password: data.tempPassword });
+      setTempPasswordResult({ staffId: person.staff_id, name: person.name, email: person.email, password: data.tempPassword });
     } catch (err) {
-      setTempPasswordResult({ staffId: person.staff_id, error: err.message });
+      setTempPasswordResult({ staffId: person.staff_id, name: person.name, error: err.message });
     } finally {
       setGeneratingPwId(null);
     }
@@ -324,30 +352,6 @@ export default function StaffAccountsTab({ departmentId, refreshKey, staffRanks 
                             {reinviteResult.message}
                           </p>
                         )}
-                        {tempPasswordResult?.staffId === person.staff_id && (
-                          tempPasswordResult.error ? (
-                            <p className="text-xs text-red-700 basis-full">Failed: {tempPasswordResult.error}</p>
-                          ) : (
-                            <div className="basis-full flex items-center gap-2 flex-wrap mt-1 p-2 bg-purple-50 border border-purple-200 rounded">
-                              <code className="text-sm font-mono font-semibold text-purple-900">{tempPasswordResult.password}</code>
-                              <button
-                                onClick={() => navigator.clipboard.writeText(tempPasswordResult.password)}
-                                className="text-xs text-purple-700 underline"
-                              >
-                                Copy
-                              </button>
-                              <button
-                                onClick={() => setTempPasswordResult(null)}
-                                className="text-xs text-gray-500 underline ml-auto"
-                              >
-                                Dismiss
-                              </button>
-                              <p className="text-xs text-purple-700 basis-full">
-                                Shown once — send this to {person.name} directly. They'll be asked to set their own password after signing in.
-                              </p>
-                            </div>
-                          )
-                        )}
                       </div>
                     ) : linkingStaffId === person.staff_id ? (
                       <div className="flex items-center gap-1.5">
@@ -404,6 +408,77 @@ export default function StaffAccountsTab({ departmentId, refreshKey, staffRanks 
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {tempPasswordResult && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-md">
+            <h2 className="text-lg font-bold text-gray-900">One-Time Password</h2>
+            <p className="text-sm text-gray-600 mb-4">{tempPasswordResult.name}</p>
+
+            {tempPasswordResult.error ? (
+              <p className="text-sm text-red-700 mb-4">Failed: {tempPasswordResult.error}</p>
+            ) : (
+              <>
+                <div className="flex items-center gap-2 mb-3 p-3 bg-purple-50 border border-purple-200 rounded-lg">
+                  <code className="text-lg font-mono font-semibold text-purple-900 flex-1">{tempPasswordResult.password}</code>
+                  <button
+                    onClick={() => navigator.clipboard.writeText(tempPasswordResult.password)}
+                    className="text-xs text-purple-700 underline flex-shrink-0"
+                  >
+                    Copy
+                  </button>
+                </div>
+
+                <p className="text-xs text-gray-500 mb-4">
+                  Shown once — they'll be asked to set their own password after signing in.
+                </p>
+
+                {tempPasswordResult.email ? (
+                  <>
+                    <p className="text-sm text-gray-800 mb-3">
+                      Would you like to email this one-time password to: {tempPasswordResult.name}?
+                    </p>
+                    <div className="flex gap-2">
+                      <a
+                        href={tempPasswordMailto(tempPasswordResult)}
+                        onClick={() => setTempPasswordResult(null)}
+                        className="flex-1 text-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition text-sm"
+                      >
+                        Yes
+                      </a>
+                      <button
+                        onClick={() => setTempPasswordResult(null)}
+                        className="flex-1 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-lg transition text-sm"
+                      >
+                        No
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-xs text-amber-700 mb-2">No email on file — share this password with them directly instead.</p>
+                    <button
+                      onClick={() => setTempPasswordResult(null)}
+                      className="w-full px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-lg transition text-sm"
+                    >
+                      Close
+                    </button>
+                  </>
+                )}
+              </>
+            )}
+
+            {tempPasswordResult.error && (
+              <button
+                onClick={() => setTempPasswordResult(null)}
+                className="w-full px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-lg transition text-sm"
+              >
+                Close
+              </button>
+            )}
+          </div>
         </div>
       )}
     </>
