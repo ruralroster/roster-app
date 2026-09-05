@@ -12,6 +12,8 @@ import DayReviewModal from './DayReviewModal';
 import RosterExcelImportTab from './RosterExcelImportTab';
 import RosterExcelExportTab from './RosterExcelExportTab';
 import CollapsibleSection from './CollapsibleSection';
+import ChangePassword from './ChangePassword';
+import TwoFactorSettings from './TwoFactorSettings';
 import { toLocalDateStr } from './dateUtils';
 import { ChevronLeft, ChevronRight, X, AlertCircle, Loader, Hand, Settings } from 'lucide-react';
 import { createTheatreActivity,
@@ -3906,6 +3908,14 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                 <p className="text-sm text-red-700">{error}</p>
               </div>
             )}
+
+            {/* My Account Group — self-service password + 2FA, same as staff's Security tab */}
+            <CollapsibleSection title="My Account">
+              <div className="space-y-6">
+                <ChangePassword />
+                <TwoFactorSettings />
+              </div>
+            </CollapsibleSection>
 
             {/* Department Group — Department Settings, Session Times */}
             <CollapsibleSection title="Department">

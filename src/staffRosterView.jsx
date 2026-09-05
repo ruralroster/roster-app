@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ChevronLeft, ChevronRight, ChevronDown, X, AlertCircle, Loader, Search, Download, Coffee, Copy, Check, Hand, Settings, Phone, Star, Shuffle } from 'lucide-react';
 import TwoFactorSettings from './TwoFactorSettings';
+import ChangePassword from './ChangePassword';
 import {
   getStaffById,
   getStaffAssignmentsForStaffDate,
@@ -1077,6 +1078,22 @@ export default function StaffRosterView({ departmentId, staffId }) {
               </div>
             </div>
 
+            {error && (
+              <div className="mb-6 p-3 bg-red-50 border border-red-300 rounded-lg flex gap-2 items-start">
+                <AlertCircle size={18} className="text-red-600 flex-shrink-0 mt-0.5" />
+                <p className="text-sm text-red-700">{error}</p>
+              </div>
+            )}
+
+            {starredStaff.length === 0 && !error && (
+              <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
+                <p className="text-xs font-semibold text-gray-600 uppercase mb-1">Starred Colleagues</p>
+                <p className="text-sm text-gray-500">
+                  Search for a colleague on the Day tab and tap the star next to their name to pin them here.
+                </p>
+              </div>
+            )}
+
             {starredStaff.length > 0 && (
               <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
                 <p className="text-xs font-semibold text-gray-600 uppercase mb-3">Starred Colleagues</p>
@@ -1537,7 +1554,12 @@ export default function StaffRosterView({ departmentId, staffId }) {
               </div>
             )}
 
-            {settingsSubTab === 'security' && <TwoFactorSettings />}
+            {settingsSubTab === 'security' && (
+              <div className="space-y-6">
+                <ChangePassword />
+                <TwoFactorSettings />
+              </div>
+            )}
 
             {settingsSubTab === 'availability' && (
               <>
