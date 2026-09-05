@@ -2748,31 +2748,14 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
         return (a.name || '').localeCompare(b.name || '');
       };
 
-      // Widest single entry within a week, in characters — sized per week
-      // rather than across the whole fortnight, so one busy day in week 2
-      // doesn't force week 1's columns (and everything on screen) wide too;
-      // each week's seven columns size to fit only that week's content.
-      //
-      // This is a fixed width (Xch), not a minmax(Xch, 1fr) — 1fr lets the
-      // grid stretch each column to fill leftover row width, which quietly
-      // widens every day back out to fill the page even when its content
-      // doesn't need it, undoing the whole point of sizing to content.
-      const MIN_DAY_COLUMN_CHARS = 3; // keeps an all-empty week's columns from collapsing to near-nothing
-      const dayColumnWidthFor = (weekDays) => {
-        let longestEntryChars = 0;
-        weekDays.forEach(date => {
-          const dateStr = toLocalDateStr(date);
-          const byStaffOnCallForDay = groupAllocationsByStaff([], dutyAllocationsByDate[dateStr] || []);
-          const byStaffLocationForDay = groupAllocationsByStaff(allocationsByDate[dateStr] || [], []);
-          [...byStaffOnCallForDay.values(), ...byStaffLocationForDay.values()].forEach(person => {
-            longestEntryChars = Math.max(longestEntryChars, formatPersonEntry(person).length);
-          });
-        });
-        // +5ch of headroom beyond the longest entry's own characters.
-        return `${Math.max(longestEntryChars, MIN_DAY_COLUMN_CHARS) + 5}ch`;
-      };
+      // Fixed day-column width — a constant, not sized off whatever's
+      // actually on screen (dynamic sizing off the current fortnight kept
+      // moving/stretching as the officer paged between weeks). Sized to fit
+      // a real worst-case entry — someone covering two overlapping on-call
+      // duties — plus 10ch of headroom.
+      const FORTNIGHT_WORST_CASE_ENTRY = 'Thomas (ED on call (Night) - ) (Anaesthetics on-call (Night) - )';
+      const FORTNIGHT_DAY_COLUMN_WIDTH = `${FORTNIGHT_WORST_CASE_ENTRY.length + 10}ch`;
       const fortnightWeeks = [days.slice(0, 7), days.slice(7, 14)];
-      const fortnightWeekColumnWidths = fortnightWeeks.map(dayColumnWidthFor);
 
       const selectedStaff = refData.staff.find(s => s.staff_id === fortnightSelectedStaffId);
       const selectedStaffAllocations = fortnightAllocations.filter(a => a.staff_id === fortnightSelectedStaffId);
@@ -2864,11 +2847,10 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
 
           {/* Fortnight grid — sits outside the max-w-3xl wrapper above so it
               can use the full page width. Rendered as two independent
-              7-column grids (one per week) rather than one 14-cell grid, so
-              each week's columns size to fit only that week's widest entry
-              (fortnightWeekColumnWidths, computed above) — a busy day in
-              week 2 no longer forces week 1's columns wide too, and more
-              days fit on screen at once. */}
+              7-column grids (one per week, each fixed to
+              FORTNIGHT_DAY_COLUMN_WIDTH) rather than one 14-cell grid, so a
+              week's row doesn't grow/shrink as the officer pages between
+              fortnights. */}
           <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
               <div className="flex items-center justify-between mb-4">
                 <button
@@ -2917,7 +2899,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
               ) : (
                 <div className="overflow-x-auto space-y-3">
                 {fortnightWeeks.map((weekDays, weekIdx) => (
-                <div key={weekIdx} className="grid gap-2" style={{ gridTemplateColumns: `repeat(7, ${fortnightWeekColumnWidths[weekIdx]})` }}>
+                <div key={weekIdx} className="grid gap-2" style={{ gridTemplateColumns: `repeat(7, ${FORTNIGHT_DAY_COLUMN_WIDTH})` }}>
                   {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(day => (
                     <div key={day} className="text-center text-xs font-bold text-gray-600 py-1">{day}</div>
                   ))}
