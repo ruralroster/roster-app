@@ -2752,7 +2752,13 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
       // rather than across the whole fortnight, so one busy day in week 2
       // doesn't force week 1's columns (and everything on screen) wide too;
       // each week's seven columns size to fit only that week's content.
-      const dayColumnMinWidthFor = (weekDays) => {
+      //
+      // This is a fixed width (Xch), not a minmax(Xch, 1fr) — 1fr lets the
+      // grid stretch each column to fill leftover row width, which quietly
+      // widens every day back out to fill the page even when its content
+      // doesn't need it, undoing the whole point of sizing to content.
+      const MIN_DAY_COLUMN_CHARS = 3; // keeps an all-empty week's columns from collapsing to near-nothing
+      const dayColumnWidthFor = (weekDays) => {
         let longestEntryChars = 0;
         weekDays.forEach(date => {
           const dateStr = toLocalDateStr(date);
@@ -2762,11 +2768,11 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
             longestEntryChars = Math.max(longestEntryChars, formatPersonEntry(person).length);
           });
         });
-        // +3ch covers the entry's padding and the trailing "×" remove button.
-        return longestEntryChars ? `${longestEntryChars + 3}ch` : '0px';
+        // +5ch of headroom beyond the longest entry's own characters.
+        return `${Math.max(longestEntryChars, MIN_DAY_COLUMN_CHARS) + 5}ch`;
       };
       const fortnightWeeks = [days.slice(0, 7), days.slice(7, 14)];
-      const fortnightWeekColumnMinWidths = fortnightWeeks.map(dayColumnMinWidthFor);
+      const fortnightWeekColumnWidths = fortnightWeeks.map(dayColumnWidthFor);
 
       const selectedStaff = refData.staff.find(s => s.staff_id === fortnightSelectedStaffId);
       const selectedStaffAllocations = fortnightAllocations.filter(a => a.staff_id === fortnightSelectedStaffId);
@@ -2860,7 +2866,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
               can use the full page width. Rendered as two independent
               7-column grids (one per week) rather than one 14-cell grid, so
               each week's columns size to fit only that week's widest entry
-              (fortnightWeekColumnMinWidths, computed above) — a busy day in
+              (fortnightWeekColumnWidths, computed above) — a busy day in
               week 2 no longer forces week 1's columns wide too, and more
               days fit on screen at once. */}
           <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
@@ -2911,7 +2917,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
               ) : (
                 <div className="overflow-x-auto space-y-3">
                 {fortnightWeeks.map((weekDays, weekIdx) => (
-                <div key={weekIdx} className="grid gap-2" style={{ gridTemplateColumns: `repeat(7, minmax(${fortnightWeekColumnMinWidths[weekIdx]}, 1fr))` }}>
+                <div key={weekIdx} className="grid gap-2" style={{ gridTemplateColumns: `repeat(7, ${fortnightWeekColumnWidths[weekIdx]})` }}>
                   {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(day => (
                     <div key={day} className="text-center text-xs font-bold text-gray-600 py-1">{day}</div>
                   ))}
