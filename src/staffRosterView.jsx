@@ -291,6 +291,29 @@ export default function StaffRosterView({ departmentId, staffId }) {
     loadStarred();
   }, [activeTab, staffId]);
 
+  // Reload the expanded colleague's week whenever the week navigation
+  // moves — otherwise cycling forward/back left their panel stuck showing
+  // whichever week was current at the moment it was expanded.
+  useEffect(() => {
+    if (activeTab !== 'week' || !expandedStarredId) return;
+
+    const loadColleagueWeek = async () => {
+      setLoadingColleagueWeek(true);
+      try {
+        const weekStart = getMondayOfWeek(currentDate);
+        const { data, error: weekError } = await getStaffAssignmentsForWeek(expandedStarredId, weekStart);
+        if (weekError) throw weekError;
+        setColleagueWeekAssignments(data);
+      } catch (err) {
+        setError(`Failed to load colleague's week: ${err.message}`);
+      } finally {
+        setLoadingColleagueWeek(false);
+      }
+    };
+
+    loadColleagueWeek();
+  }, [activeTab, expandedStarredId, currentDate]);
+
   const handleToggleStar = async (targetStaffId) => {
     setStarringError(null);
     const existing = starredStaff.find(f => f.starred_staff_id === targetStaffId);
@@ -309,24 +332,8 @@ export default function StaffRosterView({ departmentId, staffId }) {
     }
   };
 
-  const handleToggleExpandStarred = async (colleague) => {
-    if (expandedStarredId === colleague.starred_staff_id) {
-      setExpandedStarredId(null);
-      return;
-    }
-
-    setExpandedStarredId(colleague.starred_staff_id);
-    setLoadingColleagueWeek(true);
-    try {
-      const weekStart = getMondayOfWeek(currentDate);
-      const { data, error: weekError } = await getStaffAssignmentsForWeek(colleague.starred_staff_id, weekStart);
-      if (weekError) throw weekError;
-      setColleagueWeekAssignments(data);
-    } catch (err) {
-      setError(`Failed to load ${colleague.staff?.name}'s week: ${err.message}`);
-    } finally {
-      setLoadingColleagueWeek(false);
-    }
+  const handleToggleExpandStarred = (colleague) => {
+    setExpandedStarredId(prev => prev === colleague.starred_staff_id ? null : colleague.starred_staff_id);
   };
 
   const loadCrossoverDays = async (colleague, weekStart) => {
