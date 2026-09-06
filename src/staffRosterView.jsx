@@ -76,6 +76,14 @@ const RANK_LABEL = {
 
 const toDateStr = toLocalDateStr;
 
+function formatCrossoverWeekRange(weekStart) {
+  if (!weekStart) return '';
+  const end = new Date(weekStart);
+  end.setDate(end.getDate() + 6);
+  const fmt = (d) => d.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
+  return `${fmt(weekStart)} – ${fmt(end)}`;
+}
+
 function startOfWeek(date) {
   const d = new Date(date);
   d.setHours(0, 0, 0, 0);
@@ -118,6 +126,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
   const [colleagueWeekAssignments, setColleagueWeekAssignments] = useState([]);
   const [loadingColleagueWeek, setLoadingColleagueWeek] = useState(false);
   const [crossoverStaff, setCrossoverStaff] = useState(null); // { starred_staff_id, staff: {name} }
+  const [crossoverWeekStart, setCrossoverWeekStart] = useState(null);
   const [crossoverDays, setCrossoverDays] = useState(null);
   const [loadingCrossover, setLoadingCrossover] = useState(false);
 
@@ -321,17 +330,16 @@ export default function StaffRosterView({ departmentId, staffId }) {
     }
   };
 
-  const handleOpenCrossover = async (colleague) => {
-    setCrossoverStaff(colleague);
-    setCrossoverDays(null);
+  const loadCrossoverDays = async (colleague, weekStart) => {
     setLoadingCrossover(true);
     try {
-      const weekStart = getMondayOfWeek(currentDate);
-      const [myOffRes, colleagueWeekRes, colleagueOffRes] = await Promise.all([
+      const [myWeekRes, myOffRes, colleagueWeekRes, colleagueOffRes] = await Promise.all([
+        getStaffAssignmentsForWeek(staffId, weekStart),
         getStaffAvailability(departmentId, weekStart),
         getStaffAssignmentsForWeek(colleague.starred_staff_id, weekStart),
         getStaffOffDays(colleague.starred_staff_id, weekStart),
       ]);
+      if (myWeekRes.error) throw myWeekRes.error;
       if (myOffRes.error) throw myOffRes.error;
       if (colleagueWeekRes.error) throw colleagueWeekRes.error;
       if (colleagueOffRes.error) throw colleagueOffRes.error;
@@ -340,7 +348,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
       // plain staff member to their own rows — exactly "my availability"
       // with no extra filtering needed.
       const myOffDates = new Set(myOffRes.data.filter(a => a.available === false).map(a => a.date));
-      const myWorkingDates = new Set(weekAssignments.map(a => a.date));
+      const myWorkingDates = new Set(myWeekRes.data.map(a => a.date));
       const colleagueWorkingDates = new Set(colleagueWeekRes.data.map(a => a.date));
       const colleagueOffDates = new Set(colleagueOffRes.data);
 
@@ -359,6 +367,28 @@ export default function StaffRosterView({ departmentId, staffId }) {
     } finally {
       setLoadingCrossover(false);
     }
+  };
+
+  const handleOpenCrossover = (colleague) => {
+    const weekStart = getMondayOfWeek(currentDate);
+    setCrossoverStaff(colleague);
+    setCrossoverWeekStart(weekStart);
+    setCrossoverDays(null);
+    loadCrossoverDays(colleague, weekStart);
+  };
+
+  const handleCloseCrossover = () => {
+    setCrossoverStaff(null);
+    setCrossoverWeekStart(null);
+    setCrossoverDays(null);
+  };
+
+  const handleCrossoverWeekNav = (deltaDays) => {
+    const weekStart = new Date(crossoverWeekStart);
+    weekStart.setDate(weekStart.getDate() + deltaDays);
+    setCrossoverWeekStart(weekStart);
+    setCrossoverDays(null);
+    loadCrossoverDays(crossoverStaff, weekStart);
   };
 
   // Load on-call roster
@@ -1906,21 +1936,43 @@ export default function StaffRosterView({ departmentId, staffId }) {
         </div>
       )}
 
-      {/* Crossover Modal — this week's working-together / both-off days
-          against a starred colleague. */}
+      {/* Crossover Modal — navigate week-by-week to see working-together
+          and both-off days against a starred colleague. */}
       {crossoverStaff && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-sm">
             <div className="flex justify-between items-start mb-4">
               <div>
                 <h2 className="text-xl font-bold text-gray-900">Crossover</h2>
-                <p className="text-sm text-gray-600">You &amp; {crossoverStaff.staff?.name} — this week</p>
+                <p className="text-sm text-gray-600">You &amp; {crossoverStaff.staff?.name}</p>
               </div>
               <button
-                onClick={() => setCrossoverStaff(null)}
+                onClick={handleCloseCrossover}
                 className="p-1 hover:bg-gray-100 rounded-lg"
               >
                 <X size={20} />
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between mb-4">
+              <button
+                onClick={() => handleCrossoverWeekNav(-7)}
+                disabled={loadingCrossover}
+                aria-label="Previous week"
+                className="p-1.5 hover:bg-gray-100 rounded-lg disabled:opacity-40"
+              >
+                <ChevronLeft size={18} />
+              </button>
+              <span className="text-sm font-medium text-gray-700">
+                {formatCrossoverWeekRange(crossoverWeekStart)}
+              </span>
+              <button
+                onClick={() => handleCrossoverWeekNav(7)}
+                disabled={loadingCrossover}
+                aria-label="Next week"
+                className="p-1.5 hover:bg-gray-100 rounded-lg disabled:opacity-40"
+              >
+                <ChevronRight size={18} />
               </button>
             </div>
 
@@ -1935,7 +1987,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
                     <div
                       key={day.dateStr}
                       title={day.status === 'working' ? 'Working together' : day.status === 'off' ? 'Both off' : ''}
-                      className={`aspect-square flex items-center justify-center rounded-lg text-xs font-bold border-2 ${
+                      className={`aspect-square flex flex-col items-center justify-center rounded-lg text-xs font-bold border-2 ${
                         day.status === 'working'
                           ? 'bg-green-100 border-green-500 text-green-800'
                           : day.status === 'off'
@@ -1943,7 +1995,13 @@ export default function StaffRosterView({ departmentId, staffId }) {
                             : 'bg-white border-gray-200 text-gray-300'
                       }`}
                     >
-                      {day.label.slice(0, 2)}
+                      <span>{day.label.slice(0, 2)}</span>
+                      {day.status === 'working' && (
+                        <span className="text-[9px] font-semibold leading-none mt-0.5">Work</span>
+                      )}
+                      {day.status === 'off' && (
+                        <span className="text-[9px] font-semibold leading-none mt-0.5">Off</span>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -1961,7 +2019,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
             )}
 
             <button
-              onClick={() => setCrossoverStaff(null)}
+              onClick={handleCloseCrossover}
               className="w-full mt-6 bg-gray-100 hover:bg-gray-200 text-gray-900 font-medium py-2 rounded-lg"
             >
               Close
