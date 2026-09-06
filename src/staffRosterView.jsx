@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { ChevronLeft, ChevronRight, ChevronDown, X, AlertCircle, Loader, Search, Download, Coffee, Copy, Check, Hand, Settings, Phone, Star, Shuffle } from 'lucide-react';
 import TwoFactorSettings from './TwoFactorSettings';
 import ChangePassword from './ChangePassword';
+import StaffWalkthrough from './StaffWalkthrough';
 import {
   getStaffById,
   getStaffAssignmentsForStaffDate,
@@ -1458,6 +1459,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
         { key: 'coffee', label: 'Coffee Preferences' },
         { key: 'availability', label: 'Availability' },
         { key: 'security', label: 'Security' },
+        { key: 'walkthrough', label: 'Walkthrough' },
       ];
 
       const settingsDays = [];
@@ -1677,6 +1679,8 @@ export default function StaffRosterView({ departmentId, staffId }) {
                 </div>
               </>
             )}
+
+            {settingsSubTab === 'walkthrough' && <StaffWalkthrough />}
           </div>
         </div>
       );
