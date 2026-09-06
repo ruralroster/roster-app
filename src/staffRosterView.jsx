@@ -29,7 +29,6 @@ import {
   getStarredStaff,
   starStaffMember,
   unstarStaffMember,
-  getStaffOffDays,
 } from './supabaseClient';
 import CollapsibleSection from './CollapsibleSection';
 import CoffeePicker from './CoffeePicker';
@@ -333,32 +332,30 @@ export default function StaffRosterView({ departmentId, staffId }) {
   const loadCrossoverDays = async (colleague, weekStart) => {
     setLoadingCrossover(true);
     try {
-      const [myWeekRes, myOffRes, colleagueWeekRes, colleagueOffRes] = await Promise.all([
+      const [myWeekRes, colleagueWeekRes] = await Promise.all([
         getStaffAssignmentsForWeek(staffId, weekStart),
-        getStaffAvailability(departmentId, weekStart),
         getStaffAssignmentsForWeek(colleague.starred_staff_id, weekStart),
-        getStaffOffDays(colleague.starred_staff_id, weekStart),
       ]);
       if (myWeekRes.error) throw myWeekRes.error;
-      if (myOffRes.error) throw myOffRes.error;
       if (colleagueWeekRes.error) throw colleagueWeekRes.error;
-      if (colleagueOffRes.error) throw colleagueOffRes.error;
 
-      // getStaffAvailability queries the whole department but RLS limits a
-      // plain staff member to their own rows — exactly "my availability"
-      // with no extra filtering needed.
-      const myOffDates = new Set(myOffRes.data.filter(a => a.available === false).map(a => a.date));
+      // "Off" means no work assignment that day — not the narrower "marked
+      // themselves unavailable/on leave" (getStaffOffDays), which most staff
+      // never bother to set and so understated "both off" days: a colleague
+      // with a completely empty week showed no crossover days at all even
+      // though every one of those days was, in the plain sense, a day off.
       const myWorkingDates = new Set(myWeekRes.data.map(a => a.date));
       const colleagueWorkingDates = new Set(colleagueWeekRes.data.map(a => a.date));
-      const colleagueOffDates = new Set(colleagueOffRes.data);
 
       const days = Array.from({ length: 7 }, (_, i) => {
         const d = new Date(weekStart);
         d.setDate(d.getDate() + i);
         const dateStr = toLocalDateStr(d);
+        const myWorking = myWorkingDates.has(dateStr);
+        const colleagueWorking = colleagueWorkingDates.has(dateStr);
         let status = null;
-        if (myWorkingDates.has(dateStr) && colleagueWorkingDates.has(dateStr)) status = 'working';
-        else if (myOffDates.has(dateStr) && colleagueOffDates.has(dateStr)) status = 'off';
+        if (myWorking && colleagueWorking) status = 'working';
+        else if (!myWorking && !colleagueWorking) status = 'off';
         return { dateStr, label: SETTINGS_DAY_LABELS[d.getDay()], status };
       });
       setCrossoverDays(days);
