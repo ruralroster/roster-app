@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ChevronLeft, ChevronRight, ChevronDown, X, AlertCircle, Loader, Search, Download, Coffee, Copy, Check, Hand, Settings, Phone, Star, Shuffle } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronDown, X, AlertCircle, Loader, Search, Download, Coffee, Copy, Check, Hand, Settings, Phone, Star, Shuffle, Plus } from 'lucide-react';
 import TwoFactorSettings from './TwoFactorSettings';
 import ChangePassword from './ChangePassword';
 import StaffWalkthrough from './StaffWalkthrough';
@@ -45,7 +45,7 @@ import {
 } from './availabilityUtils';
 import { buildAssignmentsIcs, getIcsExportFilename, downloadTextFile } from './icsExport';
 import { toLocalDateStr } from './dateUtils';
-import { NO_COFFEE, NO_MILK, parseCoffeeOrder } from './coffeeUtils';
+import { NO_COFFEE, NO_MILK, COFFEE_TYPES, MILK_TYPES, milkIsFixedForCoffeeType, parseCoffeeOrder } from './coffeeUtils';
 import { getMondayOfWeek } from './payrollExport';
 import { isIOS } from './installPrompt';
 
@@ -171,6 +171,15 @@ export default function StaffRosterView({ departmentId, staffId }) {
   // today"); unchecking a box drops that session's staff from the list
   // instead of trying to guess it from the viewer's local clock.
   const [coffeeSessionFilters, setCoffeeSessionFilters] = useState({ morning: true, afternoon: false, night: false });
+  // Coffees for people not on the roster (locums, visiting surgeons, etc.) —
+  // session-only, like the rest of this modal: nothing here is persisted,
+  // it's just tallied into today's summary/text while the modal is open.
+  const [coffeeExtras, setCoffeeExtras] = useState([]); // [{ id, coffeeType, milkType, quantity, label }]
+  const [showAddCoffeeExtra, setShowAddCoffeeExtra] = useState(false);
+  const [extraFormLabel, setExtraFormLabel] = useState('');
+  const [extraFormCoffeeType, setExtraFormCoffeeType] = useState(COFFEE_TYPES[1]);
+  const [extraFormMilkType, setExtraFormMilkType] = useState(MILK_TYPES[0]);
+  const [extraFormQuantity, setExtraFormQuantity] = useState(1);
 
   // Settings tab state
   const [settingsSubTab, setSettingsSubTab] = useState('profile');
@@ -718,6 +727,8 @@ export default function StaffRosterView({ departmentId, staffId }) {
     setLoadingCoffeeModal(true);
     setCoffeeCopied(false);
     setCoffeeSessionFilters({ morning: true, afternoon: false, night: false });
+    setCoffeeExtras([]);
+    setShowAddCoffeeExtra(false);
     try {
       const { data, error: fetchError } = await getStaffAssignmentsForDate(departmentId, new Date());
       if (fetchError) throw fetchError;
@@ -762,12 +773,18 @@ export default function StaffRosterView({ departmentId, staffId }) {
   // One line per distinct (coffee type, milk type) combination, with a
   // count — what actually gets ordered from the coffee place, as opposed
   // to the per-person table above it which is for checking who's getting
-  // what.
+  // what. Extras (locums, visiting surgeons — people with no staff row to
+  // read a coffee_order off) are tallied into the same counts, since the
+  // coffee place only cares about the total by type, not who it's for.
   const coffeeSummaryLines = (() => {
     const counts = new Map(); // `${coffeeType}|${milkType}` -> count
     coffeeOrdersForModal.forEach(person => {
       const key = `${person.coffeeType}|${person.milkType || ''}`;
       counts.set(key, (counts.get(key) || 0) + 1);
+    });
+    coffeeExtras.forEach(extra => {
+      const key = `${extra.coffeeType}|${extra.milkType || ''}`;
+      counts.set(key, (counts.get(key) || 0) + extra.quantity);
     });
     return Array.from(counts.entries()).map(([key, count]) => {
       const [coffeeType, milkType] = key.split('|');
@@ -775,6 +792,39 @@ export default function StaffRosterView({ departmentId, staffId }) {
       return `${count} x ${coffeeType}${milkSuffix}`;
     });
   })();
+
+  const coffeeExtrasTotal = coffeeExtras.reduce((sum, extra) => sum + extra.quantity, 0);
+  const totalCoffeeCount = coffeeOrdersForModal.length + coffeeExtrasTotal;
+
+  const handleOpenAddCoffeeExtra = () => {
+    setExtraFormLabel('');
+    setExtraFormCoffeeType(COFFEE_TYPES[1]);
+    setExtraFormMilkType(MILK_TYPES[0]);
+    setExtraFormQuantity(1);
+    setShowAddCoffeeExtra(true);
+  };
+
+  const handleExtraCoffeeTypeChange = (newType) => {
+    setExtraFormCoffeeType(newType);
+    if (milkIsFixedForCoffeeType(newType)) setExtraFormMilkType(NO_MILK);
+    else if (!extraFormMilkType || extraFormMilkType === NO_MILK) setExtraFormMilkType(MILK_TYPES[0]);
+  };
+
+  const handleSubmitCoffeeExtra = () => {
+    const quantity = Math.max(1, Math.round(Number(extraFormQuantity)) || 1);
+    setCoffeeExtras(prev => [...prev, {
+      id: `${Date.now()}-${Math.random()}`,
+      label: extraFormLabel.trim(),
+      coffeeType: extraFormCoffeeType,
+      milkType: milkIsFixedForCoffeeType(extraFormCoffeeType) ? NO_MILK : extraFormMilkType,
+      quantity,
+    }]);
+    setShowAddCoffeeExtra(false);
+  };
+
+  const handleRemoveCoffeeExtra = (id) => {
+    setCoffeeExtras(prev => prev.filter(extra => extra.id !== id));
+  };
 
   const coffeeOrderMessage = [
     'Good morning, the order for the hospital coffees is:',
@@ -795,7 +845,10 @@ export default function StaffRosterView({ departmentId, staffId }) {
     const lines = coffeeOrdersForModal.map(person =>
       `${person.name} (${person.rank}): ${person.coffeeType} - ${person.milkType}`
     );
-    const text = [`Coffee orders for ${formatDate(new Date())}`, '', ...lines, '', `${lines.length} coffee${lines.length === 1 ? '' : 's'} to order`].join('\n');
+    const extraLines = coffeeExtras.map(extra =>
+      `${extra.label || 'Extra'} x${extra.quantity}: ${extra.coffeeType}${extra.milkType && extra.milkType !== NO_MILK ? ` - ${extra.milkType}` : ''}`
+    );
+    const text = [`Coffee orders for ${formatDate(new Date())}`, '', ...lines, ...extraLines, '', `${totalCoffeeCount} coffee${totalCoffeeCount === 1 ? '' : 's'} to order`].join('\n');
     try {
       await navigator.clipboard.writeText(text);
       setCoffeeCopied(true);
@@ -1796,62 +1849,158 @@ export default function StaffRosterView({ departmentId, staffId }) {
                 <Loader size={32} className="text-blue-600 animate-spin mx-auto mb-2" />
                 <p className="text-gray-600 text-sm">Loading coffee orders...</p>
               </div>
-            ) : coffeeOrdersForModal.length === 0 ? (
-              <p className="text-sm text-gray-500 py-4">No coffee orders — nobody working today wants a coffee (or nobody's set a preference yet).</p>
             ) : (
               <>
-                <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg flex-shrink-0">
-                  <p className="text-xs font-semibold text-amber-900 uppercase mb-2">Order Summary</p>
-                  <ul className="text-sm text-gray-900 space-y-0.5 mb-3 list-disc list-inside">
-                    {coffeeSummaryLines.map((line, i) => <li key={i}>{line}</li>)}
-                  </ul>
-                  {coffeePlaceSmsHref ? (
-                    <a
-                      href={coffeePlaceSmsHref}
-                      className="block text-center px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white text-sm font-medium rounded-lg transition"
-                    >
-                      Text order to {department?.coffee_place_name || 'Coffee Place'}
-                    </a>
+                {totalCoffeeCount === 0 ? (
+                  <p className="text-sm text-gray-500 py-4">No coffee orders — nobody working today wants a coffee (or nobody's set a preference yet).</p>
+                ) : (
+                  <>
+                    <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg flex-shrink-0">
+                      <p className="text-xs font-semibold text-amber-900 uppercase mb-2">Order Summary</p>
+                      <ul className="text-sm text-gray-900 space-y-0.5 mb-3 list-disc list-inside">
+                        {coffeeSummaryLines.map((line, i) => <li key={i}>{line}</li>)}
+                      </ul>
+                      {coffeePlaceSmsHref ? (
+                        <a
+                          href={coffeePlaceSmsHref}
+                          className="block text-center px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white text-sm font-medium rounded-lg transition"
+                        >
+                          Text order to {department?.coffee_place_name || 'Coffee Place'}
+                        </a>
+                      ) : (
+                        <p className="text-xs text-gray-500">An officer can set a Coffee Place number in Settings → Phone Book to text this order directly from here.</p>
+                      )}
+                    </div>
+
+                    {coffeeOrdersForModal.length > 0 && (
+                      <div className="overflow-y-auto flex-1 -mx-6 px-6">
+                        <table className="w-full border-collapse">
+                          <thead className="sticky top-0 bg-white">
+                            <tr>
+                              <th className="text-left px-2 py-2 border-b border-gray-200 text-xs font-semibold text-gray-600 uppercase">Staff Name</th>
+                              <th className="text-left px-2 py-2 border-b border-gray-200 text-xs font-semibold text-gray-600 uppercase">Rank</th>
+                              <th className="text-left px-2 py-2 border-b border-gray-200 text-xs font-semibold text-gray-600 uppercase">Coffee Type</th>
+                              <th className="text-left px-2 py-2 border-b border-gray-200 text-xs font-semibold text-gray-600 uppercase">Milk Type</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {coffeeOrdersForModal.map(person => (
+                              <tr key={person.staff_id} className="hover:bg-gray-50">
+                                <td className="px-2 py-2 border-b border-gray-100 text-sm font-medium text-gray-900">{person.name}</td>
+                                <td className="px-2 py-2 border-b border-gray-100 text-sm text-gray-600 capitalize">{person.rank}</td>
+                                <td className="px-2 py-2 border-b border-gray-100 text-sm text-gray-900">{person.coffeeType}</td>
+                                <td className="px-2 py-2 border-b border-gray-100 text-sm text-gray-900">{person.milkType}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {/* Extras — coffees for people not on the roster (locums,
+                    visiting surgeons, etc). Session-only, like the rest of
+                    this modal — see coffeeExtras above. */}
+                <div className={coffeeOrdersForModal.length > 0 ? 'mt-4 pt-4 border-t border-gray-200 flex-shrink-0' : 'flex-shrink-0'}>
+                  {coffeeExtras.length > 0 && (
+                    <ul className="space-y-1.5 mb-3">
+                      {coffeeExtras.map(extra => (
+                        <li key={extra.id} className="flex items-center justify-between gap-2 text-sm bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+                          <span className="text-gray-900">
+                            {extra.quantity} x {extra.coffeeType}
+                            {extra.milkType && extra.milkType !== NO_MILK ? ` on ${extra.milkType}` : ''}
+                            {extra.label && <span className="text-gray-500"> — {extra.label}</span>}
+                          </span>
+                          <button
+                            onClick={() => handleRemoveCoffeeExtra(extra.id)}
+                            title="Remove"
+                            className="p-1 hover:bg-gray-200 rounded flex-shrink-0"
+                          >
+                            <X size={14} />
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+
+                  {showAddCoffeeExtra ? (
+                    <div className="p-3 border border-gray-200 rounded-lg space-y-2">
+                      <p className="text-xs font-semibold text-gray-600 uppercase">Add someone not on the roster</p>
+                      <input
+                        type="text"
+                        value={extraFormLabel}
+                        onChange={(e) => setExtraFormLabel(e.target.value)}
+                        placeholder="Who's it for? (optional — e.g. Locum)"
+                        className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm"
+                      />
+                      <div className="flex gap-2">
+                        <select
+                          value={extraFormCoffeeType}
+                          onChange={(e) => handleExtraCoffeeTypeChange(e.target.value)}
+                          className="flex-1 min-w-0 px-2 py-1.5 border border-gray-300 rounded text-sm"
+                        >
+                          {COFFEE_TYPES.filter(t => t !== NO_COFFEE).map(t => <option key={t} value={t}>{t}</option>)}
+                        </select>
+                        <select
+                          value={milkIsFixedForCoffeeType(extraFormCoffeeType) ? NO_MILK : extraFormMilkType}
+                          disabled={milkIsFixedForCoffeeType(extraFormCoffeeType)}
+                          onChange={(e) => setExtraFormMilkType(e.target.value)}
+                          className="flex-1 min-w-0 px-2 py-1.5 border border-gray-300 rounded text-sm disabled:opacity-50"
+                        >
+                          {milkIsFixedForCoffeeType(extraFormCoffeeType) ? (
+                            <option value={NO_MILK}>{NO_MILK}</option>
+                          ) : (
+                            MILK_TYPES.map(m => <option key={m} value={m}>{m}</option>)
+                          )}
+                        </select>
+                        <input
+                          type="number"
+                          min={1}
+                          value={extraFormQuantity}
+                          onChange={(e) => setExtraFormQuantity(e.target.value)}
+                          className="w-16 flex-shrink-0 px-2 py-1.5 border border-gray-300 rounded text-sm"
+                        />
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => setShowAddCoffeeExtra(false)}
+                          className="flex-1 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-800 text-sm font-medium rounded-lg transition"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={handleSubmitCoffeeExtra}
+                          className="flex-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition"
+                        >
+                          Add
+                        </button>
+                      </div>
+                    </div>
                   ) : (
-                    <p className="text-xs text-gray-500">An officer can set a Coffee Place number in Settings → Phone Book to text this order directly from here.</p>
+                    <button
+                      onClick={handleOpenAddCoffeeExtra}
+                      className="w-full flex items-center justify-center gap-1.5 px-3 py-2 border border-dashed border-gray-300 hover:border-gray-400 text-gray-600 hover:text-gray-800 text-sm font-medium rounded-lg transition"
+                    >
+                      <Plus size={16} /> Add someone not on the roster (locum, visitor…)
+                    </button>
                   )}
                 </div>
 
-                <div className="overflow-y-auto flex-1 -mx-6 px-6">
-                  <table className="w-full border-collapse">
-                    <thead className="sticky top-0 bg-white">
-                      <tr>
-                        <th className="text-left px-2 py-2 border-b border-gray-200 text-xs font-semibold text-gray-600 uppercase">Staff Name</th>
-                        <th className="text-left px-2 py-2 border-b border-gray-200 text-xs font-semibold text-gray-600 uppercase">Rank</th>
-                        <th className="text-left px-2 py-2 border-b border-gray-200 text-xs font-semibold text-gray-600 uppercase">Coffee Type</th>
-                        <th className="text-left px-2 py-2 border-b border-gray-200 text-xs font-semibold text-gray-600 uppercase">Milk Type</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {coffeeOrdersForModal.map(person => (
-                        <tr key={person.staff_id} className="hover:bg-gray-50">
-                          <td className="px-2 py-2 border-b border-gray-100 text-sm font-medium text-gray-900">{person.name}</td>
-                          <td className="px-2 py-2 border-b border-gray-100 text-sm text-gray-600 capitalize">{person.rank}</td>
-                          <td className="px-2 py-2 border-b border-gray-100 text-sm text-gray-900">{person.coffeeType}</td>
-                          <td className="px-2 py-2 border-b border-gray-100 text-sm text-gray-900">{person.milkType}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-
-                <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-200">
-                  <p className="text-sm font-semibold text-gray-900">
-                    {coffeeOrdersForModal.length} coffee{coffeeOrdersForModal.length === 1 ? '' : 's'} to order
-                  </p>
-                  <button
-                    onClick={handleCopyCoffeeOrders}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-800 text-sm font-medium rounded-lg transition"
-                  >
-                    {coffeeCopied ? <Check size={16} /> : <Copy size={16} />}
-                    {coffeeCopied ? 'Copied' : 'Copy'}
-                  </button>
-                </div>
+                {totalCoffeeCount > 0 && (
+                  <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-200 flex-shrink-0">
+                    <p className="text-sm font-semibold text-gray-900">
+                      {totalCoffeeCount} coffee{totalCoffeeCount === 1 ? '' : 's'} to order
+                    </p>
+                    <button
+                      onClick={handleCopyCoffeeOrders}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-800 text-sm font-medium rounded-lg transition"
+                    >
+                      {coffeeCopied ? <Check size={16} /> : <Copy size={16} />}
+                      {coffeeCopied ? 'Copied' : 'Copy'}
+                    </button>
+                  </div>
+                )}
               </>
             )}
           </div>
