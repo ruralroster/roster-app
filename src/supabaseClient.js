@@ -4516,9 +4516,15 @@ export async function getMyMemberships() {
       return { data: memberships, isSuperAdmin: true, error: null };
     }
 
+    // Explicit relationship hint (rather than the bare `departments(name)`
+    // embed this used to be): coffee_order_removed_staff's own foreign
+    // keys to both staff and departments make PostgREST see more than one
+    // possible path between the two tables, so an unqualified embed here
+    // is ambiguous — this pins it to staff's own direct department_id
+    // foreign key, which is the only one that was ever meant.
     const { data, error } = await supabase
       .from('staff')
-      .select('staff_id, department_id, name, rank, role, preferred_view, departments(name)')
+      .select('staff_id, department_id, name, rank, role, preferred_view, departments!staff_department_id_fkey(name)')
       .eq('user_id', user.id)
       .eq('active', true)
       .order('name');
