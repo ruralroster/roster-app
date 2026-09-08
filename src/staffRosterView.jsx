@@ -30,6 +30,11 @@ import {
   getStarredStaff,
   starStaffMember,
   unstarStaffMember,
+  getCoffeeOrderAdjustments,
+  removeCoffeeOrderStaff,
+  restoreCoffeeOrderStaff,
+  addCoffeeOrderExtra,
+  removeCoffeeOrderExtra,
 } from './supabaseClient';
 import CollapsibleSection from './CollapsibleSection';
 import CoffeePicker from './CoffeePicker';
@@ -171,10 +176,14 @@ export default function StaffRosterView({ departmentId, staffId }) {
   // today"); unchecking a box drops that session's staff from the list
   // instead of trying to guess it from the viewer's local clock.
   const [coffeeSessionFilters, setCoffeeSessionFilters] = useState({ morning: true, afternoon: false, night: false });
-  // Coffees for people not on the roster (locums, visiting surgeons, etc.) —
-  // session-only, like the rest of this modal: nothing here is persisted,
-  // it's just tallied into today's summary/text while the modal is open.
-  const [coffeeExtras, setCoffeeExtras] = useState([]); // [{ id, coffeeType, milkType, quantity, label }]
+  // Day-scoped adjustments to the otherwise roster-computed order — who to
+  // leave off, and coffees for people not on the roster at all (locums,
+  // visiting surgeons). Persisted per department+date (see
+  // migrations/2026-09-09_coffee_order_day_adjustments.sql) so whoever
+  // opens Coffee later today sees the same adjusted list, but nothing here
+  // carries over to another day.
+  const [coffeeRemovedStaffIds, setCoffeeRemovedStaffIds] = useState(new Set());
+  const [coffeeExtras, setCoffeeExtras] = useState([]); // [{ extra_id, coffee_type, milk_type, quantity, label }]
   const [showAddCoffeeExtra, setShowAddCoffeeExtra] = useState(false);
   const [extraFormLabel, setExtraFormLabel] = useState('');
   const [extraFormCoffeeType, setExtraFormCoffeeType] = useState(COFFEE_TYPES[1]);
@@ -727,11 +736,16 @@ export default function StaffRosterView({ departmentId, staffId }) {
     setLoadingCoffeeModal(true);
     setCoffeeCopied(false);
     setCoffeeSessionFilters({ morning: true, afternoon: false, night: false });
-    setCoffeeExtras([]);
     setShowAddCoffeeExtra(false);
     try {
-      const { data, error: fetchError } = await getStaffAssignmentsForDate(departmentId, new Date());
+      const [{ data, error: fetchError }, { data: adjustments, error: adjustmentsError }] = await Promise.all([
+        getStaffAssignmentsForDate(departmentId, new Date()),
+        getCoffeeOrderAdjustments(departmentId, new Date()),
+      ]);
       if (fetchError) throw fetchError;
+      if (adjustmentsError) throw adjustmentsError;
+      setCoffeeRemovedStaffIds(new Set(adjustments.removedStaffIds));
+      setCoffeeExtras(adjustments.extras);
 
       // A staff member can have more than one assignment today (e.g. a
       // morning shift in one location, afternoon in another) — union their
@@ -765,10 +779,16 @@ export default function StaffRosterView({ departmentId, staffId }) {
     }
   };
 
+  // Everyone rostered today who wants a coffee, before removals — the
+  // per-person table shows all of these (with a checkbox for removing
+  // them), while the summary/count/text below only counts the ones still
+  // included.
   const coffeeOrdersForModal = coffeeModalStaff
     .filter(person => person.sessionGroups.some(g => coffeeSessionFilters[g]))
     .map(person => ({ ...person, ...parseCoffeeOrder(person.coffee_order) }))
     .filter(person => person.coffeeType !== NO_COFFEE);
+
+  const coffeeOrdersIncluded = coffeeOrdersForModal.filter(person => !coffeeRemovedStaffIds.has(person.staff_id));
 
   // One line per distinct (coffee type, milk type) combination, with a
   // count — what actually gets ordered from the coffee place, as opposed
@@ -778,12 +798,12 @@ export default function StaffRosterView({ departmentId, staffId }) {
   // coffee place only cares about the total by type, not who it's for.
   const coffeeSummaryLines = (() => {
     const counts = new Map(); // `${coffeeType}|${milkType}` -> count
-    coffeeOrdersForModal.forEach(person => {
+    coffeeOrdersIncluded.forEach(person => {
       const key = `${person.coffeeType}|${person.milkType || ''}`;
       counts.set(key, (counts.get(key) || 0) + 1);
     });
     coffeeExtras.forEach(extra => {
-      const key = `${extra.coffeeType}|${extra.milkType || ''}`;
+      const key = `${extra.coffee_type}|${extra.milk_type || ''}`;
       counts.set(key, (counts.get(key) || 0) + extra.quantity);
     });
     return Array.from(counts.entries()).map(([key, count]) => {
@@ -794,7 +814,28 @@ export default function StaffRosterView({ departmentId, staffId }) {
   })();
 
   const coffeeExtrasTotal = coffeeExtras.reduce((sum, extra) => sum + extra.quantity, 0);
-  const totalCoffeeCount = coffeeOrdersForModal.length + coffeeExtrasTotal;
+  const totalCoffeeCount = coffeeOrdersIncluded.length + coffeeExtrasTotal;
+
+  const handleToggleCoffeeStaffRemoved = async (targetStaffId, shouldRemove) => {
+    // Optimistic — the checkbox flips immediately; a failure just puts it
+    // back and surfaces the error, same as everywhere else in this modal.
+    setCoffeeRemovedStaffIds(prev => {
+      const next = new Set(prev);
+      if (shouldRemove) next.add(targetStaffId); else next.delete(targetStaffId);
+      return next;
+    });
+    const { error } = shouldRemove
+      ? await removeCoffeeOrderStaff(departmentId, new Date(), targetStaffId, staffId)
+      : await restoreCoffeeOrderStaff(departmentId, new Date(), targetStaffId);
+    if (error) {
+      setCoffeeRemovedStaffIds(prev => {
+        const next = new Set(prev);
+        if (shouldRemove) next.delete(targetStaffId); else next.add(targetStaffId);
+        return next;
+      });
+      setCoffeeModalError(`Failed to update coffee order: ${error.message}`);
+    }
+  };
 
   const handleOpenAddCoffeeExtra = () => {
     setExtraFormLabel('');
@@ -810,20 +851,28 @@ export default function StaffRosterView({ departmentId, staffId }) {
     else if (!extraFormMilkType || extraFormMilkType === NO_MILK) setExtraFormMilkType(MILK_TYPES[0]);
   };
 
-  const handleSubmitCoffeeExtra = () => {
+  const handleSubmitCoffeeExtra = async () => {
     const quantity = Math.max(1, Math.round(Number(extraFormQuantity)) || 1);
-    setCoffeeExtras(prev => [...prev, {
-      id: `${Date.now()}-${Math.random()}`,
-      label: extraFormLabel.trim(),
+    const milkType = milkIsFixedForCoffeeType(extraFormCoffeeType) ? NO_MILK : extraFormMilkType;
+    const { data, error } = await addCoffeeOrderExtra(departmentId, new Date(), {
       coffeeType: extraFormCoffeeType,
-      milkType: milkIsFixedForCoffeeType(extraFormCoffeeType) ? NO_MILK : extraFormMilkType,
+      milkType,
       quantity,
-    }]);
+      label: extraFormLabel.trim(),
+      addedBy: staffId,
+    });
+    if (error) {
+      setCoffeeModalError(`Failed to add coffee: ${error.message}`);
+      return;
+    }
+    setCoffeeExtras(prev => [...prev, data]);
     setShowAddCoffeeExtra(false);
   };
 
-  const handleRemoveCoffeeExtra = (id) => {
-    setCoffeeExtras(prev => prev.filter(extra => extra.id !== id));
+  const handleRemoveCoffeeExtra = async (extraId) => {
+    setCoffeeExtras(prev => prev.filter(extra => extra.extra_id !== extraId));
+    const { error } = await removeCoffeeOrderExtra(extraId);
+    if (error) setCoffeeModalError(`Failed to remove coffee: ${error.message}`);
   };
 
   const coffeeOrderMessage = [
@@ -842,11 +891,11 @@ export default function StaffRosterView({ departmentId, staffId }) {
     : null;
 
   const handleCopyCoffeeOrders = async () => {
-    const lines = coffeeOrdersForModal.map(person =>
+    const lines = coffeeOrdersIncluded.map(person =>
       `${person.name} (${person.rank}): ${person.coffeeType} - ${person.milkType}`
     );
     const extraLines = coffeeExtras.map(extra =>
-      `${extra.label || 'Extra'} x${extra.quantity}: ${extra.coffeeType}${extra.milkType && extra.milkType !== NO_MILK ? ` - ${extra.milkType}` : ''}`
+      `${extra.label || 'Extra'} x${extra.quantity}: ${extra.coffee_type}${extra.milk_type && extra.milk_type !== NO_MILK ? ` - ${extra.milk_type}` : ''}`
     );
     const text = [`Coffee orders for ${formatDate(new Date())}`, '', ...lines, ...extraLines, '', `${totalCoffeeCount} coffee${totalCoffeeCount === 1 ? '' : 's'} to order`].join('\n');
     try {
@@ -1851,69 +1900,81 @@ export default function StaffRosterView({ departmentId, staffId }) {
               </div>
             ) : (
               <>
-                {totalCoffeeCount === 0 ? (
-                  <p className="text-sm text-gray-500 py-4">No coffee orders — nobody working today wants a coffee (or nobody's set a preference yet).</p>
-                ) : (
-                  <>
-                    <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg flex-shrink-0">
-                      <p className="text-xs font-semibold text-amber-900 uppercase mb-2">Order Summary</p>
-                      <ul className="text-sm text-gray-900 space-y-0.5 mb-3 list-disc list-inside">
-                        {coffeeSummaryLines.map((line, i) => <li key={i}>{line}</li>)}
-                      </ul>
-                      {coffeePlaceSmsHref ? (
-                        <a
-                          href={coffeePlaceSmsHref}
-                          className="block text-center px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white text-sm font-medium rounded-lg transition"
-                        >
-                          Text order to {department?.coffee_place_name || 'Coffee Place'}
-                        </a>
-                      ) : (
-                        <p className="text-xs text-gray-500">An officer can set a Coffee Place number in Settings → Phone Book to text this order directly from here.</p>
-                      )}
-                    </div>
-
-                    {coffeeOrdersForModal.length > 0 && (
-                      <div className="overflow-y-auto flex-1 -mx-6 px-6">
-                        <table className="w-full border-collapse">
-                          <thead className="sticky top-0 bg-white">
-                            <tr>
-                              <th className="text-left px-2 py-2 border-b border-gray-200 text-xs font-semibold text-gray-600 uppercase">Staff Name</th>
-                              <th className="text-left px-2 py-2 border-b border-gray-200 text-xs font-semibold text-gray-600 uppercase">Rank</th>
-                              <th className="text-left px-2 py-2 border-b border-gray-200 text-xs font-semibold text-gray-600 uppercase">Coffee Type</th>
-                              <th className="text-left px-2 py-2 border-b border-gray-200 text-xs font-semibold text-gray-600 uppercase">Milk Type</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {coffeeOrdersForModal.map(person => (
-                              <tr key={person.staff_id} className="hover:bg-gray-50">
-                                <td className="px-2 py-2 border-b border-gray-100 text-sm font-medium text-gray-900">{person.name}</td>
-                                <td className="px-2 py-2 border-b border-gray-100 text-sm text-gray-600 capitalize">{person.rank}</td>
-                                <td className="px-2 py-2 border-b border-gray-100 text-sm text-gray-900">{person.coffeeType}</td>
-                                <td className="px-2 py-2 border-b border-gray-100 text-sm text-gray-900">{person.milkType}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
+                {totalCoffeeCount > 0 && (
+                  <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg flex-shrink-0">
+                    <p className="text-xs font-semibold text-amber-900 uppercase mb-2">Order Summary</p>
+                    <ul className="text-sm text-gray-900 space-y-0.5 mb-3 list-disc list-inside">
+                      {coffeeSummaryLines.map((line, i) => <li key={i}>{line}</li>)}
+                    </ul>
+                    {coffeePlaceSmsHref ? (
+                      <a
+                        href={coffeePlaceSmsHref}
+                        className="block text-center px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white text-sm font-medium rounded-lg transition"
+                      >
+                        Text order to {department?.coffee_place_name || 'Coffee Place'}
+                      </a>
+                    ) : (
+                      <p className="text-xs text-gray-500">An officer can set a Coffee Place number in Settings → Phone Book to text this order directly from here.</p>
                     )}
-                  </>
+                  </div>
+                )}
+
+                {coffeeOrdersForModal.length > 0 ? (
+                  <div className="overflow-y-auto flex-1 -mx-6 px-6">
+                    <table className="w-full border-collapse">
+                      <thead className="sticky top-0 bg-white">
+                        <tr>
+                          <th className="px-2 py-2 border-b border-gray-200 w-8" />
+                          <th className="text-left px-2 py-2 border-b border-gray-200 text-xs font-semibold text-gray-600 uppercase">Staff Name</th>
+                          <th className="text-left px-2 py-2 border-b border-gray-200 text-xs font-semibold text-gray-600 uppercase">Rank</th>
+                          <th className="text-left px-2 py-2 border-b border-gray-200 text-xs font-semibold text-gray-600 uppercase">Coffee Type</th>
+                          <th className="text-left px-2 py-2 border-b border-gray-200 text-xs font-semibold text-gray-600 uppercase">Milk Type</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {coffeeOrdersForModal.map(person => {
+                          const removed = coffeeRemovedStaffIds.has(person.staff_id);
+                          return (
+                            <tr key={person.staff_id} className={`hover:bg-gray-50 ${removed ? 'opacity-40' : ''}`}>
+                              <td className="px-2 py-2 border-b border-gray-100">
+                                <input
+                                  type="checkbox"
+                                  checked={!removed}
+                                  onChange={(e) => handleToggleCoffeeStaffRemoved(person.staff_id, !e.target.checked)}
+                                  title={removed ? 'Left off today\'s order' : 'Include in today\'s order'}
+                                  className="w-4 h-4 cursor-pointer accent-blue-600"
+                                />
+                              </td>
+                              <td className="px-2 py-2 border-b border-gray-100 text-sm font-medium text-gray-900">{person.name}</td>
+                              <td className="px-2 py-2 border-b border-gray-100 text-sm text-gray-600 capitalize">{person.rank}</td>
+                              <td className="px-2 py-2 border-b border-gray-100 text-sm text-gray-900">{person.coffeeType}</td>
+                              <td className="px-2 py-2 border-b border-gray-100 text-sm text-gray-900">{person.milkType}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : coffeeExtras.length === 0 && (
+                  <p className="text-sm text-gray-500 py-4">No coffee orders — nobody working today wants a coffee (or nobody's set a preference yet).</p>
                 )}
 
                 {/* Extras — coffees for people not on the roster (locums,
-                    visiting surgeons, etc). Session-only, like the rest of
-                    this modal — see coffeeExtras above. */}
+                    visiting surgeons, etc). Persisted per department+date
+                    (see coffeeExtras above), so this stays put whether the
+                    per-person list above is empty or not. */}
                 <div className={coffeeOrdersForModal.length > 0 ? 'mt-4 pt-4 border-t border-gray-200 flex-shrink-0' : 'flex-shrink-0'}>
                   {coffeeExtras.length > 0 && (
                     <ul className="space-y-1.5 mb-3">
                       {coffeeExtras.map(extra => (
-                        <li key={extra.id} className="flex items-center justify-between gap-2 text-sm bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+                        <li key={extra.extra_id} className="flex items-center justify-between gap-2 text-sm bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
                           <span className="text-gray-900">
-                            {extra.quantity} x {extra.coffeeType}
-                            {extra.milkType && extra.milkType !== NO_MILK ? ` on ${extra.milkType}` : ''}
+                            {extra.quantity} x {extra.coffee_type}
+                            {extra.milk_type && extra.milk_type !== NO_MILK ? ` on ${extra.milk_type}` : ''}
                             {extra.label && <span className="text-gray-500"> — {extra.label}</span>}
                           </span>
                           <button
-                            onClick={() => handleRemoveCoffeeExtra(extra.id)}
+                            onClick={() => handleRemoveCoffeeExtra(extra.extra_id)}
                             title="Remove"
                             className="p-1 hover:bg-gray-200 rounded flex-shrink-0"
                           >

@@ -1799,6 +1799,88 @@ export async function updateStaffCoffeeOrder(staffId, coffeeOrder) {
   }
 }
 
+// See migrations/2026-09-09_coffee_order_day_adjustments.sql — day-scoped
+// (department_id + date) adjustments to the Coffee Orders modal's normally
+// roster-computed list: staff removed from today's order, and "extras" for
+// people not on the roster (locums, visiting surgeons). Any department
+// member can read/add/remove; nothing here carries over to the next day.
+export async function getCoffeeOrderAdjustments(departmentId, date) {
+  const dateStr = toLocalDateStr(date);
+
+  try {
+    const [removedRes, extrasRes] = await Promise.all([
+      supabase.from('coffee_order_removed_staff').select('staff_id').eq('department_id', departmentId).eq('date', dateStr),
+      supabase.from('coffee_order_extras').select('*').eq('department_id', departmentId).eq('date', dateStr).order('created_at'),
+    ]);
+    if (removedRes.error) throw removedRes.error;
+    if (extrasRes.error) throw extrasRes.error;
+
+    return {
+      data: {
+        removedStaffIds: removedRes.data.map(r => r.staff_id),
+        extras: extrasRes.data,
+      },
+      error: null,
+    };
+  } catch (err) {
+    console.error('getCoffeeOrderAdjustments error:', err);
+    return { data: { removedStaffIds: [], extras: [] }, error: err };
+  }
+}
+
+export async function removeCoffeeOrderStaff(departmentId, date, staffId, removedBy) {
+  const dateStr = toLocalDateStr(date);
+
+  try {
+    const { error } = await supabase
+      .from('coffee_order_removed_staff')
+      .upsert({ department_id: departmentId, date: dateStr, staff_id: staffId, removed_by: removedBy });
+    return { error };
+  } catch (err) {
+    return { error: err };
+  }
+}
+
+export async function restoreCoffeeOrderStaff(departmentId, date, staffId) {
+  const dateStr = toLocalDateStr(date);
+
+  try {
+    const { error } = await supabase
+      .from('coffee_order_removed_staff')
+      .delete()
+      .eq('department_id', departmentId)
+      .eq('date', dateStr)
+      .eq('staff_id', staffId);
+    return { error };
+  } catch (err) {
+    return { error: err };
+  }
+}
+
+export async function addCoffeeOrderExtra(departmentId, date, { coffeeType, milkType, quantity, label, addedBy }) {
+  const dateStr = toLocalDateStr(date);
+
+  try {
+    const { data, error } = await supabase
+      .from('coffee_order_extras')
+      .insert([{ department_id: departmentId, date: dateStr, coffee_type: coffeeType, milk_type: milkType, quantity, label: label || null, added_by: addedBy }])
+      .select()
+      .single();
+    return { data, error };
+  } catch (err) {
+    return { data: null, error: err };
+  }
+}
+
+export async function removeCoffeeOrderExtra(extraId) {
+  try {
+    const { error } = await supabase.from('coffee_order_extras').delete().eq('extra_id', extraId);
+    return { error };
+  } catch (err) {
+    return { error: err };
+  }
+}
+
 export async function updateStaffFTE(staffId, fte) {
   console.log('updateStaffFTE called', staffId, fte);
 
