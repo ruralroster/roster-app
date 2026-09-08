@@ -216,7 +216,7 @@ export default function StaffAccountsTab({ departmentId, refreshKey, staffRanks 
   // have shown.
   const handleGenerateTempPassword = async (person) => {
     if (!window.confirm(
-      `Generate a one-time password for ${person.name}? Their current password (if any) stops working immediately — only share the new one with them directly.`
+      `Generate a one-time password for ${person.name}? Their current password (if any) stops working immediately, and any two-factor authentication they've set up will be turned off (they can re-enable it once they're back in) — only share the new password with them directly.`
     )) return;
 
     setGeneratingPwId(person.staff_id);
@@ -225,7 +225,7 @@ export default function StaffAccountsTab({ departmentId, refreshKey, staffRanks 
       const { data, error: genErr } = await generateTempPassword(departmentId, person.staff_id);
       if (genErr) throw genErr;
 
-      setTempPasswordResult({ staffId: person.staff_id, name: person.name, email: person.email, password: data.tempPassword });
+      setTempPasswordResult({ staffId: person.staff_id, name: person.name, email: person.email, password: data.tempPassword, mfaWasReset: data.mfaWasReset });
     } catch (err) {
       setTempPasswordResult({ staffId: person.staff_id, name: person.name, error: err.message });
     } finally {
@@ -457,6 +457,7 @@ export default function StaffAccountsTab({ departmentId, refreshKey, staffRanks 
 
                 <p className="text-xs text-gray-500 mb-4">
                   Shown once — they'll be asked to set their own password after signing in.
+                  {tempPasswordResult.mfaWasReset && ' Their two-factor authentication was also turned off, since a temp password wouldn\'t have let them past it anyway — they can turn it back on from Settings → Security.'}
                 </p>
 
                 {tempPasswordResult.email ? (

@@ -18,13 +18,19 @@
 // one) needs the service_role key, which must never reach the browser —
 // same reasoning as invite-staff.
 //
+// Also clears any existing MFA factors on the target account before
+// setting the password — Supabase Auth otherwise refuses the password
+// update outright (even via this admin API) for an account with 2FA
+// enrolled, and a temp password wouldn't get them past a 2FA challenge
+// they're equally locked out of anyway.
+//
 // Deploy: `supabase functions deploy generate-temp-password`
 // Required secret (shared with invite-staff, set once):
 //   supabase secrets set SUPABASE_SERVICE_ROLE_KEY=<service role key>
 // SUPABASE_URL is provided automatically to every Edge Function.
 //
 // Request body: { departmentId, staffId, email? }  (email required only if not yet linked)
-// Response:     { data: { tempPassword, name } } | { error }
+// Response:     { data: { tempPassword, name, mfaWasReset } } | { error }
 
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
@@ -171,6 +177,27 @@ Deno.serve(async (req) => {
     }
   }
 
+  // Supabase Auth refuses to update a password for an account with an
+  // enrolled MFA factor unless the calling session is itself AAL2 — even
+  // via this admin API, which otherwise bypasses per-user auth entirely.
+  // That's also the right call logically: this whole flow exists for
+  // someone who can't get in the normal way, and a temp password alone
+  // wouldn't get them past a 2FA challenge they're equally stuck on (lost
+  // phone, uninstalled authenticator, etc). So clear any existing factors
+  // first — they can re-enroll from Settings → Security once they're back
+  // in with the temp password.
+  const { data: factorsData, error: factorsError } = await adminClient.auth.admin.mfa.listFactors({ userId: targetUserId });
+  if (factorsError) {
+    return json({ error: `Failed to check existing 2FA: ${factorsError.message}` }, 500);
+  }
+  const existingFactors = factorsData?.factors ?? [];
+  for (const factor of existingFactors) {
+    const { error: deleteFactorError } = await adminClient.auth.admin.mfa.deleteFactor({ id: factor.id, userId: targetUserId });
+    if (deleteFactorError) {
+      return json({ error: `Failed to clear existing 2FA before resetting password: ${deleteFactorError.message}` }, 500);
+    }
+  }
+
   const tempPassword = generateTempPassword();
 
   const { error: pwError } = await adminClient.auth.admin.updateUserById(targetUserId, {
@@ -188,5 +215,5 @@ Deno.serve(async (req) => {
     return json({ error: `Password was set but failed to flag for reset: ${flagError.message}` }, 500);
   }
 
-  return json({ data: { tempPassword, name: staffRow.name } });
+  return json({ data: { tempPassword, name: staffRow.name, mfaWasReset: existingFactors.length > 0 } });
 });
