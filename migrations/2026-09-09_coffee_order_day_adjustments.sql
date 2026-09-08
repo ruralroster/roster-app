@@ -14,6 +14,12 @@
 --
 -- Run this whole file in the Supabase SQL Editor. Safe to re-run:
 -- IF NOT EXISTS / DROP POLICY IF EXISTS throughout.
+--
+-- IMPORTANT: also run 2026-09-09b_fix_coffee_order_removed_staff_pk.sql
+-- straight after this one — coffee_order_removed_staff's composite
+-- primary key below made PostgREST infer it as a staff<->departments
+-- junction table, breaking every implicit staff->departments embed
+-- app-wide (including login). The follow-up migration fixes it.
 
 BEGIN;
 

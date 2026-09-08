@@ -1834,7 +1834,10 @@ export async function removeCoffeeOrderStaff(departmentId, date, staffId, remove
   try {
     const { error } = await supabase
       .from('coffee_order_removed_staff')
-      .upsert({ department_id: departmentId, date: dateStr, staff_id: staffId, removed_by: removedBy });
+      .upsert(
+        { department_id: departmentId, date: dateStr, staff_id: staffId, removed_by: removedBy },
+        { onConflict: 'department_id,date,staff_id' }
+      );
     return { error };
   } catch (err) {
     return { error: err };
