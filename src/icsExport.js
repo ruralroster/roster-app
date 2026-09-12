@@ -1,13 +1,20 @@
 // Builds an RFC 5545 .ics calendar file from a staff member's weekly
-// assignments. DTSTART/DTEND are written as floating local time (no Z, no
-// TZID) built directly from the stored date/time strings — deliberately
-// avoiding any Date object -> toISOString() round-trip, since that shifts
-// by a day for any user east of UTC (see availability materialization
-// logic elsewhere in this app for the same caveat).
-
-function pad(n) {
-  return String(n).padStart(2, '0');
-}
+// assignments. Shift dates/times are stored as plain date/time-of-day
+// strings with no timezone of their own — they mean "this wall-clock time,
+// wherever the department actually is" — so DTSTART/DTEND are resolved
+// against the *exporting device's* current timezone (Date's multi-arg
+// constructor always treats numeric y/m/d/h/m/s as local time, whatever
+// that is) and written out as absolute UTC instants. That's deliberate:
+// an earlier version wrote these as floating local time (no Z, no TZID),
+// which some importers — Google Calendar among them — read back as UTC
+// rather than "whatever zone you're in", shifting every shift by the
+// local UTC offset once imported.
+//
+// A plain 'YYYY-MM-DDTHH:mm:ss' string is *not* used to build these Date
+// objects, and a date-only 'YYYY-MM-DD' string doubly isn't — both parse
+// via Date.parse, whose date-only form is spec'd to UTC, silently shifting
+// the day for anyone east of UTC. The multi-arg constructor sidesteps that
+// entirely.
 
 function icsEscape(text) {
   return String(text)
@@ -17,32 +24,28 @@ function icsEscape(text) {
     .replace(/\n/g, '\\n');
 }
 
-// date: 'YYYY-MM-DD', time: 'HH:MM:SS' -> 'YYYYMMDDTHHMMSS'
-function toIcsDateTime(dateStr, timeStr) {
-  return `${dateStr.replace(/-/g, '')}T${timeStr.replace(/:/g, '')}`;
-}
-
-function addDaysToDateStr(dateStr, days) {
+// date: 'YYYY-MM-DD', time: 'HH:MM:SS' -> Date, interpreted in whatever
+// timezone this code is currently running in.
+function toLocalDate(dateStr, timeStr) {
   const [year, month, day] = dateStr.split('-').map(Number);
-  const d = new Date(year, month - 1, day);
-  d.setDate(d.getDate() + days);
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const [hour, minute, second] = timeStr.split(':').map(Number);
+  return new Date(year, month - 1, day, hour, minute, second || 0);
 }
 
-// DTSTAMP is defined by RFC 5545 as an absolute creation timestamp, so (unlike
-// DTSTART/DTEND above) a real UTC instant is exactly what's wanted here.
-function nowAsIcsUtcStamp() {
-  return `${new Date().toISOString().replace(/[-:]/g, '').split('.')[0]}Z`;
+function toIcsUtcDateTime(date) {
+  return `${date.toISOString().replace(/[-:]/g, '').split('.')[0]}Z`;
 }
 
 export function buildAssignmentsIcs(assignments) {
-  const dtstamp = nowAsIcsUtcStamp();
+  const dtstamp = toIcsUtcDateTime(new Date());
 
   const events = assignments.map(a => {
     const startTime = a.shifts?.start_time || '00:00:00';
     const endTime = a.shifts?.end_time || '00:00:00';
+    const startDate = toLocalDate(a.date, startTime);
+    const endDate = toLocalDate(a.date, endTime);
     // Overnight shifts (e.g. Night: 22:00-08:00) end the following day.
-    const endDate = endTime <= startTime ? addDaysToDateStr(a.date, 1) : a.date;
+    if (endTime <= startTime) endDate.setDate(endDate.getDate() + 1);
 
     const location = a.locations?.name || 'Unknown location';
     const role = a.role ? a.role.charAt(0).toUpperCase() + a.role.slice(1) : '';
@@ -59,8 +62,8 @@ export function buildAssignmentsIcs(assignments) {
       'BEGIN:VEVENT',
       `UID:${a.assignment_id}@roster-app`,
       `DTSTAMP:${dtstamp}`,
-      `DTSTART:${toIcsDateTime(a.date, startTime)}`,
-      `DTEND:${toIcsDateTime(endDate, endTime)}`,
+      `DTSTART:${toIcsUtcDateTime(startDate)}`,
+      `DTEND:${toIcsUtcDateTime(endDate)}`,
       `SUMMARY:${icsEscape(summary)}`,
       `LOCATION:${icsEscape(location)}`,
       descriptionLines.length ? `DESCRIPTION:${icsEscape(descriptionLines.join('\n'))}` : null,
