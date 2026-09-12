@@ -1207,6 +1207,27 @@ export async function getStaffWeekScheduleForExport(staffId, departmentId, weekS
   }
 }
 
+// Just the assignment dates (no joins) for a staff member from fromDateStr
+// to toDateStr — lets the export modal work out which upcoming weeks
+// actually have a roster before fetching each one in full via
+// getStaffWeekScheduleForExport.
+export async function getStaffAssignmentDatesInRange(staffId, fromDateStr, toDateStr) {
+  console.log('getStaffAssignmentDatesInRange called', staffId, fromDateStr, toDateStr);
+  try {
+    const { data, error } = await supabase
+      .from('staff_assignments')
+      .select('date')
+      .eq('staff_id', staffId)
+      .gte('date', fromDateStr)
+      .lte('date', toDateStr)
+      .order('date');
+    return { data: data || [], error };
+  } catch (err) {
+    console.error('getStaffAssignmentDatesInRange error:', err);
+    return { data: [], error: err };
+  }
+}
+
 export async function getAllOnCallAssignmentsForWeek(departmentId, weekStartDate) {
   console.log('getAllOnCallAssignmentsForWeek called', departmentId, weekStartDate);
   const startStr = toLocalDateStr(weekStartDate);

@@ -17,6 +17,7 @@ import {
   getStaffAvailability,
   toggleStaffAvailability,
   getStaffWeekScheduleForExport,
+  getStaffAssignmentDatesInRange,
   getAvailableShiftsForStaff,
   createVolunteerRequest,
   getMySickReportForDate,
@@ -165,6 +166,12 @@ export default function StaffRosterView({ departmentId, staffId }) {
   const [showSearch, setShowSearch] = useState(false);
   const [selectedSearchResult, setSelectedSearchResult] = useState(null);
   const [exporting, setExporting] = useState(false);
+
+  // Export Calendar modal state — one row per upcoming week that has any
+  // assignment in it, each independently checkable.
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [loadingExportWeeks, setLoadingExportWeeks] = useState(false);
+  const [exportWeeks, setExportWeeks] = useState([]); // [{ weekStart: Date, label, selected }]
 
   // Coffee Orders modal state
   const [showCoffeeModal, setShowCoffeeModal] = useState(false);
@@ -696,30 +703,94 @@ export default function StaffRosterView({ departmentId, staffId }) {
     }
   };
 
-  const handleExportCalendar = async () => {
+  // How far ahead to look for weeks to offer in the export modal. Bounds an
+  // otherwise-unbounded "every future week" query — long enough to cover any
+  // realistically-published roster.
+  const EXPORT_LOOKAHEAD_WEEKS = 26;
+
+  const handleOpenExportModal = async () => {
     if (!staffId || !departmentId) return;
+
+    setShowExportModal(true);
+    setLoadingExportWeeks(true);
+    setExportWeeks([]);
+    try {
+      const weekStart = startOfWeek(new Date());
+      const lookaheadEnd = new Date(weekStart);
+      lookaheadEnd.setDate(lookaheadEnd.getDate() + EXPORT_LOOKAHEAD_WEEKS * 7 - 1);
+
+      const { data, error: fetchError } = await getStaffAssignmentDatesInRange(
+        staffId,
+        toDateStr(weekStart),
+        toDateStr(lookaheadEnd)
+      );
+      if (fetchError) throw fetchError;
+
+      const weekStartsWithData = new Map();
+      (data || []).forEach(({ date }) => {
+        const [y, m, d] = date.split('-').map(Number);
+        const ws = startOfWeek(new Date(y, m - 1, d));
+        weekStartsWithData.set(toDateStr(ws), ws);
+      });
+
+      const weeks = Array.from(weekStartsWithData.values())
+        .sort((a, b) => a - b)
+        .map(ws => ({ weekStart: ws, label: formatCrossoverWeekRange(ws), selected: true }));
+
+      if (weeks.length === 0) {
+        setShowExportModal(false);
+        // Uses its own alert rather than the shared `error` banner, which
+        // isn't rendered on every tab — Export is reachable from all of them.
+        window.alert('No upcoming assignments to export.');
+        return;
+      }
+      setExportWeeks(weeks);
+    } catch (err) {
+      setShowExportModal(false);
+      window.alert(`Failed to load weeks: ${err.message}`);
+    } finally {
+      setLoadingExportWeeks(false);
+    }
+  };
+
+  const allExportWeeksSelected = exportWeeks.length > 0 && exportWeeks.every(w => w.selected);
+
+  const handleToggleAllExportWeeks = () => {
+    const nextSelected = !allExportWeeksSelected;
+    setExportWeeks(prev => prev.map(w => ({ ...w, selected: nextSelected })));
+  };
+
+  const handleToggleExportWeek = (weekKey) => {
+    setExportWeeks(prev => prev.map(w => (toDateStr(w.weekStart) === weekKey ? { ...w, selected: !w.selected } : w)));
+  };
+
+  const handleConfirmExport = async () => {
+    const selectedWeeks = exportWeeks.filter(w => w.selected).sort((a, b) => a.weekStart - b.weekStart);
+    if (selectedWeeks.length === 0) return;
 
     setExporting(true);
     try {
-      const weekStart = startOfWeek(new Date());
-      const weekEnd = new Date(weekStart);
-      weekEnd.setDate(weekEnd.getDate() + 6);
+      const results = await Promise.all(
+        selectedWeeks.map(w => getStaffWeekScheduleForExport(staffId, departmentId, w.weekStart))
+      );
+      const failed = results.find(r => r.error);
+      if (failed) throw failed.error;
 
-      const { data, error: fetchError } = await getStaffWeekScheduleForExport(staffId, departmentId, weekStart);
-      if (fetchError) throw fetchError;
-
-      if (data.length === 0) {
-        // Uses its own alert rather than the shared `error` banner, which
-        // isn't rendered on every tab — Export is reachable from all of them.
-        window.alert('No assignments this week to export.');
+      const allAssignments = results.flatMap(r => r.data);
+      if (allAssignments.length === 0) {
+        window.alert('No assignments in the selected weeks to export.');
         return;
       }
 
-      const startStr = toDateStr(weekStart);
-      const endStr = toDateStr(weekEnd);
-      const icsContent = buildAssignmentsIcs(data);
+      const lastWeekEnd = new Date(selectedWeeks[selectedWeeks.length - 1].weekStart);
+      lastWeekEnd.setDate(lastWeekEnd.getDate() + 6);
+
+      const startStr = toDateStr(selectedWeeks[0].weekStart);
+      const endStr = toDateStr(lastWeekEnd);
+      const icsContent = buildAssignmentsIcs(allAssignments);
       const filename = getIcsExportFilename(staffMember?.name, startStr, endStr);
       downloadTextFile(filename, 'text/calendar;charset=utf-8', icsContent);
+      setShowExportModal(false);
     } catch (err) {
       window.alert(`Failed to export calendar: ${err.message}`);
     } finally {
@@ -2154,6 +2225,71 @@ export default function StaffRosterView({ departmentId, staffId }) {
         </div>
       )}
 
+      {/* Export Calendar Modal — one checkbox per upcoming week that has
+          any assignment in it, all selected by default. */}
+      {showExportModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-sm max-h-[85vh] flex flex-col">
+            <div className="flex justify-between items-start mb-4">
+              <div>
+                <h2 className="text-xl font-bold text-gray-900">Export Calendar</h2>
+                <p className="text-sm text-gray-600">Choose which upcoming weeks to include.</p>
+              </div>
+              <button
+                onClick={() => setShowExportModal(false)}
+                className="p-1 hover:bg-gray-100 rounded-lg"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {loadingExportWeeks ? (
+              <div className="py-8 flex justify-center">
+                <Loader size={24} className="animate-spin text-gray-400" />
+              </div>
+            ) : (
+              <>
+                <label className="flex items-center gap-2 pb-3 mb-2 border-b border-gray-200 font-semibold text-sm text-gray-900">
+                  <input
+                    type="checkbox"
+                    checked={allExportWeeksSelected}
+                    onChange={handleToggleAllExportWeeks}
+                    className="w-4 h-4 rounded"
+                  />
+                  Select all
+                </label>
+
+                <div className="overflow-y-auto flex-1 -mx-1 px-1 mb-4">
+                  {exportWeeks.map((w) => {
+                    const key = toDateStr(w.weekStart);
+                    return (
+                      <label key={key} className="flex items-center gap-2 py-2 text-sm text-gray-900">
+                        <input
+                          type="checkbox"
+                          checked={w.selected}
+                          onChange={() => handleToggleExportWeek(key)}
+                          className="w-4 h-4 rounded"
+                        />
+                        {w.label}
+                      </label>
+                    );
+                  })}
+                </div>
+
+                <button
+                  onClick={handleConfirmExport}
+                  disabled={exporting || exportWeeks.every(w => !w.selected)}
+                  className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white font-medium py-2 rounded-lg flex items-center justify-center gap-2"
+                >
+                  {exporting ? <Loader size={18} className="animate-spin" /> : <Download size={18} />}
+                  Export
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Crossover Modal — navigate week-by-week to see working-together
           and both-off days against a starred colleague. */}
       {crossoverStaff && (
@@ -2309,11 +2445,11 @@ export default function StaffRosterView({ departmentId, staffId }) {
             <div className="text-[10px] font-semibold mt-0.5">Settings</div>
           </button>
           <button
-            onClick={handleExportCalendar}
-            disabled={exporting}
+            onClick={handleOpenExportModal}
+            disabled={loadingExportWeeks}
             className="flex-1 py-4 text-center text-gray-600 hover:text-gray-900 transition disabled:opacity-50"
           >
-            {exporting ? (
+            {loadingExportWeeks ? (
               <Loader size={20} className="mx-auto animate-spin" />
             ) : (
               <Download size={20} className="mx-auto" />
