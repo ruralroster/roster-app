@@ -160,5 +160,37 @@ Deno.serve(async (req) => {
     return json({ error: `Staff record failed: ${staffError.message}` }, 500);
   }
 
+  await seedDefaultAvailability(adminClient, departmentId, staffRow.staff_id);
+
   return json({ data: { staffId: staffRow.staff_id, invited } });
 });
+
+// New staff default to available (rather than "unset", which the rest of
+// the app treats as NOT available — see getStaffAvailabilityForDate/
+// getAvailableShiftsForStaff in src/supabaseClient.js) for the 5 years
+// following their creation — same rule and horizon as createStaff in
+// src/supabaseClient.js (the client-side "Add Staff" / Excel-import path);
+// this function is the equivalent for staff created via this invite flow.
+// Sent in ~1-year chunks rather than one ~1800-row upsert, matching the
+// largest batch size the client-side path already uses.
+async function seedDefaultAvailability(adminClient: ReturnType<typeof createClient>, departmentId: string, staffId: string) {
+  const start = new Date();
+  const end = new Date(start);
+  end.setFullYear(end.getFullYear() + 5);
+
+  const dates: string[] = [];
+  for (const d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+    dates.push(d.toISOString().slice(0, 10));
+  }
+
+  for (let i = 0; i < dates.length; i += 365) {
+    const chunk = dates.slice(i, i + 365);
+    const { error } = await adminClient
+      .from('staff_availability')
+      .upsert(
+        chunk.map((date) => ({ department_id: departmentId, staff_id: staffId, date, available: true })),
+        { onConflict: 'staff_id,date' },
+      );
+    if (error) console.error('seedDefaultAvailability chunk failed:', error);
+  }
+}

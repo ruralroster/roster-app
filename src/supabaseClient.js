@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import { DEFAULT_FTE, computeFairnessRatio } from './availabilityUtils';
+import { DEFAULT_FTE, computeFairnessRatio, getDatesInRange } from './availabilityUtils';
 import { toLocalDateStr } from './dateUtils';
 import { getSessionGroups } from './shiftSessionUtils';
 import { getMondayOfWeek } from './payrollExport';
@@ -1052,10 +1052,35 @@ export async function createStaff(departmentId, name, rank, phone) {
       .select()
       .single();
 
+    if (data) await seedDefaultAvailability(departmentId, data.staff_id);
+
     return { data, error };
   } catch (err) {
     console.error('createStaff error:', err);
     return { data: null, error: err };
+  }
+}
+
+// New staff default to available (rather than "unset", which everywhere
+// else in this file is treated as NOT available — see
+// getStaffAvailabilityForDate/getAvailableShiftsForStaff) for the 5 years
+// following their creation. "Always" is approximated as a rolling 5-year
+// window, same kind of edge as MATERIALIZATION_MONTHS_AHEAD in
+// availabilityUtils.js. Sent in ~1-year chunks to match the largest batch
+// size bulkSetStaffAvailability is already exercised at elsewhere
+// (getMaterializationWindow's 12-month window), rather than one ~1800-row
+// upsert. See migrations/2026-09-16_default_available_backfill_and_trigger.sql
+// for the equivalent one-time backfill for staff that already existed.
+async function seedDefaultAvailability(departmentId, staffId) {
+  const start = new Date();
+  const end = new Date(start);
+  end.setFullYear(end.getFullYear() + 5);
+  const dates = getDatesInRange(start, end);
+
+  for (let i = 0; i < dates.length; i += 365) {
+    const chunk = dates.slice(i, i + 365);
+    const { error } = await bulkSetStaffAvailability(departmentId, staffId, chunk, true);
+    if (error) console.error('seedDefaultAvailability chunk failed:', error);
   }
 }
 
