@@ -1188,6 +1188,12 @@ export async function getStaffAssignmentsForWeek(staffId, weekStartDate) {
 // annotated with `activity_name` — staff_assignments has no activity_id of
 // its own, so it's resolved by matching date + location_id against
 // theatre_activities, the same join used for case-mix exposure elsewhere.
+// Also includes this staff member's on-call duty_assignments for the week
+// (tagged `kind: 'duty'` so buildAssignmentsIcs in icsExport.js renders
+// them without a shift/location/role, using each duty type's own
+// start_time/end_time instead) — duty_assignments.duty_type is a free-text
+// key, not an FK, so it's resolved against this department's duty_types
+// the same loose way the rest of the schema already does.
 export async function getStaffWeekScheduleForExport(staffId, departmentId, weekStartDate) {
   console.log('getStaffWeekScheduleForExport called', staffId, departmentId, weekStartDate);
   const startStr = toLocalDateStr(weekStartDate);
@@ -1196,7 +1202,7 @@ export async function getStaffWeekScheduleForExport(staffId, departmentId, weekS
   const endStr = toLocalDateStr(endDate);
 
   try {
-    const [assignRes, theatreRes] = await Promise.all([
+    const [assignRes, theatreRes, dutyRes, dutyTypesRes] = await Promise.all([
       supabase
         .from('staff_assignments')
         .select('*, locations(name), shifts(name, start_time, end_time, session)')
@@ -1210,10 +1216,23 @@ export async function getStaffWeekScheduleForExport(staffId, departmentId, weekS
         .eq('department_id', departmentId)
         .gte('date', startStr)
         .lte('date', endStr),
+      supabase
+        .from('duty_assignments')
+        .select('date, duty_type')
+        .eq('staff_id', staffId)
+        .gte('date', startStr)
+        .lte('date', endStr)
+        .order('date'),
+      supabase
+        .from('duty_types')
+        .select('key, label, start_time, end_time')
+        .eq('department_id', departmentId),
     ]);
 
     if (assignRes.error) throw assignRes.error;
     if (theatreRes.error) throw theatreRes.error;
+    if (dutyRes.error) throw dutyRes.error;
+    if (dutyTypesRes.error) throw dutyTypesRes.error;
 
     const activityByKey = new Map();
     (theatreRes.data || []).forEach(ta => {
@@ -1225,7 +1244,23 @@ export async function getStaffWeekScheduleForExport(staffId, departmentId, weekS
       activity_name: activityByKey.get(`${a.date}|${a.location_id}`) || null,
     }));
 
-    return { data: enriched, error: null };
+    const dutyTypeByKey = new Map((dutyTypesRes.data || []).map(dt => [dt.key, dt]));
+    const dutyEvents = (dutyRes.data || [])
+      .map(d => ({ ...d, dutyTypeRow: dutyTypeByKey.get(d.duty_type) }))
+      // A duty type with no configured start_time/end_time has no card in
+      // the app either (see officer-roster-view-supabase.jsx's "no card
+      // (top panel only)" duty types) — nothing time-bound to export.
+      .filter(d => d.dutyTypeRow?.start_time && d.dutyTypeRow?.end_time)
+      .map(d => ({
+        kind: 'duty',
+        date: d.date,
+        duty_type: d.duty_type,
+        label: d.dutyTypeRow.label,
+        start_time: d.dutyTypeRow.start_time,
+        end_time: d.dutyTypeRow.end_time,
+      }));
+
+    return { data: [...enriched, ...dutyEvents], error: null };
   } catch (err) {
     console.error('getStaffWeekScheduleForExport error:', err);
     return { data: [], error: err };
@@ -1235,18 +1270,34 @@ export async function getStaffWeekScheduleForExport(staffId, departmentId, weekS
 // Just the assignment dates (no joins) for a staff member from fromDateStr
 // to toDateStr — lets the export modal work out which upcoming weeks
 // actually have a roster before fetching each one in full via
-// getStaffWeekScheduleForExport.
+// getStaffWeekScheduleForExport. Also checks duty_assignments (on-call),
+// so a week where this person is on-call but has no regular shift still
+// gets offered for export.
 export async function getStaffAssignmentDatesInRange(staffId, fromDateStr, toDateStr) {
   console.log('getStaffAssignmentDatesInRange called', staffId, fromDateStr, toDateStr);
   try {
-    const { data, error } = await supabase
-      .from('staff_assignments')
-      .select('date')
-      .eq('staff_id', staffId)
-      .gte('date', fromDateStr)
-      .lte('date', toDateStr)
-      .order('date');
-    return { data: data || [], error };
+    const [assignRes, dutyRes] = await Promise.all([
+      supabase
+        .from('staff_assignments')
+        .select('date')
+        .eq('staff_id', staffId)
+        .gte('date', fromDateStr)
+        .lte('date', toDateStr),
+      supabase
+        .from('duty_assignments')
+        .select('date')
+        .eq('staff_id', staffId)
+        .gte('date', fromDateStr)
+        .lte('date', toDateStr),
+    ]);
+    if (assignRes.error) throw assignRes.error;
+    if (dutyRes.error) throw dutyRes.error;
+
+    const dates = Array.from(new Set([...(assignRes.data || []), ...(dutyRes.data || [])].map(r => r.date)))
+      .sort()
+      .map(date => ({ date }));
+
+    return { data: dates, error: null };
   } catch (err) {
     console.error('getStaffAssignmentDatesInRange error:', err);
     return { data: [], error: err };

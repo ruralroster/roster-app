@@ -40,6 +40,23 @@ export function buildAssignmentsIcs(assignments) {
   const dtstamp = toIcsUtcDateTime(new Date());
 
   const events = assignments.map(a => {
+    if (a.kind === 'duty') {
+      const startDate = toLocalDate(a.date, a.start_time);
+      const endDate = toLocalDate(a.date, a.end_time);
+      // Overnight on-call (e.g. 22:00-08:00) ends the following day.
+      if (a.end_time <= a.start_time) endDate.setDate(endDate.getDate() + 1);
+
+      return [
+        'BEGIN:VEVENT',
+        `UID:duty-${a.date}-${a.duty_type}@roster-app`,
+        `DTSTAMP:${dtstamp}`,
+        `DTSTART:${toIcsUtcDateTime(startDate)}`,
+        `DTEND:${toIcsUtcDateTime(endDate)}`,
+        `SUMMARY:${icsEscape(a.label)}`,
+        'END:VEVENT',
+      ].join('\r\n');
+    }
+
     const startTime = a.shifts?.start_time || '00:00:00';
     const endTime = a.shifts?.end_time || '00:00:00';
     const startDate = toLocalDate(a.date, startTime);
