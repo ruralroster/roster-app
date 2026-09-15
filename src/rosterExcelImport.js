@@ -58,6 +58,7 @@ const SINGLE_CODE_MAP = {
   'AL': { leaveCode: 'AL' },
   'S/L': { leaveCode: 'SL' }, // Study Leave, not Sick Leave
   'PDL': { leaveCode: 'PDL' }, // Professional Development Leave
+  'LSL': { leaveCode: 'LSL' }, // Long Service Leave — confirmed 2026-09-15
   'OFF': { segments: [] }, // not a leave type — just means nothing rostered, same as a blank cell
   'ED': clinicalSegment('Emergency', 'Emergency Department Cover', '08:00', '18:00'),
   'EDL + OC': clinicalSegment('Emergency', 'Emergency Department Cover', '10:30', '21:00'),
@@ -75,6 +76,7 @@ const SINGLE_CODE_MAP = {
   'ANC': clinicalSegment('Clinic', 'Obstetrics', '08:00', '18:00'),
   'ObsC': clinicalSegment('Clinic', 'Obstetrics', '08:00', '18:00'),
   'Obs': clinicalSegment('Clinic', 'Obstetrics', '08:00', '18:00'),
+  'Anaes clinic': clinicalSegment('Clinic', 'Anaesthetics', '08:00', '18:00'), // confirmed 2026-09-15
 };
 
 // Resolves one day's shift-cell text. A plain code looks itself up
@@ -193,16 +195,42 @@ export function parseConsultantWeek(workbook, weekIndex, sheetName = 'Sheet1') {
 // OBLIGATION/FTE rows at all, just one name row per person (column A =
 // name, columns for the week = that day's shift text), with an optional
 // contact line directly above when a phone number was recorded. The
-// section starts at its own "Week 1"/date header pair (row 107 in the
-// current DRAFT file, under the "PHO" org unit) and runs until the next
-// "Week N" header (the Interns section).
+// section starts at its own "Week 1"/date header pair (under the "PHO"
+// org unit) and runs until the next "Week N" header (the Interns
+// section).
 //
 // The shift codes here are also a different *shape* from the consultant
 // section — longhand ("Day 0800 -1800 \nED") rather than terse
 // abbreviations — so they get their own resolver, though "X/Y" split
 // codes (e.g. "OT/ED") reuse the consultant section's map and split
 // logic directly since those tokens are shared.
-export const RMO_SECTION_START_ROW = 107;
+//
+// The section's start row used to be a hardcoded constant, but it drifts
+// between roster periods as the number of consultants above it changes
+// (confirmed 2026-09-15: the 2026-10-12 DRAFT file's Intern section had
+// shifted 4 rows from the 2026-08-17 file this was built against, which
+// silently dropped the first intern and misread another's dates against
+// an FTE/hours row) — so, like the Consultant section's "CALL
+// OBLIGATION" anchor, it's now found dynamically.
+//
+// Every section (including each Consultant specialty sub-block —
+// Anaesthetics, Obstetrics, etc. each repeat their own "Week 1"/date
+// header) is preceded by a title in column I (index 8) two rows above
+// its "Week 1" header — "PHO" for the RMO/Registrar section, "Interns"
+// for the Intern section. Matching on that title (rather than just
+// counting "Week 1" occurrences) is what tells the RMO/Intern sections
+// apart from the Consultant sub-blocks that share the same header shape.
+export function findLabeledWeekHeaderRow(rows, labelRegex) {
+  for (let r = 0; r < rows.length; r++) {
+    const label = (rows[r][8] || '').toString().trim();
+    if (labelRegex.test(label)) {
+      for (let k = r + 1; k < Math.min(r + 4, rows.length); k++) {
+        if ((rows[k][0] || '').toString().trim() === 'Week 1') return k;
+      }
+    }
+  }
+  return undefined;
+}
 
 const TIME_RANGE_RE = /(\d{3,4})\s*-\s*(\d{3,4})/;
 
@@ -230,6 +258,7 @@ const RMO_BARE_CODE_MAP = {
   'A/L': { leaveCode: 'AL' },
   'GP': { leaveCode: 'GP' },
   'PDL': { leaveCode: 'PDL' }, // Professional Development Leave
+  'LSL': { leaveCode: 'LSL' }, // Long Service Leave — confirmed 2026-09-15
   'Day Shift': clinicalSegment('Ward 1', 'Ward Care Cover', '08:00', '18:00'),
   'Clinic': clinicalSegment('Clinic', 'Medical Clinic', '08:00', '18:00'),
   'Chemo': clinicalSegment('Clinic', 'Medical Clinic', '08:00', '18:00'),
@@ -308,7 +337,11 @@ export function parseRmoWeek(workbook, weekIndex, sheetName = 'Sheet1') {
   }
   const ws = workbook.Sheets[sheetName];
   const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
-  return extractRmoWeek(rows, RMO_SECTION_START_ROW, mondayCol);
+  const sectionStartRow = findLabeledWeekHeaderRow(rows, /^PHO$/i);
+  if (sectionStartRow === undefined) {
+    throw new Error('Could not find the RMO/Registrar section ("Week 1" header under "PHO") in this file');
+  }
+  return extractRmoWeek(rows, sectionStartRow, mondayCol);
 }
 
 // ============================================================
@@ -320,12 +353,10 @@ export function parseRmoWeek(workbook, weekIndex, sheetName = 'Sheet1') {
 // CALL OBLIGATION row in between), and shift codes written the other way
 // around — location first, then time ("ED 1030-2030", "Ward 0800-1800")
 // rather than "Day/Night/Evening HHMM-HHMM \nLOCATION". Section starts
-// at its own "Week 1" header (row 158 in the current DRAFT file, under
-// "Interns") and ends at the validation/summary panel below it
-// ("On Call Correct?" onwards — headcounts and staffing-check rows, not
-// roster data, so explicitly excluded rather than accidentally parsed
-// as more people).
-export const INTERN_SECTION_START_ROW = 158;
+// at its own "Week 1" header (under "Interns") and ends at the
+// validation/summary panel below it ("On Call Correct?" onwards —
+// headcounts and staffing-check rows, not roster data, so explicitly
+// excluded rather than accidentally parsed as more people).
 
 // Confirmed with the department (2026-08-25) — bare "Ward" (no number)
 // means Ward 1.
@@ -390,7 +421,11 @@ export function parseInternWeek(workbook, weekIndex, sheetName = 'Sheet1') {
   }
   const ws = workbook.Sheets[sheetName];
   const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
-  return extractInternWeek(rows, INTERN_SECTION_START_ROW, mondayCol);
+  const sectionStartRow = findLabeledWeekHeaderRow(rows, /^Interns$/i);
+  if (sectionStartRow === undefined) {
+    throw new Error('Could not find the Intern section ("Week 1" header under "Interns") in this file');
+  }
+  return extractInternWeek(rows, sectionStartRow, mondayCol);
 }
 
 // ============================================================

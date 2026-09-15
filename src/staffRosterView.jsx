@@ -1305,19 +1305,37 @@ export default function StaffRosterView({ departmentId, staffId }) {
             {starredStaff.length > 0 && (
               <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
                 <p className="text-xs font-semibold text-gray-600 uppercase mb-3">Starred Colleagues</p>
+                {starringError && (
+                  <p className="text-xs text-red-700 mb-3">{starringError}</p>
+                )}
                 <div className="space-y-2">
                   {starredStaff.map(colleague => (
                     <div key={colleague.favorite_id} className="border border-gray-200 rounded-lg">
                       <div className="flex items-center justify-between gap-2 p-3">
                         <button
                           onClick={() => handleToggleExpandStarred(colleague)}
-                          className="flex-1 text-left flex items-center gap-2"
+                          className="flex-1 text-left flex items-center gap-2 min-w-0"
                         >
                           <ChevronDown
                             size={16}
-                            className={`text-gray-400 transition-transform ${expandedStarredId === colleague.starred_staff_id ? 'rotate-180' : ''}`}
+                            className={`text-gray-400 transition-transform flex-shrink-0 ${expandedStarredId === colleague.starred_staff_id ? 'rotate-180' : ''}`}
                           />
-                          <span className="font-medium text-gray-900">{colleague.staff?.name}</span>
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            onClick={(e) => { e.stopPropagation(); handleViewStaffDetail(colleague.starred_staff_id); }}
+                            onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); handleViewStaffDetail(colleague.starred_staff_id); } }}
+                            className="font-medium text-gray-900 hover:underline hover:text-blue-700 truncate"
+                          >
+                            {colleague.staff?.name}
+                          </span>
+                        </button>
+                        <button
+                          onClick={() => handleToggleStar(colleague.starred_staff_id)}
+                          title="Remove from starred"
+                          className="p-1 hover:bg-yellow-50 rounded-lg flex-shrink-0"
+                        >
+                          <Star size={18} className="fill-yellow-400 text-yellow-500" />
                         </button>
                         <button
                           onClick={() => handleOpenCrossover(colleague)}
