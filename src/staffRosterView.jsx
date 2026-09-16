@@ -195,6 +195,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
   const [extraFormLabel, setExtraFormLabel] = useState('');
   const [extraFormCoffeeType, setExtraFormCoffeeType] = useState(COFFEE_TYPES[1]);
   const [extraFormMilkType, setExtraFormMilkType] = useState(MILK_TYPES[0]);
+  const [extraFormExtraShot, setExtraFormExtraShot] = useState(false);
   const [extraFormQuantity, setExtraFormQuantity] = useState(1);
 
   // Settings tab state
@@ -861,26 +862,29 @@ export default function StaffRosterView({ departmentId, staffId }) {
 
   const coffeeOrdersIncluded = coffeeOrdersForModal.filter(person => !coffeeRemovedStaffIds.has(person.staff_id));
 
-  // One line per distinct (coffee type, milk type) combination, with a
-  // count — what actually gets ordered from the coffee place, as opposed
-  // to the per-person table above it which is for checking who's getting
-  // what. Extras (locums, visiting surgeons — people with no staff row to
-  // read a coffee_order off) are tallied into the same counts, since the
-  // coffee place only cares about the total by type, not who it's for.
+  // One line per distinct (coffee type, milk type, xtra shot) combination,
+  // with a count — what actually gets ordered from the coffee place, as
+  // opposed to the per-person table above it which is for checking who's
+  // getting what. An xtra-shot order is always its own line, even when it
+  // otherwise matches a non-shot line, so the coffee place doesn't miss it.
+  // Extras (locums, visiting surgeons — people with no staff row to read a
+  // coffee_order off) are tallied into the same counts, since the coffee
+  // place only cares about the total by type, not who it's for.
   const coffeeSummaryLines = (() => {
-    const counts = new Map(); // `${coffeeType}|${milkType}` -> count
+    const counts = new Map(); // `${coffeeType}|${milkType}|${extraShot}` -> count
     coffeeOrdersIncluded.forEach(person => {
-      const key = `${person.coffeeType}|${person.milkType || ''}`;
+      const key = `${person.coffeeType}|${person.milkType || ''}|${person.extraShot ? '1' : '0'}`;
       counts.set(key, (counts.get(key) || 0) + 1);
     });
     coffeeExtras.forEach(extra => {
-      const key = `${extra.coffee_type}|${extra.milk_type || ''}`;
+      const key = `${extra.coffee_type}|${extra.milk_type || ''}|${extra.extra_shot ? '1' : '0'}`;
       counts.set(key, (counts.get(key) || 0) + extra.quantity);
     });
     return Array.from(counts.entries()).map(([key, count]) => {
-      const [coffeeType, milkType] = key.split('|');
+      const [coffeeType, milkType, extraShot] = key.split('|');
       const milkSuffix = milkType && milkType !== NO_MILK ? ` on ${milkType}` : '';
-      return `${count} x ${coffeeType}${milkSuffix}`;
+      const shotSuffix = extraShot === '1' ? ' + Xtra Shot' : '';
+      return `${count} x ${coffeeType}${milkSuffix}${shotSuffix}`;
     });
   })();
 
@@ -912,6 +916,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
     setExtraFormLabel('');
     setExtraFormCoffeeType(COFFEE_TYPES[1]);
     setExtraFormMilkType(MILK_TYPES[0]);
+    setExtraFormExtraShot(false);
     setExtraFormQuantity(1);
     setShowAddCoffeeExtra(true);
   };
@@ -928,6 +933,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
     const { data, error } = await addCoffeeOrderExtra(departmentId, new Date(), {
       coffeeType: extraFormCoffeeType,
       milkType,
+      extraShot: extraFormExtraShot,
       quantity,
       label: extraFormLabel.trim(),
       addedBy: staffId,
@@ -963,10 +969,10 @@ export default function StaffRosterView({ departmentId, staffId }) {
 
   const handleCopyCoffeeOrders = async () => {
     const lines = coffeeOrdersIncluded.map(person =>
-      `${person.name} (${person.rank}): ${person.coffeeType} - ${person.milkType}`
+      `${person.name} (${person.rank}): ${person.coffeeType} - ${person.milkType}${person.extraShot ? ' + Xtra Shot' : ''}`
     );
     const extraLines = coffeeExtras.map(extra =>
-      `${extra.label || 'Extra'} x${extra.quantity}: ${extra.coffee_type}${extra.milk_type && extra.milk_type !== NO_MILK ? ` - ${extra.milk_type}` : ''}`
+      `${extra.label || 'Extra'} x${extra.quantity}: ${extra.coffee_type}${extra.milk_type && extra.milk_type !== NO_MILK ? ` - ${extra.milk_type}` : ''}${extra.extra_shot ? ' + Xtra Shot' : ''}`
     );
     const text = [`Coffee orders for ${formatDate(new Date())}`, '', ...lines, ...extraLines, '', `${totalCoffeeCount} coffee${totalCoffeeCount === 1 ? '' : 's'} to order`].join('\n');
     try {
@@ -2036,7 +2042,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
                               </td>
                               <td className="px-2 py-2 border-b border-gray-100 text-sm font-medium text-gray-900">{person.name}</td>
                               <td className="px-2 py-2 border-b border-gray-100 text-sm text-gray-600 capitalize">{person.rank}</td>
-                              <td className="px-2 py-2 border-b border-gray-100 text-sm text-gray-900">{person.coffeeType}</td>
+                              <td className="px-2 py-2 border-b border-gray-100 text-sm text-gray-900">{person.coffeeType}{person.extraShot ? ' + Shot' : ''}</td>
                               <td className="px-2 py-2 border-b border-gray-100 text-sm text-gray-900">{person.milkType}</td>
                             </tr>
                           );
@@ -2060,6 +2066,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
                           <span className="text-gray-900">
                             {extra.quantity} x {extra.coffee_type}
                             {extra.milk_type && extra.milk_type !== NO_MILK ? ` on ${extra.milk_type}` : ''}
+                            {extra.extra_shot ? ' + Xtra Shot' : ''}
                             {extra.label && <span className="text-gray-500"> — {extra.label}</span>}
                           </span>
                           <button
@@ -2112,6 +2119,15 @@ export default function StaffRosterView({ departmentId, staffId }) {
                           className="w-16 flex-shrink-0 px-2 py-1.5 border border-gray-300 rounded text-sm"
                         />
                       </div>
+                      <label className="flex items-center gap-1.5 text-sm text-gray-700 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={extraFormExtraShot}
+                          onChange={(e) => setExtraFormExtraShot(e.target.checked)}
+                          className="w-3.5 h-3.5 accent-blue-600 cursor-pointer"
+                        />
+                        Xtra shot
+                      </label>
                       <div className="flex gap-2">
                         <button
                           onClick={() => setShowAddCoffeeExtra(false)}

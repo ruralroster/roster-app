@@ -1957,13 +1957,13 @@ export async function restoreCoffeeOrderStaff(departmentId, date, staffId) {
   }
 }
 
-export async function addCoffeeOrderExtra(departmentId, date, { coffeeType, milkType, quantity, label, addedBy }) {
+export async function addCoffeeOrderExtra(departmentId, date, { coffeeType, milkType, extraShot, quantity, label, addedBy }) {
   const dateStr = toLocalDateStr(date);
 
   try {
     const { data, error } = await supabase
       .from('coffee_order_extras')
-      .insert([{ department_id: departmentId, date: dateStr, coffee_type: coffeeType, milk_type: milkType, quantity, label: label || null, added_by: addedBy }])
+      .insert([{ department_id: departmentId, date: dateStr, coffee_type: coffeeType, milk_type: milkType, extra_shot: !!extraShot, quantity, label: label || null, added_by: addedBy }])
       .select()
       .single();
     return { data, error };
