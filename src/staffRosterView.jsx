@@ -2014,7 +2014,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
                   </div>
                 )}
 
-                {coffeeOrdersForModal.length > 0 ? (
+                {(coffeeOrdersForModal.length > 0 || coffeeExtras.length > 0) ? (
                   <div className="overflow-y-auto flex-1 -mx-6 px-6">
                     <table className="w-full border-collapse">
                       <thead className="sticky top-0 bg-white">
@@ -2047,40 +2047,39 @@ export default function StaffRosterView({ departmentId, staffId }) {
                             </tr>
                           );
                         })}
+                        {/* Extras — coffees for people not on the roster
+                            (locums, visiting surgeons, etc). Rendered as
+                            plain rows in the same table, not a separate
+                            block, so they read as part of the one list
+                            instead of a prominent stack of cards that
+                            crowds out the real list on a small screen. */}
+                        {coffeeExtras.map(extra => (
+                          <tr key={extra.extra_id} className="hover:bg-gray-50">
+                            <td className="px-2 py-2 border-b border-gray-100">
+                              <button
+                                onClick={() => handleRemoveCoffeeExtra(extra.extra_id)}
+                                title="Remove"
+                                className="p-0.5 hover:bg-gray-200 rounded"
+                              >
+                                <X size={14} className="text-gray-500" />
+                              </button>
+                            </td>
+                            <td className="px-2 py-2 border-b border-gray-100 text-sm font-medium text-gray-900">
+                              {extra.label || 'Extra'}{extra.quantity > 1 ? ` ×${extra.quantity}` : ''}
+                            </td>
+                            <td className="px-2 py-2 border-b border-gray-100 text-sm text-gray-500 italic">extra</td>
+                            <td className="px-2 py-2 border-b border-gray-100 text-sm text-gray-900">{extra.coffee_type}{extra.extra_shot ? ' + Shot' : ''}</td>
+                            <td className="px-2 py-2 border-b border-gray-100 text-sm text-gray-900">{extra.milk_type && extra.milk_type !== NO_MILK ? extra.milk_type : '—'}</td>
+                          </tr>
+                        ))}
                       </tbody>
                     </table>
                   </div>
-                ) : coffeeExtras.length === 0 && (
+                ) : (
                   <p className="text-sm text-gray-500 py-4">No coffee orders — nobody working today wants a coffee (or nobody's set a preference yet).</p>
                 )}
 
-                {/* Extras — coffees for people not on the roster (locums,
-                    visiting surgeons, etc). Persisted per department+date
-                    (see coffeeExtras above), so this stays put whether the
-                    per-person list above is empty or not. */}
-                <div className={coffeeOrdersForModal.length > 0 ? 'mt-4 pt-4 border-t border-gray-200 flex-shrink-0' : 'flex-shrink-0'}>
-                  {coffeeExtras.length > 0 && (
-                    <ul className="space-y-1.5 mb-3">
-                      {coffeeExtras.map(extra => (
-                        <li key={extra.extra_id} className="flex items-center justify-between gap-2 text-sm bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
-                          <span className="text-gray-900">
-                            {extra.quantity} x {extra.coffee_type}
-                            {extra.milk_type && extra.milk_type !== NO_MILK ? ` on ${extra.milk_type}` : ''}
-                            {extra.extra_shot ? ' + Xtra Shot' : ''}
-                            {extra.label && <span className="text-gray-500"> — {extra.label}</span>}
-                          </span>
-                          <button
-                            onClick={() => handleRemoveCoffeeExtra(extra.extra_id)}
-                            title="Remove"
-                            className="p-1 hover:bg-gray-200 rounded flex-shrink-0"
-                          >
-                            <X size={14} />
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-
+                <div className={(coffeeOrdersForModal.length > 0 || coffeeExtras.length > 0) ? 'mt-4 pt-4 border-t border-gray-200 flex-shrink-0' : 'flex-shrink-0'}>
                   {showAddCoffeeExtra ? (
                     <div className="p-3 border border-gray-200 rounded-lg space-y-2">
                       <p className="text-xs font-semibold text-gray-600 uppercase">Add someone not on the roster</p>
