@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { AlertCircle, Loader, Upload } from 'lucide-react';
 import { importRosterWeek, createStaff, updateStaffFTE, updateDepartmentRosterImportFormat } from './supabaseClient';
-import { getWeekDateRanges, parseRosterWeek } from './rosterExcelImport';
+import { getWeekDateRanges, parseRosterWeek, matchStaffName, suggestStaffName, extractPhoneFromContactLine } from './rosterExcelImport';
 import { getEdSheetNames, getEdWeekDateRanges, parseEdWeek, getEdStaffRoster } from './edRosterExcelImport';
 
 const FORMATS = [
@@ -69,11 +69,19 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  // ED-only: people the sheet mentions who have no matching staff record
-  // yet — a brand-new department has none at all. Reviewed and created
-  // here rather than silently auto-created by the importer itself, same
-  // "never silently create/guess" rule as everything else in this import.
-  const [missingStaff, setMissingStaff] = useState(null); // [{ name, fte, suggestedRank, rank, create }]
+  // People the file mentions (either format) who have no matching staff
+  // record yet — most often a locum or other short-term fill who's never
+  // been rostered before, but also a brand-new department that has no
+  // staff at all yet. Reviewed and created here rather than silently
+  // auto-created by the importer itself, same "never silently
+  // create/guess" rule as everything else in this import: `name` is a
+  // guess (stripped of trailing speciality words, e.g. "Adrian Connor
+  // Anaesthetics" -> "Adrian Connor") the officer can edit before
+  // confirming, `rank` always starts blank — no guessing which rank a
+  // new person holds — and `fte` defaults to 0 (no standing rostered
+  // load expected of a locum) but is editable for the rare case that's
+  // wrong.
+  const [missingStaff, setMissingStaff] = useState(null); // [{ rawLabel, name, phone, fte, rank, create }]
   const [creatingStaff, setCreatingStaff] = useState(false);
   const [creatingProgress, setCreatingProgress] = useState(null); // { current, total }
   const [importProgress, setImportProgress] = useState(null); // { current, total }
@@ -132,20 +140,46 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
     }
   };
 
+  // ED format's names are already clean (parsed straight out of column A,
+  // no trailing speciality words to strip), and its "missing" check is
+  // exact-match on the whole workbook. Classic format's raw labels always
+  // carry a trailing speciality/prefix ("Adrian Connor Anaesthetics",
+  // "Medical Registrar - Sam Cherian"), so "missing" has to go through
+  // matchStaffName (which strips those) rather than a literal string
+  // comparison — otherwise every returning locum whose name doesn't
+  // *literally* equal their staff record (it never does) would be
+  // offered as a duplicate every time they're re-imported. Scoped to the
+  // currently-selected week only, since that's what a locum's presence in
+  // the file actually reflects.
   const checkMissingStaff = () => {
     if (!workbook) return;
-    const roster = getEdStaffRoster(workbook);
-    const existingNames = new Set(staffList.map(s => s.name.trim().toLowerCase()));
-    const missing = roster
-      .filter(p => !existingNames.has(p.name.toLowerCase()))
-      .map(p => ({
-        name: p.name,
-        fte: p.fte,
-        suggestedRank: p.suggestedRank,
-        rank: staffRanks.some(r => r.rank === p.suggestedRank) ? p.suggestedRank : '',
+
+    if (format === 'ed') {
+      const roster = getEdStaffRoster(workbook);
+      const existingNames = new Set(staffList.map(s => s.name.trim().toLowerCase()));
+      const missing = roster
+        .filter(p => !existingNames.has(p.name.toLowerCase()))
+        .map(p => ({ rawLabel: p.name, name: p.name, phone: '', fte: p.fte, rank: '', create: true }));
+      setMissingStaff(missing);
+      return;
+    }
+
+    const people = parseRosterWeek(workbook, weekIndex);
+    const byRawLabel = new Map();
+    people.forEach(person => {
+      const key = person.rawLabel.trim().toLowerCase();
+      if (!key || byRawLabel.has(key)) return;
+      if (matchStaffName(person.rawLabel, staffList)) return; // already a real staff record
+      byRawLabel.set(key, {
+        rawLabel: person.rawLabel,
+        name: suggestStaffName(person.rawLabel),
+        phone: extractPhoneFromContactLine(person.contactLine) || '',
+        fte: 0,
+        rank: '',
         create: true,
-      }));
-    setMissingStaff(missing);
+      });
+    });
+    setMissingStaff(Array.from(byRawLabel.values()));
   };
 
   const updateMissingStaffField = (index, field, value) => {
@@ -155,6 +189,10 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
   const handleCreateMissingStaff = async () => {
     const toCreate = missingStaff.filter(p => p.create);
     if (toCreate.length === 0) return;
+    if (toCreate.some(p => !p.name.trim())) {
+      setError('Every staff member being created needs a name.');
+      return;
+    }
     if (toCreate.some(p => !p.rank)) {
       setError('Every staff member being created needs a rank picked first.');
       return;
@@ -166,7 +204,7 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
     try {
       for (let i = 0; i < toCreate.length; i++) {
         const person = toCreate[i];
-        const { data, error: createError } = await createStaff(departmentId, person.name, person.rank, '');
+        const { data, error: createError } = await createStaff(departmentId, person.name.trim(), person.rank, person.phone.trim());
         if (createError) throw new Error(`${person.name}: ${createError.message}`);
         if (person.fte !== 1 && data) {
           const { error: fteError } = await updateStaffFTE(data.staff_id, person.fte);
@@ -273,7 +311,7 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
           <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Week to import</label>
           <select
             value={weekIndex}
-            onChange={(e) => { setWeekIndex(parseInt(e.target.value, 10)); setResults(null); setDeletionSummary(null); }}
+            onChange={(e) => { setWeekIndex(parseInt(e.target.value, 10)); setResults(null); setDeletionSummary(null); setMissingStaff(null); }}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
           >
             {weekRanges.map((range, i) => (
@@ -283,7 +321,7 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
         </div>
       )}
 
-      {workbook && format === 'ed' && (
+      {workbook && (
         <div className="mb-4">
           <button
             onClick={checkMissingStaff}
@@ -298,17 +336,51 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
             ) : (
               <div className="mt-3 p-3 border border-purple-200 bg-purple-50 rounded-lg space-y-2">
                 <p className="text-xs font-semibold text-purple-900">
-                  {missingStaff.length} {missingStaff.length === 1 ? 'person' : 'people'} in this file have no staff record yet:
+                  {missingStaff.length} {missingStaff.length === 1 ? 'person' : 'people'} in this file — often a locum or other
+                  short-term fill — {missingStaff.length === 1 ? "doesn't" : "don't"} match any existing staff member by name:
                 </p>
                 {missingStaff.map((p, i) => (
-                  <div key={p.name} className="flex flex-wrap items-center gap-2 bg-white p-2 rounded border border-gray-200">
+                  <div key={p.rawLabel} className="flex flex-wrap items-center gap-2 bg-white p-2 rounded border border-gray-200">
                     <input
                       type="checkbox"
                       checked={p.create}
                       onChange={(e) => updateMissingStaffField(i, 'create', e.target.checked)}
                     />
-                    <span className="text-sm font-medium text-gray-900 flex-1 min-w-[8rem]">{p.name}</span>
-                    <span className="text-xs text-gray-500">FTE {p.fte}</span>
+                    <div className="flex-1 min-w-[10rem]">
+                      <input
+                        type="text"
+                        value={p.name}
+                        onChange={(e) => updateMissingStaffField(i, 'name', e.target.value)}
+                        disabled={!p.create}
+                        placeholder="Name"
+                        className="w-full px-2 py-1 border border-gray-300 rounded text-sm font-medium text-gray-900 disabled:opacity-50"
+                      />
+                      {p.rawLabel.trim().toLowerCase() !== p.name.trim().toLowerCase() && (
+                        <p className="text-[11px] text-gray-400 mt-0.5">
+                          Guessed from "{p.rawLabel}" — would you like to edit this name?
+                        </p>
+                      )}
+                    </div>
+                    <input
+                      type="text"
+                      value={p.phone}
+                      onChange={(e) => updateMissingStaffField(i, 'phone', e.target.value)}
+                      disabled={!p.create}
+                      placeholder="Phone (optional)"
+                      className="w-32 px-2 py-1 border border-gray-300 rounded text-xs disabled:opacity-50"
+                    />
+                    <label className="flex items-center gap-1 text-xs text-gray-500">
+                      FTE
+                      <input
+                        type="number"
+                        step="0.05"
+                        min="0"
+                        value={p.fte}
+                        onChange={(e) => updateMissingStaffField(i, 'fte', e.target.value === '' ? 0 : parseFloat(e.target.value))}
+                        disabled={!p.create}
+                        className="w-16 px-2 py-1 border border-gray-300 rounded text-xs disabled:opacity-50"
+                      />
+                    </label>
                     <select
                       value={p.rank}
                       onChange={(e) => updateMissingStaffField(i, 'rank', e.target.value)}
@@ -320,11 +392,6 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
                         <option key={r.rule_id} value={r.rank}>{r.rank}</option>
                       ))}
                     </select>
-                    {p.suggestedRank && !staffRanks.some(r => r.rank === p.suggestedRank) && (
-                      <span className="text-xs text-amber-700 basis-full">
-                        Suggested rank "{p.suggestedRank}" doesn't exist yet — add it in Settings → Ranks, or pick a different one.
-                      </span>
-                    )}
                   </div>
                 ))}
                 <button

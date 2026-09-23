@@ -10,14 +10,16 @@ import { SESSION_DEFAULT_TIMES } from './shiftSessionUtils';
 // on-call shape the rest of the app already uses.
 //
 // The file has no clean tabular schema — it's a stack of manually
-// laid-out sections with a different row pattern per staff group. Three
+// laid-out sections with a different row pattern per staff group. Four
 // sections are covered so far: SMO/Consultant (below), Registrar/RMO,
-// and Intern (further down). Locums are deliberately skipped — the
-// department confirmed that's fine — and the Standby/AF summary panel
-// still needs its own investigation before it can be parsed safely (it's
-// a backup-contact lookup table, not a per-person roster, so it doesn't
-// fit this module's shape at all) — see the conversation history this
-// was built from.
+// Intern (further down), and Locums (see "ROSTER EXCEL IMPORT — Locums
+// section" below — added 2026-09-23 once it became clear a locum with no
+// staff record yet was silently dropped from the import, rather than
+// surfaced for the officer to add). The Standby/AF summary panel still
+// needs its own investigation before it can be parsed safely (it's a
+// backup-contact lookup table, not a per-person roster, so it doesn't fit
+// this module's shape at all) — see the conversation history this was
+// built from.
 //
 // The anchor: every consultant's block is the literal text
 // "CALL OBLIGATION" in column A, always laid out as:
@@ -429,6 +431,103 @@ export function parseInternWeek(workbook, weekIndex, sheetName = 'Sheet1') {
 }
 
 // ============================================================
+// ROSTER EXCEL IMPORT — Locums section
+// ============================================================
+//
+// Unlike every other section, a locum's name isn't written once per row
+// spanning all 4 week blocks — a different locum can fill the same row
+// in different weeks, so the name lives in its own column right before
+// each week block's Monday column (mondayCol - 1), same as the shift
+// data next to it. Confirmed against both the 2026-08-17 and 2026-10-12
+// DRAFT files: e.g. row 78's column 18 name ("Jaden Bollman
+// Anaesthetics") and column 26 name in the same row belong to two
+// different week blocks, not two people on one row.
+//
+// The section has no FTE row — the row below a name is an on-call note
+// (like the Consultant section's CALL OBLIGATION row, minus the label),
+// which isn't imported yet (see importRosterWeek — it only reads
+// leaveCode/segments). A contact line ("Igor MOB: 0433146113") sometimes
+// sits one row above the name, in the week block's own Monday column —
+// same place the Consultant section reads its contactLine from.
+//
+// The section is found by its "LOCUMS" label (columns 7 and 25 in the
+// files seen so far — one per pair of week blocks) rather than a fixed
+// row/column, then anchored to the next "Week 1"/"Week 2" header row
+// immediately below it, which — unlike every other section — covers all
+// 4 week blocks in one row (columns 0/8/18/26).
+export function findLocumsSectionStartRow(rows) {
+  for (let r = 0; r < rows.length; r++) {
+    const hasLocumsLabel = (rows[r] || []).some(cell => (cell || '').toString().trim().toUpperCase() === 'LOCUMS');
+    if (hasLocumsLabel) {
+      for (let k = r + 1; k < Math.min(r + 3, rows.length); k++) {
+        if ((rows[k][0] || '').toString().trim() === 'Week 1') return k;
+      }
+    }
+  }
+  return undefined;
+}
+
+export function extractLocumsWeek(rows, sectionStartRow, mondayCol) {
+  const dateRowIndex = sectionStartRow + 1;
+  const dates = DAY_LABELS.map((_, i) => (rows[dateRowIndex]?.[mondayCol + i] || '').toString().trim());
+  const nameCol = mondayCol - 1;
+
+  const people = [];
+  for (let r = sectionStartRow + 2; r < rows.length; r++) {
+    const col0 = (rows[r][0] || '').toString().trim();
+    if (/^Week\s+\d/i.test(col0)) break; // next section (Standby/AF panel)
+
+    const rawLabel = (rows[r][nameCol] || '').toString().trim();
+    // Two false-positive shapes to skip, not a person: "CALL OBLIGATION"
+    // landing in a week block's name column on the row just above the
+    // next section's header, and a contact line ("Igor MOB: 0433146113")
+    // landing directly in the name column — rather than in the Monday
+    // column contactLine normally reads from below — one row above the
+    // real name row. That contact line is still picked up as this
+    // person's phone number via the contactRow[nameCol] fallback below;
+    // it just shouldn't become a "person" of its own.
+    if (!rawLabel || rawLabel.toUpperCase() === 'CALL OBLIGATION' || /\bMOB\b/i.test(rawLabel)) continue;
+
+    const contactRow = rows[r - 1] || [];
+    const days = DAY_LABELS.map((label, i) => {
+      const col = mondayCol + i;
+      const rawShift = (rows[r][col] || '').toString().trim();
+      return {
+        label,
+        date: dates[i],
+        rawShift,
+        resolvedShift: rawShift ? resolveShiftCode(rawShift) : null,
+      };
+    });
+
+    people.push({
+      rawLabel,
+      contactLine: (contactRow[mondayCol] || contactRow[nameCol] || '').toString().trim(),
+      days,
+    });
+  }
+
+  return people;
+}
+
+// Tolerant of a workbook with no Locums section at all (returns []
+// rather than throwing) — unlike the Consultant/RMO/Intern sections,
+// which are load-bearing enough that a missing one means the file isn't
+// what this parser expects, a department that genuinely has no locums
+// this week (or ever) shouldn't block the rest of the import.
+export function parseLocumsWeek(workbook, weekIndex, sheetName = 'Sheet1') {
+  const mondayCol = WEEK_BLOCK_MONDAY_COLUMNS[weekIndex];
+  if (mondayCol === undefined) {
+    throw new Error(`No week block configured for weekIndex ${weekIndex} — this file only has ${WEEK_BLOCK_MONDAY_COLUMNS.length} week blocks`);
+  }
+  const ws = workbook.Sheets[sheetName];
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
+  const sectionStartRow = findLocumsSectionStartRow(rows);
+  if (sectionStartRow === undefined) return [];
+  return extractLocumsWeek(rows, sectionStartRow, mondayCol);
+}
+
+// ============================================================
 // STAFF NAME MATCHING
 // ============================================================
 //
@@ -483,6 +582,38 @@ export function matchStaffName(rawLabel, staffList) {
   return null;
 }
 
+// A best-effort guess at a real first-and-last name from a raw label that
+// matched no existing staff record — used only to pre-fill the "add this
+// person as staff" dialog's name field, which the officer always reviews
+// and can edit before confirming (never used to silently create a staff
+// record, and never fed back into matchStaffName). Strips the same
+// "Medical Registrar - " prefix matchStaffName does, plus whatever
+// trailing speciality word the label was built from (e.g. "Adrian Connor
+// Anaesthetics", "Becky Coxon               ED", "Emma Pickstone
+// Endo/Anaesthetics") — repeatedly, in case more than one trails the name.
+const TRAILING_SPECIALTY_RE = /\s+(Anaesthetics(\/Endo)?|Endo(\/Anaesthetics)?|Obstetrics|ED)\s*$/i;
+
+export function suggestStaffName(rawLabel) {
+  const cleaned = (rawLabel || '').replace(/^Medical Registrar\s*-\s*/i, '').replace(/\s+/g, ' ').trim();
+  let stripped = cleaned;
+  for (let next = stripped.replace(TRAILING_SPECIALTY_RE, '').trim(); next !== stripped; next = stripped.replace(TRAILING_SPECIALTY_RE, '').trim()) {
+    stripped = next;
+  }
+  return stripped || cleaned;
+}
+
+// Pulls a mobile number out of a contact line like "Igor MOB: 0433146113"
+// or "Becky Coxon MOB : 0455897758" — used to pre-fill the "add this
+// person as staff" dialog's phone field when the roster happens to carry
+// one (the Consultant/Locums sections' contact lines; the PHO/Registrar
+// and Intern sections generally don't have one, which isn't an issue
+// since neither group takes on-call).
+export function extractPhoneFromContactLine(contactLine) {
+  if (!contactLine) return null;
+  const match = contactLine.match(/MOB\s*:?\s*([\d ]{8,})/i);
+  return match ? match[1].replace(/\s+/g, '').trim() : null;
+}
+
 // The real Mon/Sun dates for each of the file's week blocks — lets a
 // picker show "Week 2 (24/08–30/08)" instead of an opaque index.
 export function getWeekDateRanges(workbook, sheetName = 'Sheet1') {
@@ -494,12 +625,13 @@ export function getWeekDateRanges(workbook, sheetName = 'Sheet1') {
   }));
 }
 
-// Runs all three section parsers for one week and concatenates them —
-// the whole-week input importRosterWeek expects.
+// Runs all four section parsers for one week and concatenates them — the
+// whole-week input importRosterWeek expects.
 export function parseRosterWeek(workbook, weekIndex, sheetName = 'Sheet1') {
   return [
     ...parseConsultantWeek(workbook, weekIndex, sheetName),
     ...parseRmoWeek(workbook, weekIndex, sheetName),
     ...parseInternWeek(workbook, weekIndex, sheetName),
+    ...parseLocumsWeek(workbook, weekIndex, sheetName),
   ];
 }
