@@ -6,6 +6,7 @@ import Login from './Login';
 import SetPassword from './SetPassword';
 import MfaChallenge from './MfaChallenge';
 import DepartmentSwitcher from './DepartmentSwitcher';
+import SickCallAlerts from './SickCallAlerts';
 import { supabase, getMyMemberships, getMfaAssuranceLevel, getMustResetPassword, clearMustResetPassword, signOut, updateMyPreferredView, createDepartment } from './supabaseClient';
 
 // Supabase redirects invite/password-recovery links back here with
@@ -298,6 +299,8 @@ function App() {
         <AddDepartmentModal onClose={() => setShowAddDepartment(false)} onCreated={handleDepartmentAdded} />
       )}
       {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
+      {/* Keyed by staffId so switching department re-checks for that membership's alerts. */}
+      <SickCallAlerts key={staffId} staffId={staffId} />
     </div>
   );
 }

@@ -23,6 +23,8 @@ import {
   getStaffRanks,
   getMySickReportForDate,
   createSickReport,
+  getSickCallRecipients,
+  createSickCallAlerts,
   updateMyCoffeeOrder,
   getActivityTypes,
   updateMyActivityRestrictions,
@@ -82,6 +84,14 @@ const RANK_LABEL = {
 };
 
 const toDateStr = toLocalDateStr;
+
+// Why each person is on the Notify Sick modal's list — see
+// getSickCallRecipients in supabaseClient.js.
+const SICK_CALL_REASON_LABEL = {
+  officer: 'Rostering officer',
+  on_call: 'On call now',
+  next_day_consultant: 'Consultant tomorrow 08:00',
+};
 
 function formatCrossoverWeekRange(weekStart) {
   if (!weekStart) return '';
@@ -169,6 +179,12 @@ export default function StaffRosterView({ departmentId, staffId }) {
   const [todayHasShift, setTodayHasShift] = useState(false);
   const [mySickReportToday, setMySickReportToday] = useState(null); // { status: 'pending'|'approved'|'denied' } | null
   const [submittingSickReport, setSubmittingSickReport] = useState(false);
+  // The Notify Sick confirm modal — who'll get a pop-up, and the
+  // (editable) message they'll see.
+  const [showSickModal, setShowSickModal] = useState(false);
+  const [sickRecipients, setSickRecipients] = useState([]);
+  const [loadingSickRecipients, setLoadingSickRecipients] = useState(false);
+  const [sickMessage, setSickMessage] = useState('');
 
   // Search state
   const [searchQuery, setSearchQuery] = useState('');
@@ -499,15 +515,33 @@ export default function StaffRosterView({ departmentId, staffId }) {
     loadSickReportState();
   }, [activeTab, staffId, departmentId]);
 
-  const handleNotifySick = async () => {
+  const handleOpenSickModal = async () => {
     if (!staffId || !departmentId || !todayHasShift || mySickReportToday) return;
-    if (!window.confirm("Report yourself sick for today? An officer will need to approve this.")) return;
+
+    setSickMessage(`${staffMember?.name || 'A staff member'} has called in sick for their shift.`);
+    setSickRecipients([]);
+    setShowSickModal(true);
+    setLoadingSickRecipients(true);
+    const { data, error: recipientsErr } = await getSickCallRecipients(departmentId, staffId, new Date());
+    if (recipientsErr) setVolunteerError(`Failed to work out who to notify: ${recipientsErr.message}`);
+    setSickRecipients(data);
+    setLoadingSickRecipients(false);
+  };
+
+  const handleNotifySick = async () => {
+    if (!staffId || !departmentId || !todayHasShift || mySickReportToday || !sickMessage.trim()) return;
 
     setSubmittingSickReport(true);
     try {
-      const { data, error: sickErr } = await createSickReport(departmentId, staffId, new Date());
+      const message = sickMessage.trim();
+      const { data, error: sickErr } = await createSickReport(departmentId, staffId, new Date(), message);
       if (sickErr) throw sickErr;
+      // Set before the alerts go out, so a failure there can't leave the
+      // button live for a second, duplicate report.
       setMySickReportToday(data);
+      setShowSickModal(false);
+      const { error: alertsErr } = await createSickCallAlerts(departmentId, data.sick_report_id, sickRecipients, message);
+      if (alertsErr) throw new Error(`your report was saved, but the pop-ups didn't go out (${alertsErr.message}) — contact your officer directly`);
       setVolunteerError(null);
     } catch (err) {
       setVolunteerError(`Failed to send sick report: ${err.message}`);
@@ -1660,20 +1694,75 @@ export default function StaffRosterView({ departmentId, staffId }) {
                   : mySickReportToday.status === 'denied' ? 'bg-red-50 text-red-800'
                   : 'bg-orange-50 text-orange-800'
                 }`}>
-                  {mySickReportToday.status === 'approved' && 'Approved — the on-call team has been let know.'}
+                  {mySickReportToday.status === 'approved' && 'Approved by your officer.'}
                   {mySickReportToday.status === 'denied' && 'Your officer denied this report — get in touch with them directly.'}
-                  {mySickReportToday.status === 'pending' && "Sent — waiting on your officer's approval."}
+                  {mySickReportToday.status === 'pending' && "Sent — your supervisors will see it next time they open the app. Waiting on your officer's approval."}
                 </p>
               ) : (
                 <button
-                  onClick={handleNotifySick}
-                  disabled={!todayHasShift || submittingSickReport}
+                  onClick={handleOpenSickModal}
+                  disabled={!todayHasShift}
                   className="w-full bg-red-600 hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-medium py-2 rounded-lg transition"
                 >
-                  {submittingSickReport ? 'Sending…' : 'Notify Sick'}
+                  Notify Sick
                 </button>
               )}
             </div>
+
+            {showSickModal && (
+              <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+                <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-lg max-h-[85vh] overflow-y-auto">
+                  <div className="flex justify-between items-start mb-4">
+                    <h2 className="text-xl font-bold text-gray-900">Notify Sick</h2>
+                    <button onClick={() => setShowSickModal(false)} className="p-1 hover:bg-gray-100 rounded-lg">
+                      <X size={20} />
+                    </button>
+                  </div>
+
+                  <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Message</label>
+                  <textarea
+                    value={sickMessage}
+                    onChange={(e) => setSickMessage(e.target.value)}
+                    rows={3}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm mb-4"
+                  />
+
+                  <p className="text-xs font-semibold text-gray-600 uppercase mb-2">Will pop up for</p>
+                  {loadingSickRecipients ? (
+                    <div className="flex items-center gap-2 text-sm text-gray-500 mb-4">
+                      <Loader size={16} className="animate-spin" /> Working out who's on…
+                    </div>
+                  ) : sickRecipients.length === 0 ? (
+                    <p className="text-sm text-gray-500 italic mb-4">Nobody found — contact your officer directly.</p>
+                  ) : (
+                    <ul className="text-sm text-gray-800 space-y-1 mb-4">
+                      {sickRecipients.map(r => (
+                        <li key={r.staff_id}>
+                          <span className="font-medium">{r.name}</span>
+                          <span className="text-gray-500"> — {r.reasons.map(reason => SICK_CALL_REASON_LABEL[reason]).join(', ')}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setShowSickModal(false)}
+                      className="flex-1 px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 font-medium rounded-lg transition"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleNotifySick}
+                      disabled={submittingSickReport || loadingSickRecipients || !sickMessage.trim()}
+                      className="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-medium rounded-lg transition"
+                    >
+                      {submittingSickReport ? 'Sending…' : 'Send'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       );

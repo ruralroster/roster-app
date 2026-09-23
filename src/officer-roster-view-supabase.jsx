@@ -46,6 +46,8 @@ import { createTheatreActivity,
   updateLocationAllowedActivities,
   updateLocationSupervisionRequirement,
   updateLocationRequiresBothRoles,
+  updateLocationNotifyOnSickCall,
+  updateDutyTypeNotifyOnSickCall,
   deactivateLocation,
   reactivateLocation,
   createActivityType,
@@ -1639,6 +1641,33 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
       setError(null);
     } catch (err) {
       setError(`Failed to update role requirement: ${err.message}`);
+    }
+  };
+
+  // The two "notify on sick calls" flags — which location is ED (its
+  // consultant at 08:00 next day gets the pop-up) and which duty type is
+  // the ED on-call. See getSickCallRecipients in supabaseClient.js.
+  const handleToggleLocationNotifyOnSickCall = async (locationId, notify) => {
+    try {
+      const { data, error } = await updateLocationNotifyOnSickCall(locationId, notify);
+      if (error) throw error;
+
+      setRefData(prev => ({ ...prev, locations: prev.locations.map(l => l.location_id === locationId ? data : l) }));
+      setError(null);
+    } catch (err) {
+      setError(`Failed to update sick-call setting: ${err.message}`);
+    }
+  };
+
+  const handleToggleDutyTypeNotifyOnSickCall = async (dutyTypeId, notify) => {
+    try {
+      const { data, error } = await updateDutyTypeNotifyOnSickCall(dutyTypeId, notify);
+      if (error) throw error;
+
+      setRefData(prev => ({ ...prev, dutyTypes: prev.dutyTypes.map(d => d.duty_type_id === dutyTypeId ? data : d) }));
+      setError(null);
+    } catch (err) {
+      setError(`Failed to update sick-call setting: ${err.message}`);
     }
   };
 
@@ -3304,6 +3333,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                       <p className="text-xs text-gray-600">
                         {new Date(`${report.date}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'short', month: 'short', day: 'numeric' })}
                       </p>
+                      {report.message && <p className="text-xs text-gray-700 mt-1 whitespace-pre-wrap">"{report.message}"</p>}
                     </div>
                     <div className="flex gap-2 flex-shrink-0">
                       <button
@@ -4227,6 +4257,14 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                             />
                             Requires both a senior and a junior doctor (flags the card and lets you offer the missing slot for volunteering)
                           </label>
+                          <label className="flex items-center gap-1.5 text-xs text-gray-600 mt-1">
+                            <input
+                              type="checkbox"
+                              checked={loc.notify_on_sick_call === true}
+                              onChange={() => handleToggleLocationNotifyOnSickCall(loc.location_id, loc.notify_on_sick_call !== true)}
+                            />
+                            Notify on sick calls (the consultant here at 08:00 the next day gets a pop-up)
+                          </label>
                         </div>
                         <div className="flex gap-2">
                           <button
@@ -4666,6 +4704,14 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                               <span className="text-purple-700"> • requires {dutyType.required_advanced_skills.length} skill{dutyType.required_advanced_skills.length === 1 ? '' : 's'}</span>
                             )}
                           </p>
+                          <label className="flex items-center gap-1.5 text-xs text-gray-600 mt-1">
+                            <input
+                              type="checkbox"
+                              checked={dutyType.notify_on_sick_call === true}
+                              onChange={() => handleToggleDutyTypeNotifyOnSickCall(dutyType.duty_type_id, dutyType.notify_on_sick_call !== true)}
+                            />
+                            Notify on sick calls (whoever's on this during the call gets a pop-up)
+                          </label>
                         </div>
                         <div className="flex gap-2">
                           <button

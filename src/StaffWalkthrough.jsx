@@ -48,7 +48,7 @@ export default function StaffWalkthrough() {
         <ul className="list-disc list-inside space-y-2 text-sm text-gray-700">
           <li><span className="font-semibold">Available Shifts</span> lists unfilled shifts over the next 30 days that you're eligible for. Tap Volunteer to send a request — it needs an officer's approval, and you'll see "Request Sent" once it's in.</li>
           <li>A shift only shows up here if you've marked that date <span className="font-semibold">Available</span> in Settings → Availability — an open shift on a day you haven't set availability for won't appear, even though it's genuinely open.</li>
-          <li><span className="font-semibold">Notify Sick</span> tells your officer you can't make today's shift. It's only enabled on a day you're actually rostered on. Once sent, you'll see whether it's pending, approved, or denied — a denial means you should get in touch with your officer directly. There's no push notification for a decision yet, so check back here rather than waiting for an alert.</li>
+          <li><span className="font-semibold">Notify Sick</span> tells your officer you can't make today's shift. It's only enabled on a day you're actually rostered on. It opens a message you can edit, showing who'll get it — the rostering officer, whoever's on call for ED right now, and the ED consultant starting at 08:00 tomorrow — as a pop-up the next time they open the app. Once sent, you'll see whether it's pending, approved, or denied — a denial means you should get in touch with your officer directly. There's no push notification for a decision yet, so check back here rather than waiting for an alert.</li>
         </ul>
       </CollapsibleSection>
 

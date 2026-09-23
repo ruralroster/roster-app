@@ -3282,14 +3282,14 @@ export async function getMySickReportForDate(staffId, date) {
   }
 }
 
-export async function createSickReport(departmentId, staffId, date) {
+export async function createSickReport(departmentId, staffId, date, message = null) {
   console.log('createSickReport called', departmentId, staffId, date);
   const dateStr = toLocalDateStr(date);
 
   try {
     const { data, error } = await supabase
       .from('sick_reports')
-      .insert([{ department_id: departmentId, staff_id: staffId, date: dateStr }])
+      .insert([{ department_id: departmentId, staff_id: staffId, date: dateStr, message }])
       .select()
       .single();
 
@@ -3316,6 +3316,222 @@ export async function getPendingSickReports(departmentId) {
   } catch (err) {
     console.error('getPendingSickReports error:', err);
     return { data: [], error: err };
+  }
+}
+
+// ============================================================
+// SICK-CALL ALERTS — see migrations/2026-09-24_sick_call_alerts.sql. When
+// someone presses Notify Sick, each supervisor below gets a pop-up the
+// next time they open the app (SickCallAlerts.jsx), until dismissed.
+// ============================================================
+
+// "HH:MM" from a Postgres time ("08:00:00") — string comparison of these
+// is chronological, which is all the window checks below need.
+const hhmm = (t) => (t ? t.slice(0, 5) : null);
+
+// Whether a start–end window covers timeStr. end <= start means the window
+// runs overnight (e.g. 17:00–08:00).
+const windowCovers = (start, end, timeStr) => {
+  if (end <= start) return timeStr >= start || timeStr < end;
+  return timeStr >= start && timeStr < end;
+};
+
+// Everyone who should get a pop-up if reporterStaffId calls in sick at
+// `now`, as [{ staff_id, name, reasons: [...] }] — reasons being any of
+// 'officer' | 'on_call' | 'next_day_consultant'. Computed client-side, in
+// the reporter's local time, so the modal can show the list before
+// anything's sent:
+//   - officer: every active officer in the department.
+//   - on_call: whoever holds a duty type flagged notify_on_sick_call whose
+//     window covers `now`. An overnight window (end <= start) means an
+//     early-morning call belongs to YESTERDAY's assignment. A duty type
+//     with no times set covers its whole date.
+//   - next_day_consultant: a consultant rostered tomorrow at a location
+//     flagged notify_on_sick_call whose times cover 08:00 (card times
+//     first, then the shift's; no times at all counts as covering).
+export async function getSickCallRecipients(departmentId, reporterStaffId, now = new Date()) {
+  console.log('getSickCallRecipients called', departmentId, reporterStaffId, now);
+  const todayStr = toLocalDateStr(now);
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayStr = toLocalDateStr(yesterday);
+  const tomorrow = new Date(now);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const tomorrowStr = toLocalDateStr(tomorrow);
+  const nowTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+  try {
+    const [officersRes, dutyTypesRes, locationsRes] = await Promise.all([
+      supabase
+        .from('staff')
+        .select('staff_id, name')
+        .eq('department_id', departmentId)
+        .eq('role', 'officer')
+        .eq('active', true),
+      supabase
+        .from('duty_types')
+        .select('key, start_time, end_time')
+        .eq('department_id', departmentId)
+        .eq('active', true)
+        .eq('notify_on_sick_call', true),
+      supabase
+        .from('locations')
+        .select('location_id')
+        .eq('department_id', departmentId)
+        .eq('notify_on_sick_call', true),
+    ]);
+    if (officersRes.error) throw officersRes.error;
+    if (dutyTypesRes.error) throw dutyTypesRes.error;
+    if (locationsRes.error) throw locationsRes.error;
+
+    const dutyTypes = dutyTypesRes.data || [];
+    const locationIds = (locationsRes.data || []).map(l => l.location_id);
+
+    const [dutyRes, consultantRes] = await Promise.all([
+      dutyTypes.length > 0
+        ? supabase
+            .from('duty_assignments')
+            .select('date, duty_type, staff_id, staff(name)')
+            .eq('department_id', departmentId)
+            .in('duty_type', dutyTypes.map(d => d.key))
+            .in('date', [yesterdayStr, todayStr])
+        : Promise.resolve({ data: [], error: null }),
+      locationIds.length > 0
+        ? supabase
+            .from('staff_assignments')
+            .select('staff_id, leave_code, staff(name), shifts(start_time, end_time), theatre_activities(start_time, end_time)')
+            .eq('department_id', departmentId)
+            .eq('date', tomorrowStr)
+            .eq('role', 'consultant')
+            .in('location_id', locationIds)
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+    if (dutyRes.error) throw dutyRes.error;
+    if (consultantRes.error) throw consultantRes.error;
+
+    const byStaff = new Map();
+    const add = (staffId, name, reason) => {
+      if (!staffId || staffId === reporterStaffId) return;
+      const entry = byStaff.get(staffId) || { staff_id: staffId, name, reasons: [] };
+      if (!entry.reasons.includes(reason)) entry.reasons.push(reason);
+      byStaff.set(staffId, entry);
+    };
+
+    (officersRes.data || []).forEach(o => add(o.staff_id, o.name, 'officer'));
+
+    const dutyTypeByKey = new Map(dutyTypes.map(d => [d.key, d]));
+    (dutyRes.data || []).forEach(d => {
+      const dt = dutyTypeByKey.get(d.duty_type);
+      const start = hhmm(dt?.start_time);
+      const end = hhmm(dt?.end_time);
+      let covers;
+      if (!start || !end) {
+        covers = d.date === todayStr;
+      } else if (end <= start) {
+        covers = (d.date === todayStr && nowTime >= start) || (d.date === yesterdayStr && nowTime < end);
+      } else {
+        covers = d.date === todayStr && windowCovers(start, end, nowTime);
+      }
+      if (covers) add(d.staff_id, d.staff?.name, 'on_call');
+    });
+
+    (consultantRes.data || []).forEach(a => {
+      if (a.leave_code) return;
+      const start = hhmm(a.theatre_activities?.start_time) || hhmm(a.shifts?.start_time);
+      const end = hhmm(a.theatre_activities?.end_time) || hhmm(a.shifts?.end_time);
+      if (!start || !end || windowCovers(start, end, '08:00')) add(a.staff_id, a.staff?.name, 'next_day_consultant');
+    });
+
+    return { data: [...byStaff.values()], error: null };
+  } catch (err) {
+    console.error('getSickCallRecipients error:', err);
+    return { data: [], error: err };
+  }
+}
+
+// One pop-up row per recipient of sickReportId.
+export async function createSickCallAlerts(departmentId, sickReportId, recipients, message) {
+  console.log('createSickCallAlerts called', departmentId, sickReportId, recipients.length);
+  if (recipients.length === 0) return { error: null };
+
+  try {
+    const { error } = await supabase
+      .from('sick_call_alerts')
+      .insert(recipients.map(r => ({
+        department_id: departmentId,
+        sick_report_id: sickReportId,
+        recipient_staff_id: r.staff_id,
+        reason: r.reasons.join(','),
+        message,
+      })));
+
+    return { error };
+  } catch (err) {
+    return { error: err };
+  }
+}
+
+// This staff member's not-yet-dismissed pop-ups, oldest first.
+export async function getMyUndismissedSickCallAlerts(staffId) {
+  console.log('getMyUndismissedSickCallAlerts called', staffId);
+
+  try {
+    const { data, error } = await supabase
+      .from('sick_call_alerts')
+      .select('*')
+      .eq('recipient_staff_id', staffId)
+      .is('dismissed_at', null)
+      .order('created_at');
+
+    return { data: data || [], error };
+  } catch (err) {
+    console.error('getMyUndismissedSickCallAlerts error:', err);
+    return { data: [], error: err };
+  }
+}
+
+export async function dismissSickCallAlert(sickCallAlertId) {
+  try {
+    const { error } = await supabase
+      .from('sick_call_alerts')
+      .update({ dismissed_at: new Date().toISOString() })
+      .eq('sick_call_alert_id', sickCallAlertId);
+
+    return { error };
+  } catch (err) {
+    return { error: err };
+  }
+}
+
+// Settings tick-boxes marking which duty type is the ED on-call and which
+// location is ED, for getSickCallRecipients above.
+export async function updateDutyTypeNotifyOnSickCall(dutyTypeId, notify) {
+  try {
+    const { data, error } = await supabase
+      .from('duty_types')
+      .update({ notify_on_sick_call: notify })
+      .eq('duty_type_id', dutyTypeId)
+      .select()
+      .single();
+
+    return { data, error };
+  } catch (err) {
+    return { data: null, error: err };
+  }
+}
+
+export async function updateLocationNotifyOnSickCall(locationId, notify) {
+  try {
+    const { data, error } = await supabase
+      .from('locations')
+      .update({ notify_on_sick_call: notify })
+      .eq('location_id', locationId)
+      .select()
+      .single();
+
+    return { data, error };
+  } catch (err) {
+    return { data: null, error: err };
   }
 }
 
