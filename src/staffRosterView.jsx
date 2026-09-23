@@ -20,6 +20,7 @@ import {
   getStaffAssignmentDatesInRange,
   getAvailableShiftsForStaff,
   createVolunteerRequest,
+  getStaffRanks,
   getMySickReportForDate,
   createSickReport,
   updateMyCoffeeOrder,
@@ -102,6 +103,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [dayViewDate, setDayViewDate] = useState(new Date());
   const [staffMember, setStaffMember] = useState(null);
+  const [staffRanks, setStaffRanks] = useState([]); // rank_supervision_rules for this department — just enough to know if this staff member is senior, for the "hide registrar shifts" toggle below
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   // This department's configured on-call/duty slots (see
@@ -155,6 +157,14 @@ export default function StaffRosterView({ departmentId, staffId }) {
   const [loadingVolunteer, setLoadingVolunteer] = useState(false);
   const [volunteeringKey, setVolunteeringKey] = useState(null); // theatre_activity_id currently being submitted
   const [volunteerError, setVolunteerError] = useState(null);
+  // A senior sees both consultant- and registrar-designated shifts (they're
+  // eligible to cover either) — this toggle lets them cut the list down to
+  // just the ones that actually need a consultant. Not shown to a junior
+  // staff member: they only ever see registrar-designated shifts anyway
+  // (see getAvailableShiftsForStaff), so hiding them would just empty the
+  // list.
+  const [hideRegistrarShifts, setHideRegistrarShifts] = useState(false);
+  const isSeniorStaff = staffMember && staffRanks.find(r => r.rank === staffMember.rank)?.requires_supervision === false;
   // Notify Sick — only enabled if this staff member has a shift today.
   const [todayHasShift, setTodayHasShift] = useState(false);
   const [mySickReportToday, setMySickReportToday] = useState(null); // { status: 'pending'|'approved'|'denied' } | null
@@ -227,11 +237,12 @@ export default function StaffRosterView({ departmentId, staffId }) {
         // migrations/2026-08-24_phone_book.sql has been run, the table
         // doesn't exist yet, and the Phone Book tab should just show
         // nothing rather than block loading everything else.
-        const [staffRes, { data: dutyTypesData, error: dutyTypesError }, { data: phoneBookData }, { data: departmentData }] = await Promise.all([
+        const [staffRes, { data: dutyTypesData, error: dutyTypesError }, { data: phoneBookData }, { data: departmentData }, { data: staffRanksData }] = await Promise.all([
           staffId ? getStaffById(staffId) : Promise.resolve({ data: null, error: null }),
           getDutyTypes(departmentId),
           getPhoneBookEntries(departmentId),
           getDepartment(departmentId),
+          getStaffRanks(departmentId),
         ]);
         if (staffRes.error) throw staffRes.error;
         if (dutyTypesError) throw dutyTypesError;
@@ -239,6 +250,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
         setDutyTypes(dutyTypesData);
         setPhoneBookEntries(phoneBookData || []);
         setDepartment(departmentData || null);
+        setStaffRanks(staffRanksData || []);
         setError(staffId ? null : 'You have no personal staff record in this department (likely viewing as a super-admin) — showing the department-wide roster only, nothing personal.');
       } catch (err) {
         setError(`Failed to load staff: ${err.message}`);
@@ -1547,12 +1559,26 @@ export default function StaffRosterView({ departmentId, staffId }) {
     }
 
     if (activeTab === 'volunteer') {
+      const visibleOpportunities = hideRegistrarShifts
+        ? volunteerOpportunities.filter(o => o.role_needed !== 'registrar')
+        : volunteerOpportunities;
+
       return (
         <div className="p-4 pb-24">
           <div className="max-w-2xl mx-auto">
             <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
               <h1 className="text-2xl font-bold text-gray-900">Available Shifts</h1>
-              <p className="text-sm text-gray-500">Unfilled shifts you're eligible for, over the next 30 days</p>
+              <p className="text-sm text-gray-500">Shifts your officers have opened up for volunteering, over the next 30 days</p>
+              {isSeniorStaff && (
+                <label className="flex items-center gap-2 mt-3 text-sm text-gray-700 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={hideRegistrarShifts}
+                    onChange={(e) => setHideRegistrarShifts(e.target.checked)}
+                  />
+                  Hide registrar shifts
+                </label>
+              )}
               {volunteerError && (
                 <div className="mt-4 p-3 bg-red-50 border border-red-300 rounded-lg flex gap-2 items-start">
                   <AlertCircle size={18} className="text-red-600 flex-shrink-0 mt-0.5" />
@@ -1566,13 +1592,17 @@ export default function StaffRosterView({ departmentId, staffId }) {
                 <Loader size={32} className="text-blue-600 animate-spin mx-auto mb-2" />
                 <p className="text-gray-600 text-sm">Loading available shifts...</p>
               </div>
-            ) : volunteerOpportunities.length === 0 ? (
+            ) : visibleOpportunities.length === 0 ? (
               <div className="bg-white rounded-lg shadow-sm p-6 text-center">
-                <p className="text-gray-600">No unfilled shifts you're eligible for right now.</p>
+                <p className="text-gray-600">
+                  {volunteerOpportunities.length === 0
+                    ? 'No shifts have been opened up for volunteering right now.'
+                    : 'No shifts to show — try unchecking "Hide registrar shifts".'}
+                </p>
               </div>
             ) : (
               <div className="space-y-4">
-                {volunteerOpportunities.map(opportunity => (
+                {visibleOpportunities.map(opportunity => (
                   <div key={`${opportunity.theatre_activity_id}-${opportunity.role_needed}`} className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-purple-500">
                     <div className="flex items-start justify-between mb-3">
                       <div>

@@ -45,6 +45,7 @@ import { createTheatreActivity,
   updateLocation,
   updateLocationAllowedActivities,
   updateLocationSupervisionRequirement,
+  updateLocationRequiresBothRoles,
   deactivateLocation,
   reactivateLocation,
   createActivityType,
@@ -57,6 +58,9 @@ import { createTheatreActivity,
   getAllocationStatusForRange,
   getVolunteerRequestsForActivities,
   clearVolunteerRequestsForRole,
+  createVolunteerOffer,
+  getVolunteerOffersForActivities,
+  clearVolunteerOfferForRole,
   createLeaveType,
   updateLeaveType,
   deleteLeaveType,
@@ -221,6 +225,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   const [fatigueStatus, setFatigueStatus] = useState(EMPTY_FATIGUE_STATUS);
   const [sortedStaffByActivity, setSortedStaffByActivity] = useState({});
   const [volunteerRequests, setVolunteerRequests] = useState([]); // pending volunteer_requests for the visible theatreActivities
+  const [volunteerOffers, setVolunteerOffers] = useState([]); // volunteer_offers already opened for the visible theatreActivities
   const [loadingDate, setLoadingDate] = useState(false);
   const [showAddActivity, setShowAddActivity] = useState(false);
   const [newActivityLocation, setNewActivityLocation] = useState('');
@@ -512,6 +517,26 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [theatreActivities]);
 
+  const refreshVolunteerOffers = async () => {
+    const activityIds = theatreActivities.map(ta => ta.theatre_activity_id);
+    if (activityIds.length === 0) {
+      setVolunteerOffers([]);
+      return;
+    }
+    try {
+      const { data, error } = await getVolunteerOffersForActivities(activityIds);
+      if (error) throw error;
+      setVolunteerOffers(data);
+    } catch (err) {
+      console.error('Failed to load volunteer offers:', err);
+    }
+  };
+
+  useEffect(() => {
+    refreshVolunteerOffers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [theatreActivities]);
+
   // Pending "Notify Sick" reports — the Day view's approval banner.
   // Department-wide, not scoped to selectedDate, so an officer catches up
   // on any still-undecided report whenever they're on the Day tab.
@@ -624,6 +649,21 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
 
   const getTotalVolunteerCount = (theatreActivityId) => {
     return volunteerRequests.filter(v => v.theatre_activity_id === theatreActivityId).length;
+  };
+
+  const isRoleOfferedForVolunteering = (theatreActivityId, role) => {
+    return volunteerOffers.some(o => o.theatre_activity_id === theatreActivityId && o.role === role);
+  };
+
+  const handleOfferForVolunteering = async (theatreActivityId, role) => {
+    try {
+      const { error } = await createVolunteerOffer(departmentId, theatreActivityId, role);
+      if (error) throw error;
+      await refreshVolunteerOffers();
+      setError(null);
+    } catch (err) {
+      setError(`Failed to offer this shift for volunteering: ${err.message}`);
+    }
   };
 
   // Activity restrictions are a staff preference, not a hard rule — an
@@ -1586,6 +1626,22 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     }
   };
 
+  // Independent of the supervision flag above — this one drives the
+  // missing-role indicator on this location's Day view cards (see
+  // hasMissingRequiredRole below) rather than the fatigue/on-call warnings
+  // requires_supervision drives.
+  const handleToggleLocationRequiresBoth = async (locationId, requiresBoth) => {
+    try {
+      const { data, error } = await updateLocationRequiresBothRoles(locationId, requiresBoth);
+      if (error) throw error;
+
+      setRefData(prev => ({ ...prev, locations: prev.locations.map(l => l.location_id === locationId ? data : l) }));
+      setError(null);
+    } catch (err) {
+      setError(`Failed to update role requirement: ${err.message}`);
+    }
+  };
+
   // Every activity picker that starts from a location (the Fortnight
   // wizard, the Day view's Add Activity dialog, and an existing card's own
   // Activity dropdown) narrows to this — see
@@ -2266,8 +2322,10 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
 
       for (const role of filledRoles) {
         await clearVolunteerRequestsForRole(ta.theatre_activity_id, role);
+        await clearVolunteerOfferForRole(ta.theatre_activity_id, role);
       }
       await refreshVolunteerRequests();
+      await refreshVolunteerOffers();
       setError(null);
     } catch (err) {
       setError(`Failed to complete allocation: ${err.message}`);
@@ -3550,8 +3608,21 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
 
                 const hasNobodyAssigned = entries.length === 0;
 
+                // Missing-role indicator — only for a location an officer
+                // has flagged "requires both a senior and a junior" (see
+                // Settings → Locations). hasNobodyAssigned already gets its
+                // own red treatment below regardless of this flag; this is
+                // for the narrower case where the card is only PARTIALLY
+                // staffed (e.g. a consultant's there but no registrar).
+                const locationRequiresBoth = refData.locations.find(l => l.location_id === ta.location_id)?.requires_both_senior_and_junior === true;
+                const missingConsultant = locationRequiresBoth && consultantEntries.length === 0;
+                const missingRegistrar = locationRequiresBoth && registrarEntries.length === 0;
+                const hasMissingRequiredRole = missingConsultant || missingRegistrar;
+
                 return (
-                <div key={`${ta.theatre_activity_id}-${groupKey}`} className={`rounded-lg shadow-sm p-6 border-l-4 ${hasNobodyAssigned ? 'bg-red-50 border-red-300' : 'bg-white border-blue-500'}`}>
+                <div key={`${ta.theatre_activity_id}-${groupKey}`} className={`rounded-lg shadow-sm p-6 border-l-4 ${
+                  hasNobodyAssigned ? 'bg-red-50 border-red-300' : hasMissingRequiredRole ? 'bg-amber-50 border-amber-400' : 'bg-white border-blue-500'
+                }`}>
                   <div className="flex items-start justify-between gap-3 mb-4">
                     <div className="flex-1">
                       <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Activity</label>
@@ -3609,6 +3680,20 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                     <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Consultant</label>
                     {consultantEntries.length === 0 && (
                       <p className="text-xs text-gray-400 italic mb-2">Nobody allocated yet.</p>
+                    )}
+                    {missingConsultant && (
+                      isRoleOfferedForVolunteering(ta.theatre_activity_id, 'consultant') ? (
+                        <p className="text-xs text-amber-700 font-medium mb-2 flex items-center gap-1">
+                          <Hand size={13} /> Offered for volunteering — waiting for someone to pick it up.
+                        </p>
+                      ) : (
+                        <button
+                          onClick={() => handleOfferForVolunteering(ta.theatre_activity_id, 'consultant')}
+                          className="w-full mb-2 px-3 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-900 font-medium rounded-lg transition text-xs"
+                        >
+                          This location needs a consultant — offer this shift for volunteering
+                        </button>
+                      )
                     )}
                     <div className="space-y-2 mb-2">
                       {consultantEntries.map(entry => {
@@ -3725,6 +3810,20 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                     <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Registrar</label>
                     {registrarEntries.length === 0 && (
                       <p className="text-xs text-gray-400 italic mb-2">Nobody allocated yet.</p>
+                    )}
+                    {missingRegistrar && (
+                      isRoleOfferedForVolunteering(ta.theatre_activity_id, 'registrar') ? (
+                        <p className="text-xs text-amber-700 font-medium mb-2 flex items-center gap-1">
+                          <Hand size={13} /> Offered for volunteering — waiting for someone to pick it up.
+                        </p>
+                      ) : (
+                        <button
+                          onClick={() => handleOfferForVolunteering(ta.theatre_activity_id, 'registrar')}
+                          className="w-full mb-2 px-3 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-900 font-medium rounded-lg transition text-xs"
+                        >
+                          This location needs a registrar — offer this shift for volunteering
+                        </button>
+                      )
                     )}
                     <div className="space-y-2 mb-2">
                       {registrarEntries.map(entry => {
@@ -4119,6 +4218,14 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                               onChange={() => handleToggleLocationSupervision(loc.location_id, loc.requires_supervision === false)}
                             />
                             Requires senior supervision (junior staff need a consultant/on-call here)
+                          </label>
+                          <label className="flex items-center gap-1.5 text-xs text-gray-600 mt-1">
+                            <input
+                              type="checkbox"
+                              checked={loc.requires_both_senior_and_junior === true}
+                              onChange={() => handleToggleLocationRequiresBoth(loc.location_id, loc.requires_both_senior_and_junior !== true)}
+                            />
+                            Requires both a senior and a junior doctor (flags the card and lets you offer the missing slot for volunteering)
                           </label>
                         </div>
                         <div className="flex gap-2">

@@ -763,6 +763,29 @@ export async function updateLocationSupervisionRequirement(locationId, requiresS
   }
 }
 
+// Independent of requires_supervision above — that one says a junior can't
+// be rostered here ALONE; this one says the location needs BOTH a
+// consultant and a registrar, not just one or the other. Drives the
+// missing-role indicator on that location's cards in the Day view (see
+// officer-roster-view-supabase.jsx) and, from there, the officer's option
+// to open the missing slot up for volunteering — see
+// migrations/2026-09-23_location_requires_both_and_volunteer_offers.sql.
+// Defaults false: no behavior change until an officer opts a location in.
+export async function updateLocationRequiresBothRoles(locationId, requiresBoth) {
+  try {
+    const { data, error } = await supabase
+      .from('locations')
+      .update({ requires_both_senior_and_junior: requiresBoth })
+      .eq('location_id', locationId)
+      .select()
+      .single();
+
+    return { data, error };
+  } catch (err) {
+    return { data: null, error: err };
+  }
+}
+
 // Locations are never hard-deleted, for the same reason as shifts — "delete"
 // sets active=false so it can no longer be picked for a new activity, while
 // existing theatre_activities/staff_assignments there are left completely
@@ -2957,13 +2980,24 @@ export async function getAllocationStatusForRange(departmentId, startDate, endDa
 
 const VOLUNTEER_LOOKAHEAD_DAYS = 30;
 
-// Theatre activities in the next 30 days where the role matching this staff
-// member's rank (per that department's staff_ranks.requires_supervision:
-// false -> consultant, true -> registrar; a rank not found in the
-// department's list has nothing to volunteer for) is still unfilled,
-// they're not activity-restricted from it, and they've explicitly marked
-// themselves available that date (an unconfirmed day doesn't count, same
-// rule as officer-side assignment).
+// Theatre activity roles in the next 30 days that an officer has
+// explicitly opened up for volunteering (volunteer_offers — see
+// migrations/2026-09-23_location_requires_both_and_volunteer_offers.sql),
+// this staff member is senior enough for, isn't missing a required
+// Advanced Skill for, isn't activity-restricted from, and has explicitly
+// marked themselves available that date (an unconfirmed day doesn't
+// count, same rule as officer-side assignment).
+//
+// Confirmed 2026-09-23: previously EVERY unfilled role in the lookahead
+// window was shown to every staff member whose own rank matched it
+// exactly — no officer action needed, and no way for a senior to see (or
+// help with) a junior-designated shift. That was both too noisy (an
+// officer had no way to hold a slot back) and too narrow (a consultant
+// couldn't offer to cover a free registrar shift). Now: an offer's role
+// is a FLOOR, not an exact match — "registrar" is open to any configured
+// rank (junior or senior; senior covering junior is allowed), "consultant"
+// only to senior ranks (rank_supervision_rules.requires_supervision ===
+// false) — and nothing shows at all unless the officer opened it.
 export async function getAvailableShiftsForStaff(staffId, departmentId) {
   console.log('getAvailableShiftsForStaff called', staffId, departmentId);
 
@@ -2974,15 +3008,15 @@ export async function getAvailableShiftsForStaff(staffId, departmentId) {
     const startStr = toLocalDateStr(today);
     const endStr = toLocalDateStr(endDate);
 
-    const [staffRes, theatreRes, assignRes, availRes, volunteerRes] = await Promise.all([
+    const [staffRes, theatreRes, assignRes, availRes, volunteerRes, offersRes] = await Promise.all([
       supabase
         .from('staff')
-        .select('rank, activity_restrictions')
+        .select('rank, activity_restrictions, advanced_skills')
         .eq('staff_id', staffId)
         .single(),
       supabase
         .from('theatre_activities')
-        .select('theatre_activity_id, date, location_id, locations(name), shifts(name, start_time, end_time), activity_types(name)')
+        .select('theatre_activity_id, date, location_id, locations(name), shifts(name, start_time, end_time), activity_types(name, required_advanced_skills)')
         .eq('department_id', departmentId)
         .gte('date', startStr)
         .lte('date', endStr),
@@ -3002,6 +3036,10 @@ export async function getAvailableShiftsForStaff(staffId, departmentId) {
         .from('volunteer_requests')
         .select('theatre_activity_id, role')
         .eq('staff_id', staffId),
+      supabase
+        .from('volunteer_offers')
+        .select('theatre_activity_id, role')
+        .eq('department_id', departmentId),
     ]);
 
     if (staffRes.error) throw staffRes.error;
@@ -3009,14 +3047,16 @@ export async function getAvailableShiftsForStaff(staffId, departmentId) {
     if (assignRes.error) throw assignRes.error;
     if (availRes.error) throw availRes.error;
     if (volunteerRes.error) throw volunteerRes.error;
+    if (offersRes.error) throw offersRes.error;
 
     const rank = staffRes.data?.rank || '';
     const { data: staffRanks } = await getStaffRanks(departmentId);
     const rankRow = staffRanks.find(r => r.rank === rank);
-    const roleForRank = !rankRow ? null : rankRow.requires_supervision ? 'registrar' : 'consultant';
-    if (!roleForRank) return { data: [], error: null };
+    if (!rankRow) return { data: [], error: null }; // rank not configured -> nothing to volunteer for
+    const isSenior = !rankRow.requires_supervision;
 
     const restrictions = staffRes.data?.activity_restrictions || [];
+    const mySkills = new Set(staffRes.data?.advanced_skills || []);
 
     // Keyed by theatre_activity_id, not location+date: a location can host
     // more than one activity/card on the same day (e.g. AM Endoscopy and PM
@@ -3040,33 +3080,111 @@ export async function getAvailableShiftsForStaff(staffId, departmentId) {
       (volunteerRes.data || []).map(v => `${v.theatre_activity_id}|${v.role}`)
     );
 
-    const opportunities = (theatreRes.data || [])
-      .filter(ta => {
-        const filledRoles = filledRolesByTheatreActivity.get(ta.theatre_activity_id) || new Set();
-        if (filledRoles.has(roleForRank)) return false; // role already filled
+    const theatreById = new Map((theatreRes.data || []).map(ta => [ta.theatre_activity_id, ta]));
+
+    const opportunities = (offersRes.data || [])
+      .filter(offer => {
+        const eligibleByRank = offer.role === 'registrar' || isSenior; // consultant offers need a senior; registrar offers are open to everyone configured
+        if (!eligibleByRank) return false;
+        const ta = theatreById.get(offer.theatre_activity_id);
+        if (!ta) return false; // outside the lookahead window, or the card's since been removed
+        const filledRoles = filledRolesByTheatreActivity.get(offer.theatre_activity_id) || new Set();
+        if (filledRoles.has(offer.role)) return false; // already filled — stale offer, not yet cleared
         if (!availableDates.has(ta.date)) return false; // staff hasn't confirmed availability
         const activityName = ta.activity_types?.name;
         if (activityName && restrictions.includes(activityName)) return false; // restricted
+        const requiredSkills = ta.activity_types?.required_advanced_skills || [];
+        if (requiredSkills.length > 0 && !requiredSkills.some(id => mySkills.has(id))) return false; // missing the required Advanced Skill
         return true;
       })
-      .map(ta => ({
-        theatre_activity_id: ta.theatre_activity_id,
-        location_id: ta.location_id,
-        location: ta.locations?.name || 'Unknown location',
-        date: ta.date,
-        shift: ta.shifts?.name || null,
-        shift_start: ta.shifts?.start_time || null,
-        shift_end: ta.shifts?.end_time || null,
-        activity: ta.activity_types?.name || null,
-        role_needed: roleForRank,
-        already_volunteered: alreadyVolunteered.has(`${ta.theatre_activity_id}|${roleForRank}`),
-      }))
+      .map(offer => {
+        const ta = theatreById.get(offer.theatre_activity_id);
+        return {
+          theatre_activity_id: offer.theatre_activity_id,
+          location_id: ta.location_id,
+          location: ta.locations?.name || 'Unknown location',
+          date: ta.date,
+          shift: ta.shifts?.name || null,
+          shift_start: ta.shifts?.start_time || null,
+          shift_end: ta.shifts?.end_time || null,
+          activity: ta.activity_types?.name || null,
+          role_needed: offer.role,
+          already_volunteered: alreadyVolunteered.has(`${offer.theatre_activity_id}|${offer.role}`),
+        };
+      })
       .sort((a, b) => a.date.localeCompare(b.date));
 
     return { data: opportunities, error: null };
   } catch (err) {
     console.error('getAvailableShiftsForStaff error:', err);
     return { data: [], error: err };
+  }
+}
+
+// Officer-side: explicitly opens one theatre_activity role up for
+// volunteering — see the missing-role indicator in
+// officer-roster-view-supabase.jsx (driven by locations.requires_both_
+// senior_and_junior) and getAvailableShiftsForStaff above, which now only
+// shows a slot once it's been offered this way. Idempotent — offering an
+// already-offered slot is a no-op, via the table's
+// (theatre_activity_id, role) unique constraint.
+export async function createVolunteerOffer(departmentId, theatreActivityId, role) {
+  console.log('createVolunteerOffer called', departmentId, theatreActivityId, role);
+
+  try {
+    const { data, error } = await supabase
+      .from('volunteer_offers')
+      .upsert(
+        [{ department_id: departmentId, theatre_activity_id: theatreActivityId, role }],
+        { onConflict: 'theatre_activity_id,role' }
+      )
+      .select()
+      .single();
+
+    return { data, error };
+  } catch (err) {
+    return { data: null, error: err };
+  }
+}
+
+// Which (theatre_activity_id, role) pairs are currently offered for a set
+// of theatre activities (the ones currently visible in the officer's Day
+// view) — lets the "Offer for volunteering" button show it's already been
+// offered rather than firing again.
+export async function getVolunteerOffersForActivities(theatreActivityIds) {
+  console.log('getVolunteerOffersForActivities called', theatreActivityIds);
+  if (!theatreActivityIds || theatreActivityIds.length === 0) return { data: [], error: null };
+
+  try {
+    const { data, error } = await supabase
+      .from('volunteer_offers')
+      .select('theatre_activity_id, role')
+      .in('theatre_activity_id', theatreActivityIds);
+
+    return { data: data || [], error };
+  } catch (err) {
+    console.error('getVolunteerOffersForActivities error:', err);
+    return { data: [], error: err };
+  }
+}
+
+// Clears the offer for a role once it's been filled — mirrors
+// clearVolunteerRequestsForRole below, called alongside it wherever a role
+// gets assigned, so a filled slot stops being offered as well as stops
+// showing pending volunteers for it.
+export async function clearVolunteerOfferForRole(theatreActivityId, role) {
+  console.log('clearVolunteerOfferForRole called', theatreActivityId, role);
+
+  try {
+    const { error } = await supabase
+      .from('volunteer_offers')
+      .delete()
+      .eq('theatre_activity_id', theatreActivityId)
+      .eq('role', role);
+
+    return { error };
+  } catch (err) {
+    return { error: err };
   }
 }
 
