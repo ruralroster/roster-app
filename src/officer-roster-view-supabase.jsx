@@ -251,12 +251,6 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   const [drafts, setDrafts] = useState({});
   const [noConsultantConfirm, setNoConsultantConfirm] = useState(null); // { theatreActivityId } | null — "are you sure" step when Complete Allocation finds no consultant
 
-  // Management UI State
-  const [newActivityName, setNewActivityName] = useState('');
-  const [newLocationName, setNewLocationName] = useState('');
-  const [newStaffName, setNewStaffName] = useState('');
-  const [newStaffPhone, setNewStaffPhone] = useState('');
-  
   // Shift Management State (list itself lives in refData.shifts — the single
   // source of truth also used by the Day view — not a separate local copy)
   const [newShiftName, setNewShiftName] = useState('');
@@ -1047,7 +1041,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     if (!selectedDate || !departmentId) return;
 
     try {
-      const { data, error } = await copyLastWeekActivities(departmentId, selectedDate);
+      const { error } = await copyLastWeekActivities(departmentId, selectedDate);
       if (error) throw error;
 
       // Refresh
@@ -2165,12 +2159,6 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
       end.setDate(end.getDate() + 13);
       return { start, end };
     });
-  };
-
-  const getDateStatus = (date) => {
-    // For MVP, return blank for all dates
-    // Real implementation would query database for that date
-    return 'blank';
   };
 
   const formatDate = (date) => date.toLocaleDateString('en-AU', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
