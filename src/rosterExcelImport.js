@@ -10,11 +10,11 @@ import { SESSION_DEFAULT_TIMES } from './shiftSessionUtils';
 // on-call shape the rest of the app already uses.
 //
 // The file has no clean tabular schema — it's a stack of manually
-// laid-out sections with a different row pattern per staff group. Three
-// sections are covered so far: SMO/Consultant (below), Registrar/RMO,
-// and Intern (further down). Locums are deliberately skipped — the
-// department confirmed that's fine — and the Standby/AF summary panel
-// still needs its own investigation before it can be parsed safely (it's
+// laid-out sections with a different row pattern per staff group. Four
+// sections are covered: SMO/Consultant (below), Locum, Registrar/RMO,
+// and Intern (further down). Locums were skipped at first; included
+// since 2026-09-25 at the department's request. The Standby/AF summary
+// panel still needs its own investigation before it can be parsed safely (it's
 // a backup-contact lookup table, not a per-person roster, so it doesn't
 // fit this module's shape at all) — see the conversation history this
 // was built from.
@@ -228,6 +228,70 @@ export function parseConsultantWeek(workbook, weekIndex, sheetName = 'Sheet1') {
   const ws = workbook.Sheets[sheetName];
   const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
   return extractConsultantWeek(rows, mondayCol);
+}
+
+// ============================================================
+// ROSTER EXCEL IMPORT — Locum section
+// ============================================================
+//
+// Confirmed against all three INNH files (Sept, Oct, Dec 2026): a
+// "LOCUMS" header row, then its own "Week 1"/date header pair, then one
+// name row per locum slot with an on-call note row directly under it
+// (same notes as the consultants' CALL OBLIGATION row, just unlabelled),
+// running until the Standby panel's own "Week 1" header. Unlike every
+// other section, the name is in EACH week block's own label column
+// (the column just left of that block's Monday) rather than always
+// column A — a slot is filled by different locums in different weeks
+// (e.g. Leonie Fromberg in week 1, Rob Johnston in weeks 2-3 of the same
+// row), and a week with nobody in that slot has a blank label there.
+// Shift codes are the consultant section's own (Maternity, ED, EDL +
+// OC, ANC/Obs...), so they share resolveShiftCode.
+export function extractLocumWeek(rows, mondayCol) {
+  const headerRow = rows.findIndex(row => row.some(cell => (cell || '').toString().trim().toUpperCase() === 'LOCUMS'));
+  if (headerRow === -1) return [];
+  let weekRow = headerRow + 1;
+  while (weekRow < rows.length && !/^Week\s+\d/i.test((rows[weekRow][0] || '').toString().trim())) weekRow++;
+  if (weekRow >= rows.length) return [];
+
+  const labelCol = mondayCol - 1;
+  const dates = DAY_LABELS.map((_, i) => (rows[weekRow + 1]?.[mondayCol + i] || '').toString().trim());
+
+  const people = [];
+  for (let r = weekRow + 2; r < rows.length; r++) {
+    if (/^Week\s+\d/i.test((rows[r][0] || '').toString().trim())) break;
+    const label = (rows[r][labelCol] || '').toString().replace(/\s+/g, ' ').trim();
+    if (!label || label.toUpperCase() === 'CALL OBLIGATION') continue;
+
+    const callRow = rows[r + 1] || [];
+    const callRowIsNotes = !(callRow[labelCol] || '').toString().trim();
+    const days = DAY_LABELS.map((dayLabel, i) => {
+      const col = mondayCol + i;
+      const rawShift = (rows[r][col] || '').toString().trim();
+      const rawOnCall = callRowIsNotes ? (callRow[col] || '').toString().trim() : '';
+      return {
+        label: dayLabel,
+        date: dates[i],
+        rawShift,
+        resolvedShift: rawShift ? resolveShiftCode(rawShift) : null,
+        rawOnCall,
+        onCall: rawOnCall ? parseOnCallNote(rawOnCall) : null,
+      };
+    });
+
+    people.push({ rawLabel: label, days });
+  }
+
+  return people;
+}
+
+export function parseLocumWeek(workbook, weekIndex, sheetName = 'Sheet1') {
+  const mondayCol = WEEK_BLOCK_MONDAY_COLUMNS[weekIndex];
+  if (mondayCol === undefined) {
+    throw new Error(`No week block configured for weekIndex ${weekIndex} — this file only has ${WEEK_BLOCK_MONDAY_COLUMNS.length} week blocks`);
+  }
+  const ws = workbook.Sheets[sheetName];
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
+  return extractLocumWeek(rows, mondayCol);
 }
 
 // ============================================================
@@ -537,12 +601,93 @@ export function getWeekDateRanges(workbook, sheetName = 'Sheet1') {
   }));
 }
 
-// Runs all three section parsers for one week and concatenates them —
-// the whole-week input importRosterWeek expects.
+// Runs all four section parsers for one week and concatenates them —
+// the whole-week input importRosterWeek expects. Each person is tagged
+// with their section (and FTE, where the sheet says) so an unmatched
+// name's Map… form can suggest a rank and FTE — see
+// RosterExcelImportTab.jsx.
 export function parseRosterWeek(workbook, weekIndex, sheetName = 'Sheet1') {
+  const tag = (people, section, fteOf) => people.map(p => ({ ...p, section, fte: fteOf(p) }));
   return [
-    ...parseConsultantWeek(workbook, weekIndex, sheetName),
-    ...parseRmoWeek(workbook, weekIndex, sheetName),
-    ...parseInternWeek(workbook, weekIndex, sheetName),
+    ...tag(parseConsultantWeek(workbook, weekIndex, sheetName), 'consultant', p => parseClassicFte(p.fte)),
+    ...tag(parseLocumWeek(workbook, weekIndex, sheetName), 'locum', () => 0),
+    ...tag(parseRmoWeek(workbook, weekIndex, sheetName), 'rmo', () => 1),
+    ...tag(parseInternWeek(workbook, weekIndex, sheetName), 'intern', () => 1),
   ];
+}
+
+// The key a 'staff' import mapping is saved and looked up under — the
+// raw label with its spacing normalised (the sheet isn't consistent:
+// "Bradley Lovie  Obstetrics ").
+export function staffLabelKey(rawLabel) {
+  return (rawLabel || '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+// ============================================================
+// MISSING STAFF (classic format)
+// ============================================================
+//
+// The classic-format counterpart to edRosterExcelImport.js's
+// getEdStaffRoster — every person the file mentions, across all its week
+// blocks and all four sections, so RosterExcelImportTab.jsx's "Check for
+// Missing Staff" can offer to create anyone with no staff record yet
+// (a new locum, or a registrar like "Jas Singh" who's never been set up).
+
+// Trailing speciality words the labels carry after the real name
+// ("Linda Thomson Obstetrics", "Rob Johnston ED", "Emma Pickstone
+// Endo/Anaesthetics") — stripped to get the name to create. Only used for
+// creating a record; matching an existing one is matchStaffName's
+// prefix rule, which already ignores whatever trails the name.
+const LABEL_SUFFIX_WORDS = new Set([
+  'anaesthetics', 'anaesthetic', 'anaes', 'obstetrics', 'obs', 'ed', 'emergency',
+  'endo', 'endoscopy', 'medical', 'medicine', 'gp', 'surgery', 'paediatrics',
+]);
+
+export function cleanStaffLabel(rawLabel) {
+  const words = (rawLabel || '')
+    .replace(/^Medical Registrar\s*-\s*/i, '')
+    .replace(/\s*\((?:[\d.]+\s*FTE|Casual)\)\s*$/i, '') // the ED format's "(0.5 FTE)" / "(Casual)"
+    .replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
+  while (words.length > 2 && words[words.length - 1].split('/').every(part => LABEL_SUFFIX_WORDS.has(part.toLowerCase()))) {
+    words.pop();
+  }
+  return words.join(' ');
+}
+
+// "0.75", "0.5FTE", "1.0 FTE" -> number; "Casual" -> 0 (same as the ED
+// format's "(Casual)"); anything else -> 1.
+function parseClassicFte(raw) {
+  const text = (raw || '').toString().trim();
+  if (/casual/i.test(text)) return 0;
+  const match = text.match(/^(\d+(?:\.\d+)?)/);
+  return match ? parseFloat(match[1]) : 1;
+}
+
+// [{ rawLabel, name, fte, section }] — section is 'consultant' | 'locum'
+// | 'rmo' | 'intern', for the tab to suggest a rank from. Locums count as
+// casual (FTE 0). Deduped by cleaned name, first sighting wins. The
+// unnamed "Medical Registrar" placeholder row (an unfilled slot, not a
+// person) is left out.
+export function getClassicStaffRoster(workbook, sheetName = 'Sheet1') {
+  const ws = workbook.Sheets[sheetName];
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
+  const rmoStart = findLabeledWeekHeaderRow(rows, /^PHO$/i);
+  const internStart = findLabeledWeekHeaderRow(rows, /^Interns$/i);
+
+  const byName = new Map();
+  const add = (rawLabel, section, fte) => {
+    const name = cleanStaffLabel(rawLabel);
+    if (!name || /^medical registrar$/i.test(name)) return;
+    const key = name.toLowerCase();
+    if (!byName.has(key)) byName.set(key, { rawLabel, name, fte, section });
+  };
+
+  WEEK_BLOCK_MONDAY_COLUMNS.forEach(mondayCol => {
+    extractConsultantWeek(rows, mondayCol).forEach(p => add(p.rawLabel, 'consultant', parseClassicFte(p.fte)));
+    extractLocumWeek(rows, mondayCol).forEach(p => add(p.rawLabel, 'locum', 0));
+    if (rmoStart !== undefined) extractRmoWeek(rows, rmoStart, mondayCol).forEach(p => add(p.rawLabel, 'rmo', 1));
+    if (internStart !== undefined) extractInternWeek(rows, internStart, mondayCol).forEach(p => add(p.rawLabel, 'intern', 1));
+  });
+
+  return Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name));
 }

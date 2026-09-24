@@ -3,7 +3,7 @@ import { DEFAULT_FTE, computeFairnessRatio, getDatesInRange } from './availabili
 import { toLocalDateStr } from './dateUtils';
 import { getSessionGroups } from './shiftSessionUtils';
 import { getMondayOfWeek } from './payrollExport';
-import { matchStaffName } from './rosterExcelImport';
+import { matchStaffName, staffLabelKey } from './rosterExcelImport';
 
 console.log('=== supabaseClient.js LOADING ===');
 console.log('Checking environment variables...');
@@ -4396,15 +4396,17 @@ async function replaceExistingRosterForDates(departmentId, dateStrs, dryRun) {
 // leaveTypes, nameMappings } — already-loaded department reference data
 // (e.g. officer-roster-view-supabase.jsx's refData), passed in rather
 // than fetched again. nameMappings ({ location: { lowercased name:
-// location_id }, activity: { ...: activity_id } }) comes from the
-// officer's saved roster_import_mappings: a name a code points at that
-// the department doesn't have by that exact name.
+// location_id }, activity: { ...: activity_id }, staff: { staffLabelKey:
+// staff_id } }) comes from the officer's saved roster_import_mappings: a
+// name a code points at that the department doesn't have by that exact
+// name, or a person's label that doesn't match their staff record.
 //
 // Error results carry what's needed to fix them from the results list —
-// unmappedCode (+ within, for half of a split code), or missingLocation /
-// missingActivity — see RosterExcelImportTab.jsx's Map… button.
+// unmappedCode (+ within, for half of a split code), missingLocation /
+// missingActivity, or unmatchedLabel (+ the person's section/fte) — see
+// RosterExcelImportTab.jsx's Map… button.
 export async function importRosterWeek(departmentId, people, refLists, { dryRun = true, onProgress } = {}) {
-  const { staffList, locations, activities, leaveTypes, nameMappings = { location: {}, activity: {} } } = refLists;
+  const { staffList, locations, activities, leaveTypes, nameMappings = { location: {}, activity: {}, staff: {} } } = refLists;
   const findLocation = (name) => {
     const key = name.trim().toLowerCase();
     return locations.find(l => l.name.trim().toLowerCase() === key)
@@ -4428,9 +4430,10 @@ export async function importRosterWeek(departmentId, people, refLists, { dryRun 
 
   for (let personIndex = 0; personIndex < people.length; personIndex++) {
     const person = people[personIndex];
-    const staff = matchStaffName(person.rawLabel, staffList);
+    const mappedStaffId = nameMappings.staff?.[staffLabelKey(person.rawLabel)];
+    const staff = (mappedStaffId && staffList.find(s => s.staff_id === mappedStaffId)) || matchStaffName(person.rawLabel, staffList);
     if (!staff) {
-      results.push({ rawLabel: person.rawLabel, ok: false, reason: 'No matching staff record' });
+      results.push({ rawLabel: person.rawLabel, ok: false, reason: 'No matching staff record', unmatchedLabel: person.rawLabel, section: person.section, fte: person.fte });
       onProgress?.(personIndex + 1, people.length);
       continue;
     }
@@ -4524,7 +4527,7 @@ export async function getRosterImportMappings(departmentId) {
 }
 
 // mapping: { kind, source, location_id?, activity_id?, leave_type_id?,
-// start_time?, end_time? }. Upserts on (department, kind, source), so
+// staff_id?, start_time?, end_time? }. Upserts on (department, kind, source), so
 // re-mapping the same code just replaces the old target.
 export async function saveRosterImportMapping(departmentId, mapping) {
   try {
@@ -4537,6 +4540,7 @@ export async function saveRosterImportMapping(departmentId, mapping) {
         location_id: mapping.location_id || null,
         activity_id: mapping.activity_id || null,
         leave_type_id: mapping.leave_type_id || null,
+        staff_id: mapping.staff_id || null,
         start_time: mapping.start_time || null,
         end_time: mapping.end_time || null,
       }], { onConflict: 'department_id,kind,source' })

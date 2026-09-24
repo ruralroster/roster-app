@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { AlertCircle, Loader, Upload, X } from 'lucide-react';
 import { importRosterWeek, createStaff, updateStaffFTE, updateDepartmentRosterImportFormat, getRosterImportMappings, saveRosterImportMapping, deleteRosterImportMapping } from './supabaseClient';
-import { getWeekDateRanges, parseRosterWeek, applyCodeMappings, resolveShiftCode, resolveRmoShiftCode, resolveInternShiftCode } from './rosterExcelImport';
+import { getWeekDateRanges, parseRosterWeek, applyCodeMappings, resolveShiftCode, resolveRmoShiftCode, resolveInternShiftCode, getClassicStaffRoster, matchStaffName, cleanStaffLabel, staffLabelKey } from './rosterExcelImport';
 import { getEdSheetNames, getEdWeekDateRanges, parseEdWeek, getEdStaffRoster, resolveEdShiftCode } from './edRosterExcelImport';
 
 // The classic format has a separate code table per section (consultant /
@@ -16,7 +16,12 @@ const resolveClassicAnySection = (code) => {
   return { unmapped: code };
 };
 
-const MAPPING_KIND_LABEL = { code: 'Code', location: 'Location name', activity: 'Activity name' };
+const MAPPING_KIND_LABEL = { code: 'Code', location: 'Location name', activity: 'Activity name', staff: 'Staff name' };
+
+// A 'staff' mapping's source: the raw label with its spacing tidied but
+// its case kept (for display); looked up case-insensitively via
+// staffLabelKey.
+const staffMappingSource = (rawLabel) => (rawLabel || '').replace(/\s+/g, ' ').trim();
 
 const FORMATS = [
   { value: 'classic', label: 'Consultant / Registrar / Intern (longhand shift text)' },
@@ -86,7 +91,7 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
   // yet — a brand-new department has none at all. Reviewed and created
   // here rather than silently auto-created by the importer itself, same
   // "never silently create/guess" rule as everything else in this import.
-  const [missingStaff, setMissingStaff] = useState(null); // [{ name, fte, suggestedRank, rank, create }]
+  const [missingStaff, setMissingStaff] = useState(null); // [{ rawLabel, name, fte, suggestedRank, rank, create }]
   const [creatingStaff, setCreatingStaff] = useState(false);
   const [creatingProgress, setCreatingProgress] = useState(null); // { current, total }
   const [importProgress, setImportProgress] = useState(null); // { current, total }
@@ -95,7 +100,7 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
   // every dry run / write, and editable from the results list's Map…
   // button. mappingDraft is the open Map… form, if any.
   const [mappings, setMappings] = useState([]);
-  const [mappingDraft, setMappingDraft] = useState(null); // { kind, source, mode, location_id, activity_id, leave_type_id, start_time, end_time }
+  const [mappingDraft, setMappingDraft] = useState(null); // { kind, source, mode, location_id, activity_id, leave_type_id, start_time, end_time } — plus, for kind 'staff': staff_id, new_name, new_rank, new_fte
   const [savingMapping, setSavingMapping] = useState(false);
 
   const loadMappings = async () => {
@@ -118,7 +123,7 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
   // target has since been deleted is just skipped.
   const buildMappingLookups = (list) => {
     const codeMap = {};
-    const nameMappings = { location: {}, activity: {} };
+    const nameMappings = { location: {}, activity: {}, staff: {} };
     for (const m of list) {
       if (m.kind === 'code') {
         if (m.leave_type_id) {
@@ -135,6 +140,8 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
         nameMappings.location[m.source.trim().toLowerCase()] = m.location_id;
       } else if (m.kind === 'activity' && m.activity_id) {
         nameMappings.activity[m.source.trim().toLowerCase()] = m.activity_id;
+      } else if (m.kind === 'staff' && m.staff_id) {
+        nameMappings.staff[staffLabelKey(m.source)] = m.staff_id;
       }
     }
     return { codeMap, nameMappings };
@@ -194,13 +201,43 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
     }
   };
 
-  const checkMissingStaff = () => {
+  // Classic format: a suggested rank from the section the person's in,
+  // picked from this department's OWN rank list (ranks are per-department,
+  // so there's no fixed name to suggest) — the officer can change it.
+  const suggestClassicRank = (section) => {
+    const senior = staffRanks.filter(r => r.requires_supervision === false);
+    const junior = staffRanks.filter(r => r.requires_supervision !== false);
+    if (section === 'locum') return (staffRanks.find(r => /locum/i.test(r.rank)) || senior[0])?.rank || '';
+    if (section === 'consultant') return senior[0]?.rank || '';
+    if (section === 'intern') return staffRanks.find(r => /intern/i.test(r.rank))?.rank || '';
+    return junior.find(r => !/intern/i.test(r.rank))?.rank || '';
+  };
+
+  // extraStaff / mappingList cover records and mappings just created,
+  // before the parent's staffList prop and the mappings state catch up.
+  const checkMissingStaff = (extraStaff = [], mappingList = mappings) => {
     if (!workbook) return;
+    const knownStaff = [...staffList, ...extraStaff];
+    const mappedLabels = new Set(mappingList.filter(m => m.kind === 'staff' && m.staff_id).map(m => staffLabelKey(m.source)));
+    if (format !== 'ed') {
+      // Labels carry trailing speciality words ("Linda Thomson
+      // Obstetrics"), so "already has a record" uses the same matching
+      // the import itself does, not an exact name compare.
+      const missing = getClassicStaffRoster(workbook)
+        .filter(p => !mappedLabels.has(staffLabelKey(p.rawLabel)) && !matchStaffName(p.rawLabel, knownStaff))
+        .map(p => {
+          const rank = suggestClassicRank(p.section);
+          return { rawLabel: p.rawLabel, name: p.name, fte: p.fte, suggestedRank: rank, rank, create: true };
+        });
+      setMissingStaff(missing);
+      return;
+    }
     const roster = getEdStaffRoster(workbook);
-    const existingNames = new Set(staffList.map(s => s.name.trim().toLowerCase()));
+    const existingNames = new Set(knownStaff.map(s => s.name.trim().toLowerCase()));
     const missing = roster
-      .filter(p => !existingNames.has(p.name.toLowerCase()))
+      .filter(p => !existingNames.has(p.name.toLowerCase()) && !mappedLabels.has(staffLabelKey(p.name)))
       .map(p => ({
+        rawLabel: p.name,
         name: p.name,
         fte: p.fte,
         suggestedRank: p.suggestedRank,
@@ -222,22 +259,38 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
       return;
     }
 
+    if (toCreate.some(p => !p.name.trim())) {
+      setError('Every staff member being created needs a name.');
+      return;
+    }
+
     setCreatingStaff(true);
     setCreatingProgress({ current: 0, total: toCreate.length });
     setError(null);
+    const created = [];
     try {
       for (let i = 0; i < toCreate.length; i++) {
         const person = toCreate[i];
-        const { data, error: createError } = await createStaff(departmentId, person.name, person.rank, '');
-        if (createError) throw new Error(`${person.name}: ${createError.message}`);
+        const name = person.name.trim();
+        const { data, error: createError } = await createStaff(departmentId, name, person.rank, '');
+        if (createError) throw new Error(`${name}: ${createError.message}`);
+        if (data) created.push(data);
         if (person.fte !== 1 && data) {
           const { error: fteError } = await updateStaffFTE(data.staff_id, person.fte);
-          if (fteError) throw new Error(`${person.name}: created, but failed to set FTE: ${fteError.message}`);
+          if (fteError) throw new Error(`${name}: created, but failed to set FTE: ${fteError.message}`);
+        }
+        // A corrected name no longer matches the sheet's label on its own
+        // (e.g. "Rach Boland Obstetrics" created as "Rachel Boland"), so
+        // remember which record that label means.
+        if (data && !matchStaffName(person.rawLabel, [data])) {
+          const { error: mapError } = await saveRosterImportMapping(departmentId, { kind: 'staff', source: staffMappingSource(person.rawLabel), staff_id: data.staff_id });
+          if (mapError) throw new Error(`${name}: created, but failed to save the name mapping: ${mapError.message}`);
         }
         setCreatingProgress({ current: i + 1, total: toCreate.length });
       }
       if (onStaffChanged) await onStaffChanged();
-      checkMissingStaff();
+      const fresh = await loadMappings();
+      checkMissingStaff(created, fresh);
     } catch (err) {
       setError(`Failed to create staff: ${err.message}`);
     } finally {
@@ -248,7 +301,7 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
 
   // mappingList overrides the `mappings` state — used straight after
   // saving one, before the state update has landed.
-  const runImport = async (dryRun, mappingList = mappings) => {
+  const runImport = async (dryRun, mappingList = mappings, extraStaff = []) => {
     if (!workbook) return;
     if (!dryRun && !window.confirm('Write this week to the roster now? Review the dry run above first if you haven\'t already.')) {
       return;
@@ -263,7 +316,7 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
       setImportProgress({ current: 0, total: people.length });
       const { data, error: importError, deletionSummary: nextDeletionSummary } = await importRosterWeek(
         departmentId, people,
-        { staffList, locations, activities, leaveTypes, nameMappings },
+        { staffList: [...staffList, ...extraStaff], locations, activities, leaveTypes, nameMappings },
         { dryRun, onProgress: (current, total) => setImportProgress({ current, total }) }
       );
       if (importError) throw importError;
@@ -278,11 +331,19 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
     }
   };
 
-  const openMappingDraft = (kind, source) => {
+  // extra: for kind 'staff', the result row's { section, fte } — used to
+  // pre-fill a new staff member's rank and FTE.
+  const openMappingDraft = (kind, source, extra = {}) => {
     const existing = mappings.find(m => m.kind === kind && m.source === source);
+    const suggestedRank = extra.section ? suggestClassicRank(extra.section) : '';
     setMappingDraft({
       kind,
       source,
+      staff_mode: existing?.staff_id || kind !== 'staff' ? 'existing' : 'new',
+      staff_id: existing?.staff_id || '',
+      new_name: cleanStaffLabel(source),
+      new_rank: staffRanks.some(r => r.rank === suggestedRank) ? suggestedRank : '',
+      new_fte: extra.fte ?? 1,
       mode: existing?.leave_type_id ? 'leave' : 'shift',
       location_id: existing?.location_id || '',
       activity_id: existing?.activity_id || '',
@@ -309,6 +370,7 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
     if (!d) return false;
     if (d.kind === 'location') return !!d.location_id;
     if (d.kind === 'activity') return !!d.activity_id;
+    if (d.kind === 'staff') return d.staff_mode === 'existing' ? !!d.staff_id : !!(d.new_name.trim() && d.new_rank);
     if (d.mode === 'leave') return !!d.leave_type_id;
     return !!(d.location_id && d.activity_id && d.start_time && d.end_time);
   };
@@ -318,6 +380,29 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
     if (!mappingDraftIsComplete(d)) return;
     setSavingMapping(true);
     try {
+      if (d.kind === 'staff') {
+        let staffId = d.staff_id;
+        const extraStaff = [];
+        if (d.staff_mode === 'new') {
+          const name = d.new_name.trim();
+          const { data, error: createError } = await createStaff(departmentId, name, d.new_rank, '');
+          if (createError) throw createError;
+          const fte = parseFloat(d.new_fte);
+          if (!Number.isNaN(fte) && fte !== 1) {
+            const { error: fteError } = await updateStaffFTE(data.staff_id, fte);
+            if (fteError) throw new Error(`created ${name}, but failed to set FTE: ${fteError.message}`);
+          }
+          staffId = data.staff_id;
+          extraStaff.push(data);
+        }
+        const { error: saveError } = await saveRosterImportMapping(departmentId, { kind: 'staff', source: d.source, staff_id: staffId });
+        if (saveError) throw saveError;
+        setMappingDraft(null);
+        if (d.staff_mode === 'new' && onStaffChanged) await onStaffChanged();
+        const fresh = await loadMappings();
+        await runImport(true, fresh, extraStaff);
+        return;
+      }
       const isLeave = d.kind === 'code' && d.mode === 'leave';
       const { error: saveError } = await saveRosterImportMapping(departmentId, {
         kind: d.kind,
@@ -357,6 +442,7 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
   const mappableTargets = (r) => {
     if (r.ok) return [];
     if (r.unmappedCode) return [{ kind: 'code', source: r.unmappedCode }];
+    if (r.unmatchedLabel) return [{ kind: 'staff', source: staffMappingSource(r.unmatchedLabel), section: r.section, fte: r.fte }];
     return [
       r.missingLocation ? { kind: 'location', source: r.missingLocation } : null,
       r.missingActivity ? { kind: 'activity', source: r.missingActivity } : null,
@@ -364,6 +450,7 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
   };
 
   const describeMappingTarget = (m) => {
+    if (m.kind === 'staff') return staffList.find(st => st.staff_id === m.staff_id)?.name || '(staff member not loaded)';
     if (m.leave_type_id) return `Leave: ${leaveTypes.find(lt => lt.leave_type_id === m.leave_type_id)?.name || '(deleted leave type)'}`;
     const location = m.location_id ? (locations.find(l => l.location_id === m.location_id)?.name || '(deleted location)') : null;
     const activity = m.activity_id ? (activities.find(a => a.activity_id === m.activity_id)?.name || '(deleted activity)') : null;
@@ -450,10 +537,10 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
         </div>
       )}
 
-      {workbook && format === 'ed' && (
+      {workbook && (
         <div className="mb-4">
           <button
-            onClick={checkMissingStaff}
+            onClick={() => checkMissingStaff()}
             className="w-full px-4 py-2 bg-purple-100 hover:bg-purple-200 text-purple-900 font-medium rounded-lg transition text-sm"
           >
             Check for Missing Staff
@@ -468,13 +555,20 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
                   {missingStaff.length} {missingStaff.length === 1 ? 'person' : 'people'} in this file have no staff record yet:
                 </p>
                 {missingStaff.map((p, i) => (
-                  <div key={p.name} className="flex flex-wrap items-center gap-2 bg-white p-2 rounded border border-gray-200">
+                  <div key={p.rawLabel} className="flex flex-wrap items-center gap-2 bg-white p-2 rounded border border-gray-200">
                     <input
                       type="checkbox"
                       checked={p.create}
                       onChange={(e) => updateMissingStaffField(i, 'create', e.target.checked)}
                     />
-                    <span className="text-sm font-medium text-gray-900 flex-1 min-w-[8rem]">{p.name}</span>
+                    <input
+                      type="text"
+                      value={p.name}
+                      onChange={(e) => updateMissingStaffField(i, 'name', e.target.value)}
+                      disabled={!p.create}
+                      title={p.rawLabel !== p.name ? `From the sheet: "${p.rawLabel}"` : undefined}
+                      className="text-sm font-medium text-gray-900 flex-1 min-w-[8rem] px-2 py-1 border border-gray-300 rounded disabled:opacity-50"
+                    />
                     <span className="text-xs text-gray-500">FTE {p.fte}</span>
                     <select
                       value={p.rank}
@@ -583,10 +677,10 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
                 {mappableTargets(r).map(t => (
                   <button
                     key={`${t.kind}|${t.source}`}
-                    onClick={() => openMappingDraft(t.kind, t.source)}
+                    onClick={() => openMappingDraft(t.kind, t.source, t)}
                     className="ml-2 px-2 py-0.5 bg-blue-100 hover:bg-blue-200 text-blue-900 font-medium rounded transition"
                   >
-                    Map {t.kind === 'code' ? `"${t.source}"` : `${t.kind} "${t.source}"`}…
+                    {t.kind === 'staff' ? `Fix name "${t.source}"` : t.kind === 'code' ? `Map "${t.source}"` : `Map ${t.kind} "${t.source}"`}…
                   </button>
                 ))}
               </div>
@@ -631,7 +725,7 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
           <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-md max-h-[85vh] overflow-y-auto">
             <div className="flex justify-between items-start mb-4">
               <h2 className="text-lg font-bold text-gray-900">
-                Map {mappingDraft.kind === 'code' ? 'code' : mappingDraft.kind} "{mappingDraft.source}"
+                {mappingDraft.kind === 'staff' ? `Who is "${mappingDraft.source}"?` : `Map ${mappingDraft.kind === 'code' ? 'code' : mappingDraft.kind} "${mappingDraft.source}"`}
               </h2>
               <button onClick={() => setMappingDraft(null)} className="p-1 hover:bg-gray-100 rounded-lg">
                 <X size={20} />
@@ -654,7 +748,75 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
               </div>
             )}
 
-            {mappingDraft.kind === 'code' && mappingDraft.mode === 'leave' ? (
+            {mappingDraft.kind === 'staff' ? (
+              <>
+                <div className="flex gap-4 mb-4 text-sm">
+                  <label className="flex items-center gap-1.5">
+                    <input type="radio" checked={mappingDraft.staff_mode === 'existing'} onChange={() => setMappingDraft(prev => ({ ...prev, staff_mode: 'existing' }))} />
+                    Existing staff member
+                  </label>
+                  <label className="flex items-center gap-1.5">
+                    <input type="radio" checked={mappingDraft.staff_mode === 'new'} onChange={() => setMappingDraft(prev => ({ ...prev, staff_mode: 'new' }))} />
+                    New staff member
+                  </label>
+                </div>
+                {mappingDraft.staff_mode === 'existing' ? (
+                  <div className="mb-4">
+                    <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Staff member</label>
+                    <select
+                      value={mappingDraft.staff_id}
+                      onChange={(e) => setMappingDraft(prev => ({ ...prev, staff_id: e.target.value }))}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                    >
+                      <option value="">— Select a staff member —</option>
+                      {[...staffList].filter(st => st.active !== false).sort((a, b) => a.name.localeCompare(b.name)).map(st => (
+                        <option key={st.staff_id} value={st.staff_id}>{st.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <>
+                    <div className="mb-4">
+                      <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Name</label>
+                      <input
+                        type="text"
+                        value={mappingDraft.new_name}
+                        onChange={(e) => setMappingDraft(prev => ({ ...prev, new_name: e.target.value }))}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">Guessed from the sheet — correct it if needed (e.g. "Rach" → "Rachel").</p>
+                    </div>
+                    <div className="mb-4 flex gap-3">
+                      <div className="flex-1">
+                        <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Rank</label>
+                        <select
+                          value={mappingDraft.new_rank}
+                          onChange={(e) => setMappingDraft(prev => ({ ...prev, new_rank: e.target.value }))}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                        >
+                          <option value="">— Select a rank —</option>
+                          {staffRanks.map(r => (
+                            <option key={r.rule_id} value={r.rank}>{r.rank}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="w-24">
+                        <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">FTE</label>
+                        <input
+                          type="number"
+                          step="0.05"
+                          min="0"
+                          value={mappingDraft.new_fte}
+                          onChange={(e) => setMappingDraft(prev => ({ ...prev, new_fte: e.target.value }))}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                        />
+                      </div>
+                    </div>
+                    <p className="text-xs text-gray-500 mb-4">Locums and casuals are usually FTE 0.</p>
+                  </>
+                )}
+              </>
+            ) : mappingDraft.kind === 'code' && mappingDraft.mode === 'leave' ? (
               <div className="mb-4">
                 <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Leave type</label>
                 <select
