@@ -525,8 +525,15 @@
         </ol>
         <div class="callout">
           <span class="mark">Unmapped codes are never guessed</span>
-          <p>A shift code the importer doesn't recognise shows up as an error in the results list rather than being silently skipped or guessed at — check with whoever built the spreadsheet what it means, then it can be added.</p>
+          <p>A shift code the importer doesn't recognise shows up as an error in the results list rather than being silently skipped or guessed at. Check with whoever built the spreadsheet what it means, then map it yourself (below).</p>
         </div>
+        <p><strong>Fixing an error with Map…</strong> Two kinds of error get a blue <strong>Map…</strong> button in the results list:</p>
+        <ul>
+          <li><strong>Unmapped code</strong> (e.g. <code>"Endo2"</code>): map it to <strong>a shift</strong> (one of your existing locations and activities, plus start and end times) or to <strong>leave</strong> (one of your leave types). The times start at the location's own default hours if it has them, otherwise 08:00–18:00.</li>
+          <li><strong>Not found: location/activity</strong> (a code the importer knows, pointing at a name your department doesn't have, e.g. location <code>"Emergency"</code>): pick the real location or activity it should be.</li>
+        </ul>
+        <p><strong>Save &amp; re-check</strong> saves the mapping and runs the dry run again, so you can see the error clear. Mappings are saved for the department, so the same code resolves the same way in every later week and file; you only fix each one once. For a split code like <code>"OT/Endo2"</code>, the error names just the unknown half, so mapping <code>"Endo2"</code> covers every combination, and each half gets the usual morning/afternoon times. Mappings only fill gaps: codes the importer already knows are never overridden.</p>
+        <p>Everything you've mapped is listed under <strong>Saved mappings</strong> at the bottom of the import screen, with <strong>Edit</strong> and <strong>Delete</strong>.</p>
         <div class="callout">
           <span class="mark">An import replaces those dates</span>
           <p>Writing a week first deletes every existing assignment and activity card for the dates the file covers, then writes the file's roster. The re-issued spreadsheet is treated as the source of truth. On-call duty assignments and recorded leave are never touched. Both the dry run and the real run tell you how many existing entries will be (or were) removed.</p>
