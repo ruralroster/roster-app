@@ -114,6 +114,49 @@ export function resolveShiftCode(rawCode) {
   return { unmapped: code };
 }
 
+// Fills in, after parsing, any day whose code came back `unmapped` using
+// the officer's own saved code mappings (roster_import_mappings, kind
+// 'code' — see RosterExcelImportTab.jsx). codeMap is { code: resolved }
+// in the same { segments } / { leaveCode } shape the resolvers return;
+// baseResolve is the format's own resolver, used for the known half of a
+// split code. Works for either format's parsed output.
+//
+// An "X/Y" split code with exactly one unknown half comes back as
+// `unmapped: <that half>` (with `within` the whole code), not the whole
+// code — so mapping "Endo2" once fixes "OT/Endo2", "Endo2/ED" and so on.
+export function applyCodeMappings(people, codeMap, baseResolve) {
+  const lookup = (c) => codeMap[c] || baseResolve(c);
+
+  const resolve = (rawShift, current) => {
+    const trimmed = (rawShift || '').trim();
+    const code = trimmed.replace(/\s+/g, ' ');
+    if (codeMap[trimmed] || codeMap[code]) return codeMap[trimmed] || codeMap[code];
+    if (!code.includes('/')) return current;
+
+    const [amPart, pmPart] = code.split('/').map(s => s.trim());
+    const am = amPart ? lookup(amPart) : null;
+    const pm = pmPart ? lookup(pmPart) : null;
+    if (am?.segments?.length && pm?.segments?.length) {
+      return {
+        segments: [
+          { ...am.segments[0], start: AM.start, end: AM.end },
+          { ...pm.segments[0], start: PM.start, end: PM.end },
+        ],
+      };
+    }
+    const unknown = [amPart, pmPart].filter((part, i) => part && (i === 0 ? am : pm)?.unmapped);
+    if (unknown.length === 1) return { unmapped: unknown[0], within: code };
+    return current;
+  };
+
+  return people.map(person => ({
+    ...person,
+    days: person.days.map(day => (
+      day.resolvedShift?.unmapped ? { ...day, resolvedShift: resolve(day.rawShift, day.resolvedShift) } : day
+    )),
+  }));
+}
+
 // CALL OBLIGATION column text — confirmed rule (2026-08-25):
 //   "Oncall" -> this person is on-call for ED
 //   "Anaes"  -> this person is on-call for Anaesthetics

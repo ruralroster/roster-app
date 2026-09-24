@@ -1,9 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
-import { AlertCircle, Loader, Upload } from 'lucide-react';
-import { importRosterWeek, createStaff, updateStaffFTE, updateDepartmentRosterImportFormat } from './supabaseClient';
-import { getWeekDateRanges, parseRosterWeek } from './rosterExcelImport';
-import { getEdSheetNames, getEdWeekDateRanges, parseEdWeek, getEdStaffRoster } from './edRosterExcelImport';
+import { AlertCircle, Loader, Upload, X } from 'lucide-react';
+import { importRosterWeek, createStaff, updateStaffFTE, updateDepartmentRosterImportFormat, getRosterImportMappings, saveRosterImportMapping, deleteRosterImportMapping } from './supabaseClient';
+import { getWeekDateRanges, parseRosterWeek, applyCodeMappings, resolveShiftCode, resolveRmoShiftCode, resolveInternShiftCode } from './rosterExcelImport';
+import { getEdSheetNames, getEdWeekDateRanges, parseEdWeek, getEdStaffRoster, resolveEdShiftCode } from './edRosterExcelImport';
+
+// The classic format has a separate code table per section (consultant /
+// RMO / intern) — the known half of a split code could be from any of
+// them, so try each in turn. Used by applyCodeMappings.
+const resolveClassicAnySection = (code) => {
+  for (const resolve of [resolveShiftCode, resolveRmoShiftCode, resolveInternShiftCode]) {
+    const resolved = resolve(code);
+    if (resolved && !resolved.unmapped) return resolved;
+  }
+  return { unmapped: code };
+};
+
+const MAPPING_KIND_LABEL = { code: 'Code', location: 'Location name', activity: 'Activity name' };
 
 const FORMATS = [
   { value: 'classic', label: 'Consultant / Registrar / Intern (longhand shift text)' },
@@ -77,6 +90,55 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
   const [creatingStaff, setCreatingStaff] = useState(false);
   const [creatingProgress, setCreatingProgress] = useState(null); // { current, total }
   const [importProgress, setImportProgress] = useState(null); // { current, total }
+
+  // Saved fixes for import errors (roster_import_mappings) — applied to
+  // every dry run / write, and editable from the results list's Map…
+  // button. mappingDraft is the open Map… form, if any.
+  const [mappings, setMappings] = useState([]);
+  const [mappingDraft, setMappingDraft] = useState(null); // { kind, source, mode, location_id, activity_id, leave_type_id, start_time, end_time }
+  const [savingMapping, setSavingMapping] = useState(false);
+
+  const loadMappings = async () => {
+    const { data, error: loadError } = await getRosterImportMappings(departmentId);
+    if (loadError) {
+      setError(`Failed to load saved mappings: ${loadError.message}`);
+      return mappings;
+    }
+    setMappings(data);
+    return data;
+  };
+
+  useEffect(() => {
+    if (departmentId) loadMappings();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [departmentId]);
+
+  // Saved mappings -> the two shapes the import needs: codeMap for
+  // applyCodeMappings, nameMappings for importRosterWeek. A mapping whose
+  // target has since been deleted is just skipped.
+  const buildMappingLookups = (list) => {
+    const codeMap = {};
+    const nameMappings = { location: {}, activity: {} };
+    for (const m of list) {
+      if (m.kind === 'code') {
+        if (m.leave_type_id) {
+          const leaveType = leaveTypes.find(lt => lt.leave_type_id === m.leave_type_id);
+          if (leaveType) codeMap[m.source] = { leaveCode: leaveType.code };
+        } else {
+          const location = locations.find(l => l.location_id === m.location_id);
+          const activity = activities.find(a => a.activity_id === m.activity_id);
+          if (location && activity && m.start_time && m.end_time) {
+            codeMap[m.source] = { segments: [{ location: location.name, activity: activity.name, start: m.start_time.slice(0, 5), end: m.end_time.slice(0, 5) }] };
+          }
+        }
+      } else if (m.kind === 'location' && m.location_id) {
+        nameMappings.location[m.source.trim().toLowerCase()] = m.location_id;
+      } else if (m.kind === 'activity' && m.activity_id) {
+        nameMappings.activity[m.source.trim().toLowerCase()] = m.activity_id;
+      }
+    }
+    return { codeMap, nameMappings };
+  };
 
   const loadEdSheet = (wb, name) => {
     setSheetName(name);
@@ -184,7 +246,9 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
     }
   };
 
-  const runImport = async (dryRun) => {
+  // mappingList overrides the `mappings` state — used straight after
+  // saving one, before the state update has landed.
+  const runImport = async (dryRun, mappingList = mappings) => {
     if (!workbook) return;
     if (!dryRun && !window.confirm('Write this week to the roster now? Review the dry run above first if you haven\'t already.')) {
       return;
@@ -193,11 +257,13 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
     setLoading(true);
     setError(null);
     try {
-      const people = format === 'ed' ? parseEdWeek(workbook, sheetName, weekIndex) : parseRosterWeek(workbook, weekIndex);
+      const { codeMap, nameMappings } = buildMappingLookups(mappingList);
+      const parsed = format === 'ed' ? parseEdWeek(workbook, sheetName, weekIndex) : parseRosterWeek(workbook, weekIndex);
+      const people = applyCodeMappings(parsed, codeMap, format === 'ed' ? resolveEdShiftCode : resolveClassicAnySection);
       setImportProgress({ current: 0, total: people.length });
       const { data, error: importError, deletionSummary: nextDeletionSummary } = await importRosterWeek(
         departmentId, people,
-        { staffList, locations, activities, leaveTypes },
+        { staffList, locations, activities, leaveTypes, nameMappings },
         { dryRun, onProgress: (current, total) => setImportProgress({ current, total }) }
       );
       if (importError) throw importError;
@@ -211,6 +277,107 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
       setImportProgress(null);
     }
   };
+
+  const openMappingDraft = (kind, source) => {
+    const existing = mappings.find(m => m.kind === kind && m.source === source);
+    setMappingDraft({
+      kind,
+      source,
+      mode: existing?.leave_type_id ? 'leave' : 'shift',
+      location_id: existing?.location_id || '',
+      activity_id: existing?.activity_id || '',
+      leave_type_id: existing?.leave_type_id || '',
+      start_time: existing?.start_time?.slice(0, 5) || '08:00',
+      end_time: existing?.end_time?.slice(0, 5) || '18:00',
+    });
+  };
+
+  // Picking a location for a code pre-fills that location's own default
+  // times, if it has them — still editable.
+  const handleDraftLocationChange = (locationId) => {
+    const location = locations.find(l => l.location_id === locationId);
+    setMappingDraft(prev => ({
+      ...prev,
+      location_id: locationId,
+      ...(prev.kind === 'code' && location?.default_start_time && location?.default_end_time
+        ? { start_time: location.default_start_time.slice(0, 5), end_time: location.default_end_time.slice(0, 5) }
+        : {}),
+    }));
+  };
+
+  const mappingDraftIsComplete = (d) => {
+    if (!d) return false;
+    if (d.kind === 'location') return !!d.location_id;
+    if (d.kind === 'activity') return !!d.activity_id;
+    if (d.mode === 'leave') return !!d.leave_type_id;
+    return !!(d.location_id && d.activity_id && d.start_time && d.end_time);
+  };
+
+  const handleSaveMapping = async () => {
+    const d = mappingDraft;
+    if (!mappingDraftIsComplete(d)) return;
+    setSavingMapping(true);
+    try {
+      const isLeave = d.kind === 'code' && d.mode === 'leave';
+      const { error: saveError } = await saveRosterImportMapping(departmentId, {
+        kind: d.kind,
+        source: d.source,
+        location_id: d.kind !== 'activity' && !isLeave ? d.location_id : null,
+        activity_id: d.kind !== 'location' && !isLeave ? d.activity_id : null,
+        leave_type_id: isLeave ? d.leave_type_id : null,
+        start_time: d.kind === 'code' && !isLeave ? d.start_time : null,
+        end_time: d.kind === 'code' && !isLeave ? d.end_time : null,
+      });
+      if (saveError) throw saveError;
+      setMappingDraft(null);
+      const fresh = await loadMappings();
+      // Re-check straight away so the officer sees the error clear.
+      await runImport(true, fresh);
+    } catch (err) {
+      setError(`Failed to save mapping: ${err.message}`);
+    } finally {
+      setSavingMapping(false);
+    }
+  };
+
+  const handleDeleteMapping = async (mappingId) => {
+    const { error: deleteError } = await deleteRosterImportMapping(mappingId);
+    if (deleteError) {
+      setError(`Failed to delete mapping: ${deleteError.message}`);
+      return;
+    }
+    setResults(null);
+    setDeletionSummary(null);
+    await loadMappings();
+  };
+
+  // What a result row's Map… button fixes — an unknown code, or a
+  // location/activity name the department doesn't have. A row missing
+  // both a location and an activity gets a button for each.
+  const mappableTargets = (r) => {
+    if (r.ok) return [];
+    if (r.unmappedCode) return [{ kind: 'code', source: r.unmappedCode }];
+    return [
+      r.missingLocation ? { kind: 'location', source: r.missingLocation } : null,
+      r.missingActivity ? { kind: 'activity', source: r.missingActivity } : null,
+    ].filter(Boolean);
+  };
+
+  const describeMappingTarget = (m) => {
+    if (m.leave_type_id) return `Leave: ${leaveTypes.find(lt => lt.leave_type_id === m.leave_type_id)?.name || '(deleted leave type)'}`;
+    const location = m.location_id ? (locations.find(l => l.location_id === m.location_id)?.name || '(deleted location)') : null;
+    const activity = m.activity_id ? (activities.find(a => a.activity_id === m.activity_id)?.name || '(deleted activity)') : null;
+    const times = m.start_time && m.end_time ? ` ${m.start_time.slice(0, 5)}–${m.end_time.slice(0, 5)}` : '';
+    return [location, activity].filter(Boolean).join(' / ') + times;
+  };
+
+  const activeLocations = locations.filter(l => l.active !== false);
+  const draftLocation = mappingDraft ? locations.find(l => l.location_id === mappingDraft.location_id) : null;
+  // A location limited to certain activities only offers those, same as
+  // everywhere else a location's activity is picked.
+  const draftActivities = draftLocation?.allowed_activity_ids?.length > 0
+    ? activities.filter(a => draftLocation.allowed_activity_ids.includes(a.activity_id))
+    : activities;
 
   const okCount = results?.filter(r => r.ok).length ?? 0;
   const errorCount = results?.filter(r => !r.ok).length ?? 0;
@@ -413,8 +580,166 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
                 ) : (
                   <span className="text-red-700"> — {r.reason || r.error}</span>
                 )}
+                {mappableTargets(r).map(t => (
+                  <button
+                    key={`${t.kind}|${t.source}`}
+                    onClick={() => openMappingDraft(t.kind, t.source)}
+                    className="ml-2 px-2 py-0.5 bg-blue-100 hover:bg-blue-200 text-blue-900 font-medium rounded transition"
+                  >
+                    Map {t.kind === 'code' ? `"${t.source}"` : `${t.kind} "${t.source}"`}…
+                  </button>
+                ))}
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {mappings.length > 0 && (
+        <div className="mt-4">
+          <p className="text-xs font-semibold text-gray-600 uppercase mb-2">Saved mappings</p>
+          <div className="border border-gray-200 rounded-lg divide-y divide-gray-100">
+            {mappings.map(m => (
+              <div key={m.mapping_id} className="p-2 text-xs flex items-center justify-between gap-2">
+                <span>
+                  <span className="text-gray-500">{MAPPING_KIND_LABEL[m.kind]} </span>
+                  <span className="font-semibold text-gray-900">"{m.source}"</span>
+                  <span className="text-gray-700"> → {describeMappingTarget(m)}</span>
+                </span>
+                <div className="flex gap-1 flex-shrink-0">
+                  <button
+                    onClick={() => openMappingDraft(m.kind, m.source)}
+                    className="px-2 py-0.5 bg-blue-100 hover:bg-blue-200 text-blue-900 font-medium rounded transition"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    onClick={() => handleDeleteMapping(m.mapping_id)}
+                    className="px-2 py-0.5 bg-red-100 hover:bg-red-200 text-red-900 font-medium rounded transition"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {mappingDraft && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-md max-h-[85vh] overflow-y-auto">
+            <div className="flex justify-between items-start mb-4">
+              <h2 className="text-lg font-bold text-gray-900">
+                Map {mappingDraft.kind === 'code' ? 'code' : mappingDraft.kind} "{mappingDraft.source}"
+              </h2>
+              <button onClick={() => setMappingDraft(null)} className="p-1 hover:bg-gray-100 rounded-lg">
+                <X size={20} />
+              </button>
+            </div>
+            <p className="text-xs text-gray-500 mb-4">
+              Saved for this department — every later import (any week, any file) treats "{mappingDraft.source}" this way.
+            </p>
+
+            {mappingDraft.kind === 'code' && (
+              <div className="flex gap-4 mb-4 text-sm">
+                <label className="flex items-center gap-1.5">
+                  <input type="radio" checked={mappingDraft.mode === 'shift'} onChange={() => setMappingDraft(prev => ({ ...prev, mode: 'shift' }))} />
+                  A shift
+                </label>
+                <label className="flex items-center gap-1.5">
+                  <input type="radio" checked={mappingDraft.mode === 'leave'} onChange={() => setMappingDraft(prev => ({ ...prev, mode: 'leave' }))} />
+                  Leave
+                </label>
+              </div>
+            )}
+
+            {mappingDraft.kind === 'code' && mappingDraft.mode === 'leave' ? (
+              <div className="mb-4">
+                <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Leave type</label>
+                <select
+                  value={mappingDraft.leave_type_id}
+                  onChange={(e) => setMappingDraft(prev => ({ ...prev, leave_type_id: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                >
+                  <option value="">— Select a leave type —</option>
+                  {leaveTypes.map(lt => (
+                    <option key={lt.leave_type_id} value={lt.leave_type_id}>{lt.name} ({lt.code})</option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <>
+                {mappingDraft.kind !== 'activity' && (
+                  <div className="mb-4">
+                    <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Location</label>
+                    <select
+                      value={mappingDraft.location_id}
+                      onChange={(e) => handleDraftLocationChange(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                    >
+                      <option value="">— Select a location —</option>
+                      {activeLocations.map(l => (
+                        <option key={l.location_id} value={l.location_id}>{l.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                {mappingDraft.kind !== 'location' && (
+                  <div className="mb-4">
+                    <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Activity</label>
+                    <select
+                      value={mappingDraft.activity_id}
+                      onChange={(e) => setMappingDraft(prev => ({ ...prev, activity_id: e.target.value }))}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                    >
+                      <option value="">— Select an activity —</option>
+                      {(mappingDraft.kind === 'code' ? draftActivities : activities).map(a => (
+                        <option key={a.activity_id} value={a.activity_id}>{a.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                {mappingDraft.kind === 'code' && (
+                  <div className="mb-4">
+                    <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Times</label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="time"
+                        value={mappingDraft.start_time}
+                        onChange={(e) => setMappingDraft(prev => ({ ...prev, start_time: e.target.value }))}
+                        className="px-2 py-1 border border-gray-300 rounded text-sm"
+                      />
+                      <span className="text-gray-400">–</span>
+                      <input
+                        type="time"
+                        value={mappingDraft.end_time}
+                        onChange={(e) => setMappingDraft(prev => ({ ...prev, end_time: e.target.value }))}
+                        className="px-2 py-1 border border-gray-300 rounded text-sm"
+                      />
+                    </div>
+                    <p className="text-xs text-gray-500 mt-1">In a split code like "OT/{mappingDraft.source}", the half's own morning/afternoon times are used instead.</p>
+                  </div>
+                )}
+              </>
+            )}
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => setMappingDraft(null)}
+                className="flex-1 px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 font-medium rounded-lg transition text-sm"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveMapping}
+                disabled={savingMapping || !mappingDraftIsComplete(mappingDraft)}
+                className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-medium rounded-lg transition text-sm flex items-center justify-center gap-2"
+              >
+                {savingMapping && <Loader size={16} className="animate-spin" />}
+                Save &amp; re-check
+              </button>
+            </div>
           </div>
         </div>
       )}

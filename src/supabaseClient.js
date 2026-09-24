@@ -4393,11 +4393,28 @@ async function replaceExistingRosterForDates(departmentId, dateStrs, dryRun) {
 
 // people: the array returned by parseConsultantWeek/parseRmoWeek/
 // parseInternWeek. refLists: { staffList, locations, activities,
-// leaveTypes } — already-loaded department reference data (e.g.
-// officer-roster-view-supabase.jsx's refData), passed in rather than
-// fetched again.
+// leaveTypes, nameMappings } — already-loaded department reference data
+// (e.g. officer-roster-view-supabase.jsx's refData), passed in rather
+// than fetched again. nameMappings ({ location: { lowercased name:
+// location_id }, activity: { ...: activity_id } }) comes from the
+// officer's saved roster_import_mappings: a name a code points at that
+// the department doesn't have by that exact name.
+//
+// Error results carry what's needed to fix them from the results list —
+// unmappedCode (+ within, for half of a split code), or missingLocation /
+// missingActivity — see RosterExcelImportTab.jsx's Map… button.
 export async function importRosterWeek(departmentId, people, refLists, { dryRun = true, onProgress } = {}) {
-  const { staffList, locations, activities, leaveTypes } = refLists;
+  const { staffList, locations, activities, leaveTypes, nameMappings = { location: {}, activity: {} } } = refLists;
+  const findLocation = (name) => {
+    const key = name.trim().toLowerCase();
+    return locations.find(l => l.name.trim().toLowerCase() === key)
+      || locations.find(l => l.location_id === nameMappings.location[key]);
+  };
+  const findActivity = (name) => {
+    const key = name.trim().toLowerCase();
+    return activities.find(a => a.name.trim().toLowerCase() === key)
+      || activities.find(a => a.activity_id === nameMappings.activity[key]);
+  };
   const results = [];
 
   const dateStrs = rosterDateStrsFromPeople(people);
@@ -4424,7 +4441,10 @@ export async function importRosterWeek(departmentId, people, refLists, { dryRun 
       const entry = { rawLabel: person.rawLabel, staffId: staff.staff_id, staffName: staff.name, date: day.date, rawShift: day.rawShift };
 
       if (resolved.unmapped) {
-        results.push({ ...entry, ok: false, reason: `Unmapped code: "${resolved.unmapped}"` });
+        const reason = resolved.within
+          ? `Unmapped code: "${resolved.unmapped}" (in "${resolved.within}")`
+          : `Unmapped code: "${resolved.unmapped}"`;
+        results.push({ ...entry, ok: false, reason, unmappedCode: resolved.unmapped });
         continue;
       }
 
@@ -4446,11 +4466,17 @@ export async function importRosterWeek(departmentId, people, refLists, { dryRun 
       }
 
       for (const segment of resolved.segments || []) {
-        const location = locations.find(l => l.name.trim().toLowerCase() === segment.location.toLowerCase());
-        const activity = activities.find(a => a.name.trim().toLowerCase() === segment.activity.toLowerCase());
+        const location = findLocation(segment.location);
+        const activity = findActivity(segment.activity);
         if (!location || !activity) {
           const missing = [!location ? `location "${segment.location}"` : null, !activity ? `activity "${segment.activity}"` : null].filter(Boolean).join(' and ');
-          results.push({ ...entry, ok: false, reason: `Not found: ${missing}` });
+          results.push({
+            ...entry,
+            ok: false,
+            reason: `Not found: ${missing}`,
+            missingLocation: location ? null : segment.location,
+            missingActivity: activity ? null : segment.activity,
+          });
           continue;
         }
         if (!segment.start || !segment.end) {
@@ -4478,6 +4504,62 @@ export async function importRosterWeek(departmentId, people, refLists, { dryRun 
   }
 
   return { data: results, error: null, deletionSummary };
+}
+
+// Saved fixes for import errors — see
+// migrations/2026-09-25_roster_import_mappings.sql.
+export async function getRosterImportMappings(departmentId) {
+  try {
+    const { data, error } = await supabase
+      .from('roster_import_mappings')
+      .select('*')
+      .eq('department_id', departmentId)
+      .order('kind')
+      .order('source');
+
+    return { data: data || [], error };
+  } catch (err) {
+    return { data: [], error: err };
+  }
+}
+
+// mapping: { kind, source, location_id?, activity_id?, leave_type_id?,
+// start_time?, end_time? }. Upserts on (department, kind, source), so
+// re-mapping the same code just replaces the old target.
+export async function saveRosterImportMapping(departmentId, mapping) {
+  try {
+    const { data, error } = await supabase
+      .from('roster_import_mappings')
+      .upsert([{
+        department_id: departmentId,
+        kind: mapping.kind,
+        source: mapping.source,
+        location_id: mapping.location_id || null,
+        activity_id: mapping.activity_id || null,
+        leave_type_id: mapping.leave_type_id || null,
+        start_time: mapping.start_time || null,
+        end_time: mapping.end_time || null,
+      }], { onConflict: 'department_id,kind,source' })
+      .select()
+      .single();
+
+    return { data, error };
+  } catch (err) {
+    return { data: null, error: err };
+  }
+}
+
+export async function deleteRosterImportMapping(mappingId) {
+  try {
+    const { error } = await supabase
+      .from('roster_import_mappings')
+      .delete()
+      .eq('mapping_id', mappingId);
+
+    return { error };
+  } catch (err) {
+    return { error: err };
+  }
 }
 
 // ============================================================
