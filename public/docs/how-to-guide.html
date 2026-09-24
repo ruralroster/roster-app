@@ -305,9 +305,12 @@
       <ul>
         <li><a href="#officer-calendar">Calendar</a></li>
         <li><a href="#officer-day">Day view</a></li>
+        <li><a href="#officer-day-volunteers">Offering shifts &amp; volunteers</a></li>
+        <li><a href="#officer-sick-calls">Sick calls</a></li>
         <li><a href="#officer-copy-week">Reusing a week</a></li>
         <li><a href="#officer-fortnight">Fortnight view</a></li>
         <li><a href="#officer-settings">Settings</a></li>
+        <li><a href="#officer-accounts">Staff Accounts &amp; passwords</a></li>
         <li><a href="#officer-skills">Advanced Skills</a></li>
         <li><a href="#officer-ranks">Ranks</a></li>
         <li><a href="#officer-supervision">Supervision requirement</a></li>
@@ -325,6 +328,7 @@
         <li><a href="#staff-phonebook">Phone Book</a></li>
         <li><a href="#staff-variation">Variation</a></li>
         <li><a href="#staff-coffee">Coffee</a></li>
+        <li><a href="#staff-export">Calendar export</a></li>
         <li><a href="#staff-settings">Settings</a></li>
         <li><a href="#staff-2fa">Two-Factor Auth</a></li>
         <li><a href="#staff-install">Installing the app</a></li>
@@ -397,9 +401,37 @@
 
       <article class="topic" id="officer-day-volunteers">
         <span class="eyebrow">Day view</span>
-        <h3>Volunteers and sick reports</h3>
-        <p>A card with a <span aria-hidden="true">🤚</span> badge has one or more staff who've volunteered for an unfilled slot on it — they'll appear as clickable entries right inside the Consultant/Registrar dropdown; picking one assigns them and clears any other pending requests for that slot.</p>
-        <p>If someone's reported themselves sick for today, a red banner appears at the top of Day view with <strong>Approve</strong> / <strong>Deny</strong> buttons.</p>
+        <h3>Offering a shift for volunteering</h3>
+        <p>Staff only ever see a shift in their Variation tab if <em>you've</em> offered it. An empty slot isn't offered on its own, so you decide what goes out.</p>
+        <ol>
+          <li>Under <strong>Settings → Locations &amp; Activities → Locations</strong>, tick <strong>Requires both a senior and a junior doctor</strong> on any location that should always have a consultant <em>and</em> a registrar. It's off by default.</li>
+          <li>In Day view, a card at that location with only one of the two filled gets an <strong>amber</strong> border. A card with nobody on it stays red as before.</li>
+          <li>Under the empty slot, tap <strong>This location needs a consultant/registrar — offer this shift for volunteering</strong>. It changes to <em>"Offered for volunteering — waiting for someone to pick it up."</em></li>
+        </ol>
+        <p>Who can see an offer:</p>
+        <ul>
+          <li>A <strong>registrar</strong> slot is open to every rank, so a consultant can cover it too.</li>
+          <li>A <strong>consultant</strong> slot is open only to senior ranks (those not ticked "Requires supervision" under Ranks).</li>
+          <li>Anyone missing a required Advanced Skill for the activity, anyone who's restricted themselves from it, and anyone not marked available that day won't see it.</li>
+        </ul>
+        <p>When someone volunteers, the card gets a <span aria-hidden="true">🤚</span> badge and they appear as a clickable entry right inside the Consultant/Registrar dropdown. Picking one assigns them. Once you <strong>Complete Allocation</strong>, the offer and any other pending requests for that slot are cleared.</p>
+      </article>
+
+      <article class="topic" id="officer-sick-calls">
+        <span class="eyebrow">Day view + Settings</span>
+        <h3>Sick calls</h3>
+        <p>When a staff member presses <strong>Notify Sick</strong>, they get a pre-filled message (<em>"[Name] has called in sick for their shift."</em>) they can edit, plus the list of who'll receive it. Sending it puts a pop-up in front of each of these people the next time they open the app:</p>
+        <ul>
+          <li><strong>Every officer</strong> in the department.</li>
+          <li><strong>Whoever's on call right now</strong> on any duty type ticked <strong>Notify on sick calls</strong> (Settings → Shifts &amp; Rules → Duty Types). For an overnight slot like 17:00–08:00, a call at 06:30 goes to last night's person. A duty type with no start/end times counts as covering the whole day.</li>
+          <li><strong>The consultant rostered at 08:00 tomorrow</strong> at any location ticked <strong>Notify on sick calls</strong> (Settings → Locations &amp; Activities → Locations).</li>
+        </ul>
+        <p>Tick those two boxes once for your ED on-call slot and your ED location. Until you do, only officers get the pop-up. The pop-up stays until it's dismissed.</p>
+        <p>Separately, the report still shows as a red banner at the top of Day view with the message and <strong>Approve</strong> / <strong>Deny</strong> buttons. The staff member sees the outcome on their Variation tab.</p>
+        <div class="callout">
+          <span class="mark">In-app only</span>
+          <p>The pop-up appears when the person next opens the app. It isn't a phone notification, email or text, so someone who doesn't open the app won't see it. Phone the on-call directly if it's urgent.</p>
+        </div>
       </article>
 
       <article class="topic" id="officer-fortnight">
@@ -412,6 +444,7 @@
           <li>Choose a shift, then a location, then an activity — if the location only ever allows one activity, that step is skipped and it's picked automatically. Long shifts that cross a session boundary (e.g. Morning into Afternoon) automatically fill the matching card in the next session too.</li>
         </ol>
         <p>The date field beside the arrows above the grid jumps straight to any date's fortnight (it snaps to that week's Monday).</p>
+        <p>Inside each day cell, people are sorted by where they start (ED, then Theatre, then Ward and everything else) and coloured by the session they start in: morning, afternoon or night. Anyone on call gets an extra orange entry at the top of the cell. Each week sizes its own columns, so one busy day doesn't stretch the whole fortnight.</p>
       </article>
 
       <article class="topic" id="officer-fortnight-junior">
@@ -428,14 +461,26 @@
       <article class="topic" id="officer-settings">
         <span class="eyebrow">Settings</span>
         <h3>Where everything lives</h3>
-        <p>Settings is grouped into six collapsed categories, roughly in the order you'd set a new department up — tap a heading to open it:</p>
+        <p>Settings is grouped into seven collapsed categories, roughly in the order you'd set a new department up — tap a heading to open it:</p>
         <ul>
+          <li><strong>My Account</strong> — change your own password, and turn two-factor authentication on or off (see the Staff section's <a href="#staff-2fa">Two-Factor Auth</a>).</li>
           <li><strong>Department</strong> — Department Settings (pay centre number) and Session Times (the Morning/Afternoon/Night boundary times, see below).</li>
-          <li><strong>Locations &amp; Activities</strong> — Locations (including each one's <strong>Requires senior supervision</strong> checkbox, see below) and Activities: which activities are allowed at which location, and (via each one's <strong>Skills</strong> button) which Advanced Skill an activity requires.</li>
-          <li><strong>Shifts &amp; Rules</strong> — Shifts, Shift Pattern Rules (fatigue rules), Duty Types (on-call slots, their abbreviations, and which Advanced Skill each one requires), Leave Types, and the Advanced Skill list itself (e.g. Anaesthetics, Obstetrics, Endoscopy).</li>
+          <li><strong>Locations &amp; Activities</strong> — Locations (each with three checkboxes: <strong>Requires senior supervision</strong>, see below; <strong>Requires both a senior and a junior doctor</strong>, see <a href="#officer-day-volunteers">Offering a shift</a>; and <strong>Notify on sick calls</strong>, see <a href="#officer-sick-calls">Sick calls</a>) and Activities: which activities are allowed at which location, and (via each one's <strong>Skills</strong> button) which Advanced Skill an activity requires.</li>
+          <li><strong>Shifts &amp; Rules</strong> — Shifts, Shift Pattern Rules (fatigue rules), Duty Types (on-call slots, their abbreviations, which Advanced Skill each one requires, and whether it's <strong>Notified on sick calls</strong>), Leave Types, and the Advanced Skill list itself (e.g. Anaesthetics, Obstetrics, Endoscopy).</li>
           <li><strong>Rostering Tools</strong> — Week Templates (the recurring coverage skeleton, see Calendar above), and Excel Roster Import/Export.</li>
           <li><strong>Staff &amp; Contacts</strong> — Ranks (see below), Staff and Availability (day-by-day availability, rank, FTE, email, and which Advanced Skills each person holds), Staff Activity Profiles, Staff Accounts (inviting people, setting officer vs staff permission, correcting rank, resending an invite or generating a one-time password), and the Phone Book (the Coffee Place number plus any other tap-to-call numbers).</li>
           <li><strong>Reports &amp; Compliance</strong> — Case Mix Report, On-Call &amp; Weekend Fairness, and (Emergency Department roster format only) Rule Violations — see below.</li>
+        </ul>
+      </article>
+
+      <article class="topic" id="officer-accounts">
+        <span class="eyebrow">Staff &amp; Contacts → Staff Accounts</span>
+        <h3>Getting people signed in</h3>
+        <ul>
+          <li><strong>Invite</strong> emails a sign-up link. If it's caught by a spam filter, resend it.</li>
+          <li><strong>One-Time Password</strong> works as well, including for someone whose row still says "Not linked" (enter their email when asked). The app then offers to open an email to them with the password. Say No to copy it and send it another way instead (SMS, WhatsApp, in person). They choose their own password when they first sign in.</li>
+          <li>Changing someone's <strong>email</strong> also changes the address they sign in with, so the two can never drift apart.</li>
+          <li>New staff, however they're added (the Add Staff form, an Excel import or an invite), start out marked <strong>available</strong> every day for the next five years, so they appear in pickers straight away. They or you can mark days unavailable from there.</li>
         </ul>
       </article>
 
@@ -481,6 +526,10 @@
         <div class="callout">
           <span class="mark">Unmapped codes are never guessed</span>
           <p>A shift code the importer doesn't recognise shows up as an error in the results list rather than being silently skipped or guessed at — check with whoever built the spreadsheet what it means, then it can be added.</p>
+        </div>
+        <div class="callout">
+          <span class="mark">An import replaces those dates</span>
+          <p>Writing a week first deletes every existing assignment and activity card for the dates the file covers, then writes the file's roster. The re-issued spreadsheet is treated as the source of truth. On-call duty assignments and recorded leave are never touched. Both the dry run and the real run tell you how many existing entries will be (or were) removed.</p>
         </div>
         <p>Each department has one fixed spreadsheet layout, matching whichever roster it was originally built from — a super-admin sets this once for the department; other officers just see the import tab ready to go, with no format to pick.</p>
       </article>
@@ -555,11 +604,11 @@
         <p>Search for a colleague (the search icon in the top bar), open their card, and tap the star to add them — up to 10. They then show in a <strong>Starred Colleagues</strong> list on your Week tab.</p>
         <ul>
           <li>Tap a starred name to expand their week's shifts, the same way you'd see your own.</li>
-          <li>Tap <strong>Crossover</strong> next to a name for a 7-day grid comparing this week: green marks a day you're both rostered on, grey marks a day you're both off.</li>
+          <li>Tap <strong>Crossover</strong> next to a name for a 7-day grid comparing your weeks: <strong>Work</strong> (green) marks a day you're both rostered on, <strong>Off</strong> (grey) a day neither of you has a shift. Use the arrows inside Crossover to step to other weeks. They move independently of the Week tab.</li>
         </ul>
         <div class="callout">
-          <span class="mark">What "both off" actually checks</span>
-          <p>Crossover only ever sees which dates someone marked themselves unavailable — never their leave type or the reason — so starring a colleague doesn't expose why they're off, just whether the two of you are free the same day.</p>
+          <span class="mark">What "Off" actually means</span>
+          <p>"Off" only means no rostered shift, not confirmed leave. Crossover never shows someone's leave type or reason, just whether the two of you are free the same day.</p>
         </div>
       </article>
 
@@ -574,22 +623,36 @@
         <h3>Picking up a shift, or reporting sick</h3>
         <p>The Variation tab covers the two ways your day can change from what's rostered:</p>
         <ul>
-          <li><strong>Available shifts</strong> — unfilled slots you're eligible for over the next 30 days. Hit <strong>Volunteer</strong> to send a request; your officer approves it from Day view.</li>
-          <li><strong>Notify Sick</strong>, at the bottom — only enabled if you have a shift today. Sends a report to your officer for approval.</li>
+          <li><strong>Available shifts</strong> — slots an officer has <em>offered</em> for volunteering over the next 30 days that you're eligible for. You're eligible if you're senior enough, hold any required Advanced Skill, haven't restricted yourself from the activity, and are marked available that day. A registrar slot is open to consultants too. Senior staff get a <strong>Hide registrar shifts</strong> toggle to cut the list down. Hit <strong>Volunteer</strong> to send a request; your officer approves it from Day view.</li>
+          <li><strong>Notify Sick</strong>, at the bottom — only enabled if you have a shift today. It opens a message pre-filled with <em>"[Your name] has called in sick for their shift."</em>, which you can edit, and shows who'll get it: the officers, whoever's on call for ED right now, and the ED consultant at 08:00 tomorrow. They see it as a pop-up the next time they open the app. Your officer still approves or denies the report, and the result shows here.</li>
         </ul>
+        <p>If you're one of the people a sick call goes to, the pop-up appears when you open the app. Tap <strong>Dismiss</strong> once you've read it.</p>
       </article>
 
       <article class="topic" id="staff-coffee">
         <span class="eyebrow">Coffee</span>
         <h3>Ordering, and sending the order</h3>
-        <p>Set your usual order in Settings → Profile. The <strong>Coffee</strong> button (bottom bar) opens today's orders, defaulted to the morning shift. At the top, an <strong>Order Summary</strong> totals everyone's order by type and milk (e.g. "3 x Flat White on Oat Milk") — tap <strong>Text order to [Coffee Place]</strong> to open your messages app with the order pre-filled, ready to check over and send.</p>
+        <p>Set your usual order once in <strong>Settings → Coffee Preferences</strong>: coffee type, milk, and an optional <strong>Xtra shot</strong>. The <strong>Coffee</strong> button (bottom bar) opens today's orders, defaulted to the morning shift. At the top, an <strong>Order Summary</strong> totals everyone's order by type and milk (e.g. "3 x Flat White on Oat Milk"), with extra-shot orders on their own line. Tap <strong>Text order to [Coffee Place]</strong> to open your messages app with the order pre-filled, ready to check over and send.</p>
+        <ul>
+          <li>Untick someone's row to leave them off today's order.</li>
+          <li><strong>Add someone not on the roster</strong> (under the list) adds a coffee for a locum or visitor. It appears as a normal row in the list.</li>
+          <li>Both changes are shared: anyone else who opens Coffee today sees the same adjusted list. It resets the next day.</li>
+        </ul>
+      </article>
+
+      <article class="topic" id="staff-export">
+        <span class="eyebrow">Export</span>
+        <h3>Putting your roster in your phone's calendar</h3>
+        <p>The <strong>Export</strong> button (bottom bar) lists every upcoming week, up to 26 weeks ahead, that has something rostered for you. All of them are ticked to start with. Untick any you don't want, or use <strong>Select All</strong>, then export. You get one calendar file (.ics) with your shifts <em>and</em> your on-call duties, at the right local times. Open it on your phone to add it to your calendar app.</p>
       </article>
 
       <article class="topic" id="staff-settings">
         <span class="eyebrow">Settings</span>
         <h3>Availability and profile</h3>
-        <p>Mark yourself available or unavailable day by day — this is what the roster and Variation opportunities check against. Your profile lets you set phone, email, coffee order, and opt out of activities you can't or won't do. Advanced Skills are different: an officer tags those on your behalf, so if a slot you'd expect to see isn't offered to you, check with them about what it requires.</p>
-        <p>The <strong>Security</strong> sub-tab is where you turn two-factor authentication on or off for your own login — see below. An officer sees the same screen when they switch their own view to Staff.</p>
+        <p>Settings has six sub-tabs: <strong>Profile</strong>, <strong>Activity Restrictions</strong>, <strong>Coffee Preferences</strong>, <strong>Availability</strong>, <strong>Security</strong> and <strong>Walkthrough</strong>.</p>
+        <p><strong>Availability:</strong> mark yourself available or unavailable day by day. This is what the roster and Variation opportunities check against. New accounts start out available every day, so you only need to mark the days you <em>can't</em> work. <strong>Profile</strong> lets you set your phone and email. Changing your email here also changes the address you sign in with. <strong>Activity Restrictions</strong> lets you opt out of activities you can't or won't do. Advanced Skills are different: an officer tags those on your behalf, so if a slot you'd expect to see isn't offered to you, check with them about what it requires.</p>
+        <p>The <strong>Security</strong> sub-tab is where you change your password and turn two-factor authentication on or off (see below). Officers have the same options under Settings → <strong>My Account</strong>.</p>
+        <p><strong>Walkthrough</strong> is a plain-English tour of every staff screen, built into the app. It's a good place to send someone who's new.</p>
       </article>
 
       <article class="topic" id="staff-2fa">

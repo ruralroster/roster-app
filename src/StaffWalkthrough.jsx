@@ -46,9 +46,10 @@ export default function StaffWalkthrough() {
 
       <CollapsibleSection title="Variation — pick up shifts & notify sick">
         <ul className="list-disc list-inside space-y-2 text-sm text-gray-700">
-          <li><span className="font-semibold">Available Shifts</span> lists unfilled shifts over the next 30 days that you're eligible for. Tap Volunteer to send a request — it needs an officer's approval, and you'll see "Request Sent" once it's in.</li>
-          <li>A shift only shows up here if you've marked that date <span className="font-semibold">Available</span> in Settings → Availability — an open shift on a day you haven't set availability for won't appear, even though it's genuinely open.</li>
+          <li><span className="font-semibold">Available Shifts</span> lists shifts over the next 30 days that an officer has offered for volunteering and that you're eligible for. An empty slot only appears once an officer offers it. Tap Volunteer to send a request. It needs an officer's approval, and you'll see "Request Sent" once it's in.</li>
+          <li>You're eligible if you're senior enough, hold any Advanced Skill the activity needs, haven't restricted yourself from it, and are marked <span className="font-semibold">Available</span> that date in Settings → Availability. A registrar shift is open to consultants too. If you're senior, a <span className="font-semibold">Hide registrar shifts</span> toggle trims the list to the ones that need a consultant.</li>
           <li><span className="font-semibold">Notify Sick</span> tells your officer you can't make today's shift. It's only enabled on a day you're actually rostered on. It opens a message you can edit, showing who'll get it — the rostering officer, whoever's on call for ED right now, and the ED consultant starting at 08:00 tomorrow — as a pop-up the next time they open the app. Once sent, you'll see whether it's pending, approved, or denied — a denial means you should get in touch with your officer directly. There's no push notification for a decision yet, so check back here rather than waiting for an alert.</li>
+          <li>If you're on call, or the consultant for tomorrow morning, when someone else calls in sick, their message pops up the next time you open the app. Tap Dismiss once you've read it.</li>
         </ul>
       </CollapsibleSection>
 
@@ -56,7 +57,7 @@ export default function StaffWalkthrough() {
         <ul className="list-disc list-inside space-y-2 text-sm text-gray-700">
           <li><span className="font-semibold">Search</span> finds any staff member by name — opens the same detail popup used everywhere else, so you can call or star them from there.</li>
           <li><span className="font-semibold">Coffee</span> shows everyone rostered today who's set a coffee preference (see Settings below), grouped into one order you can copy or text straight to your department's coffee place, if one's configured. Filter by Morning/Afternoon/Night with the checkboxes at the top. Untick someone's row to leave them off today's order, or use "Add someone not on the roster" at the bottom for a locum or visitor's coffee. Both stick for the rest of the day — anyone else who opens Coffee today sees the same adjusted list — but reset the next day.</li>
-          <li><span className="font-semibold">Export</span> downloads a calendar file (.ics) of your assignments for the current real-world week, which you can import into your phone's calendar app. It's always this week, regardless of which week you're currently viewing on the Week tab — and if you've nothing on this week, you'll get a message instead of a download.</li>
+          <li><span className="font-semibold">Export</span> lists every upcoming week (up to 26 ahead) that has something rostered for you, all ticked to start with. Untick any you don't want, then export to download one calendar file (.ics) with your shifts and on-call duties. Open it on your phone to add them to your calendar app.</li>
         </ul>
       </CollapsibleSection>
 
@@ -64,8 +65,8 @@ export default function StaffWalkthrough() {
         <ul className="list-disc list-inside space-y-2 text-sm text-gray-700">
           <li><span className="font-semibold">Profile</span> — your name and rank (set by an officer), plus your email and phone, which you can edit yourself (tap the value to edit it). Changing your email here also updates the address you sign in with, so double-check it before saving.</li>
           <li><span className="font-semibold">Activity Restrictions</span> — tick anything you're not able to do, so officers don't roster you onto it by mistake. This also filters which Available Shifts you're offered in Variation.</li>
-          <li><span className="font-semibold">Coffee Preferences</span> — set your standing coffee and milk order once; it's used whenever the Coffee shortcut compiles an order for a day you're working, not something you re-enter each time. Espresso and Long Black are locked to no milk automatically.</li>
-          <li><span className="font-semibold">Availability</span> — tap a date to cycle it: grey (not set) → green (available) → red (unavailable) → back to grey. Changes save immediately. If you haven't marked enough available days for your FTE, a banner here will tell you.</li>
+          <li><span className="font-semibold">Coffee Preferences</span> — set your standing coffee and milk order once; it's used whenever the Coffee shortcut compiles an order for a day you're working, not something you re-enter each time. Tick <span className="font-semibold">Xtra shot</span> if you want one. Espresso and Long Black are locked to no milk automatically.</li>
+          <li><span className="font-semibold">Availability</span> — tap a date to cycle it: grey (not set) → green (available) → red (unavailable) → back to grey. Changes save immediately. New accounts start out available every day, so you mostly just need to mark the days you can't work. If you haven't marked enough available days for your FTE, a banner here will tell you.</li>
           <li><span className="font-semibold">Security</span> — change your password any time, and optionally turn on two-factor authentication (a 6-digit code from an authenticator app) for extra protection at sign-in.</li>
         </ul>
       </CollapsibleSection>

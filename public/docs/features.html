@@ -219,11 +219,11 @@
     </div>
     <div class="feature">
       <div class="feature-head"><span class="feature-name">Fortnight view</span><span class="tag officer">Officer</span></div>
-      <p>Assign person-first instead of slot-first, with an automatic supervising-consultant fallback when slotting in a junior doctor.</p>
+      <p>Assign person-first instead of slot-first, with an automatic supervising-consultant fallback when slotting in a junior doctor. Each day is sorted by starting location and coloured by starting session, with on-call people highlighted in orange at the top.</p>
     </div>
     <div class="feature">
       <div class="feature-head"><span class="feature-name">Excel roster import &amp; export</span><span class="tag officer">Officer</span></div>
-      <p>Bring an externally built roster in from Excel — each department has its own fixed spreadsheet layout, set once by a super-admin — or export the department's roster back out. A progress bar tracks large files, a dry run previews every change before anything's written, and any staff the sheet mentions but the department doesn't have yet can be created straight from the import, with FTE and a suggested rank pre-filled.</p>
+      <p>Bring an externally built roster in from Excel — each department has its own fixed spreadsheet layout, set once by a super-admin — or export the department's roster back out. An import replaces the roster for the dates the file covers (on-call and leave are left alone). A progress bar tracks large files, a dry run previews every change before anything's written, and any staff the sheet mentions but the department doesn't have yet can be created straight from the import, with FTE and a suggested rank pre-filled.</p>
     </div>
     <div class="feature">
       <div class="feature-head"><span class="feature-name">Reuse a week's activities</span><span class="tag officer">Officer</span></div>
@@ -291,15 +291,15 @@
     </div>
     <div class="feature">
       <div class="feature-head"><span class="feature-name">Variation</span><span class="tag staff">Staff</span></div>
-      <p>Volunteer for an unfilled shift, or notify sick with one tap — an officer approves either straight from Day view.</p>
+      <p>Volunteer for a shift an officer has offered, or notify sick with an editable message that pops up for the officers, the ED on-call and tomorrow's 08:00 ED consultant. An officer approves either from Day view.</p>
     </div>
     <div class="feature">
       <div class="feature-head"><span class="feature-name">Coffee</span><span class="tag staff">Staff</span></div>
-      <p>One tap texts the whole department's coffee order, totalled by drink and milk, to the coffee place.</p>
+      <p>One tap texts the whole department's coffee order, totalled by drink, milk and extra shot, to the coffee place. Leave someone off, or add a locum or visitor, and everyone sees the same list for the rest of the day.</p>
     </div>
     <div class="feature">
       <div class="feature-head"><span class="feature-name">Availability calendar</span><span class="tag staff">Staff</span></div>
-      <p>Mark available/unavailable day by day, including standing days off, fortnightly patterns, and blocks of leave.</p>
+      <p>Mark available/unavailable day by day, including standing days off, fortnightly patterns, and blocks of leave. New staff start out available every day, so they only mark the days they can't work.</p>
     </div>
     <div class="feature">
       <div class="feature-head"><span class="feature-name">Install as an app</span><span class="tag both">Both</span></div>
@@ -311,7 +311,19 @@
     </div>
     <div class="feature">
       <div class="feature-head"><span class="feature-name">Starred Colleagues</span><span class="tag staff">Staff</span></div>
-      <p>Star up to 10 people from search — they show under your Week tab, expandable to their own week, with a Crossover view showing which days this week you're both working and which you're both off.</p>
+      <p>Star up to 10 people from search — they show under your Week tab, expandable to their own week, with a Crossover view showing, week by week, which days you're both working and which you're both off.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-head"><span class="feature-name">Calendar export</span><span class="tag staff">Staff</span></div>
+      <p>Pick any upcoming weeks (up to 26 ahead) and download one calendar file with your shifts and on-call duties, ready for your phone's calendar app.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-head"><span class="feature-name">Change your own password</span><span class="tag both">Both</span></div>
+      <p>Any time, from Settings → Security (staff) or Settings → My Account (officers).</p>
+    </div>
+    <div class="feature">
+      <div class="feature-head"><span class="feature-name">In-app Walkthrough</span><span class="tag staff">Staff</span></div>
+      <p>A plain-English tour of every staff screen, under Settings → Walkthrough.</p>
     </div>
   </div>
 
@@ -321,7 +333,7 @@
 
     <div class="feature">
       <div class="feature-head"><span class="feature-name">Staff Accounts</span><span class="tag officer">Officer</span></div>
-      <p>Invite staff by email, set officer vs staff permission, and correct rank. If an invite email gets spam-filtered, resend it, or generate a one-time password to hand over another way (WhatsApp, SMS, in person) — they set their own password on first sign-in.</p>
+      <p>Invite staff by email, set officer vs staff permission, and correct rank. If an invite email gets spam-filtered, resend it, or generate a one-time password to hand over another way (WhatsApp, SMS, in person). This works even for someone not yet linked to an account. They set their own password on first sign-in. Editing someone's email also updates the address they sign in with.</p>
     </div>
     <div class="feature">
       <div class="feature-head"><span class="feature-name">Payroll Export</span><span class="tag officer">Officer</span></div>
@@ -330,6 +342,14 @@
     <div class="feature">
       <div class="feature-head"><span class="feature-name">Approvals</span><span class="tag officer">Officer</span></div>
       <p>Sick reports and shift-volunteer requests both surface in Day view for a one-tap approve or deny.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-head"><span class="feature-name">Offer shifts for volunteering</span><span class="tag officer">Officer</span></div>
+      <p>Flag a location as needing both a senior and a junior. A half-staffed card turns amber, with a button to offer the missing slot. Staff only see shifts you've offered: registrar slots are open to seniors too, consultant slots only to seniors, and required Advanced Skills are enforced.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-head"><span class="feature-name">Sick-call pop-ups</span><span class="tag both">Both</span></div>
+      <p>When someone calls in sick, the officers, whoever's on the ED on-call right then, and the consultant at the ED location at 08:00 tomorrow each get a pop-up with the message the next time they open the app. You choose which on-call slot and which location count as ED with a tick-box in Settings.</p>
     </div>
     <div class="feature">
       <div class="feature-head"><span class="feature-name">Reference data</span><span class="tag officer">Officer</span></div>
