@@ -2808,6 +2808,13 @@ export async function applyWeekTemplate(departmentId, weekStartDate, weekTemplat
 // CALENDAR ALLOCATION STATUS
 // ============================================================
 
+// Duty types (by abbreviation) left out of the Calendar's on-call check
+// entirely — an unfilled one never turns a day orange or shows its
+// letters. Requested 2026-09-24: the Anaesthetics day on-call ("AD") is
+// often deliberately left empty, so it was flagging days that were fine.
+// Only affects the Calendar; the slot still works everywhere else.
+const CALENDAR_IGNORED_DUTY_ABBREVS = ['AD'];
+
 // For each date in range, classifies staffing coverage against two
 // independent things:
 //
@@ -2910,7 +2917,8 @@ export async function getAllocationStatusForRange(departmentId, startDate, endDa
       if (a.theatre_activity_id) filledCardIds.add(a.theatre_activity_id);
     });
 
-    const dutyTypes = dutyTypesRes.data || [];
+    const dutyTypes = (dutyTypesRes.data || [])
+      .filter(dt => !CALENDAR_IGNORED_DUTY_ABBREVS.includes((dt.abbreviation || '').trim().toUpperCase()));
     const filledDutyKeysByDate = new Map(); // date -> Set(duty_type key)
     (dutyAssignRes.data || []).forEach(d => {
       if (!d.staff_id) return;
