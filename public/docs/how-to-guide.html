@@ -519,7 +519,7 @@
         <h3>Bringing in a roster built outside the app</h3>
         <ol>
           <li>Upload the file. If the format has more than one tab (sheet) per file, a Sheet dropdown appears.</li>
-          <li><strong>Check for Missing Staff</strong> — for a brand-new department, this reads every name off the roster and lists anyone with no staff record yet, with FTE and a suggested rank pre-filled from the sheet. Review, adjust the rank if needed, and <strong>Create Selected Staff</strong>.</li>
+          <li><strong>Check for Missing Staff</strong> reads every name off the roster (all weeks, and every section: consultants, locums, registrars and interns) and lists anyone with no staff record yet. Name, FTE and a suggested rank are pre-filled from the sheet; locums and casuals get FTE 0. Correct the name if the sheet's guess is wrong (e.g. "Rach" → "Rachel"), adjust the rank if needed, and <strong>Create Selected Staff</strong>. A corrected name is remembered, so next month's sheet still finds that person.</li>
           <li>Pick a week and hit <strong>Dry Run</strong> — this previews exactly what would be written, with nothing actually saved yet. A progress bar shows how far through it's got on a large file.</li>
           <li>If the dry run looks right, <strong>Write to Roster</strong> does the same thing for real. Repeat per week for the rest of the file.</li>
         </ol>
@@ -530,6 +530,7 @@
         <p><strong>Fixing an error with Map…</strong> Two kinds of error get a blue <strong>Map…</strong> button in the results list:</p>
         <ul>
           <li><strong>Unmapped code</strong> (e.g. <code>"Endo2"</code>): map it to <strong>a shift</strong> (one of your existing locations and activities, plus start and end times) or to <strong>leave</strong> (one of your leave types). The times start at the location's own default hours if it has them, otherwise 08:00–18:00.</li>
+          <li><strong>No matching staff record</strong> (the button says <strong>Fix name…</strong>): say who the person is. Either pick an <strong>existing staff member</strong> (when the sheet just spells them differently), or create a <strong>new staff member</strong> with the name, rank and FTE filled in for you to check.</li>
           <li><strong>Not found: location/activity</strong> (a code the importer knows, pointing at a name your department doesn't have, e.g. location <code>"Emergency"</code>): pick the real location or activity it should be.</li>
         </ul>
         <p><strong>Save &amp; re-check</strong> saves the mapping and runs the dry run again, so you can see the error clear. Mappings are saved for the department, so the same code resolves the same way in every later week and file; you only fix each one once. For a split code like <code>"OT/Endo2"</code>, the error names just the unknown half, so mapping <code>"Endo2"</code> covers every combination, and each half gets the usual morning/afternoon times. Mappings only fill gaps: codes the importer already knows are never overridden.</p>
