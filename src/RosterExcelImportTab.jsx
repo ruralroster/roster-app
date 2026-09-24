@@ -91,6 +91,8 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
   // yet — a brand-new department has none at all. Reviewed and created
   // here rather than silently auto-created by the importer itself, same
   // "never silently create/guess" rule as everything else in this import.
+  // FTE starts at 0 for every unmatched person (the officer's call, not
+  // the sheet's) and is set per person before creating.
   const [missingStaff, setMissingStaff] = useState(null); // [{ rawLabel, name, fte, suggestedRank, rank, create }]
   const [creatingStaff, setCreatingStaff] = useState(false);
   const [creatingProgress, setCreatingProgress] = useState(null); // { current, total }
@@ -227,7 +229,7 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
         .filter(p => !mappedLabels.has(staffLabelKey(p.rawLabel)) && !matchStaffName(p.rawLabel, knownStaff))
         .map(p => {
           const rank = suggestClassicRank(p.section);
-          return { rawLabel: p.rawLabel, name: p.name, fte: p.fte, suggestedRank: rank, rank, create: true };
+          return { rawLabel: p.rawLabel, name: p.name, fte: 0, suggestedRank: rank, rank, create: true };
         });
       setMissingStaff(missing);
       return;
@@ -239,7 +241,7 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
       .map(p => ({
         rawLabel: p.name,
         name: p.name,
-        fte: p.fte,
+        fte: 0,
         suggestedRank: p.suggestedRank,
         rank: staffRanks.some(r => r.rank === p.suggestedRank) ? p.suggestedRank : '',
         create: true,
@@ -263,6 +265,10 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
       setError('Every staff member being created needs a name.');
       return;
     }
+    if (toCreate.some(p => Number.isNaN(parseFloat(p.fte)) || parseFloat(p.fte) < 0)) {
+      setError('Every staff member being created needs an FTE of 0 or more.');
+      return;
+    }
 
     setCreatingStaff(true);
     setCreatingProgress({ current: 0, total: toCreate.length });
@@ -275,8 +281,9 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
         const { data, error: createError } = await createStaff(departmentId, name, person.rank, '');
         if (createError) throw new Error(`${name}: ${createError.message}`);
         if (data) created.push(data);
-        if (person.fte !== 1 && data) {
-          const { error: fteError } = await updateStaffFTE(data.staff_id, person.fte);
+        const fte = parseFloat(person.fte);
+        if (fte !== 1 && data) {
+          const { error: fteError } = await updateStaffFTE(data.staff_id, fte);
           if (fteError) throw new Error(`${name}: created, but failed to set FTE: ${fteError.message}`);
         }
         // A corrected name no longer matches the sheet's label on its own
@@ -331,8 +338,8 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
     }
   };
 
-  // extra: for kind 'staff', the result row's { section, fte } — used to
-  // pre-fill a new staff member's rank and FTE.
+  // extra: for kind 'staff', the result row's { section } — used to
+  // pre-fill a new staff member's rank. FTE always starts at 0.
   const openMappingDraft = (kind, source, extra = {}) => {
     const existing = mappings.find(m => m.kind === kind && m.source === source);
     const suggestedRank = extra.section ? suggestClassicRank(extra.section) : '';
@@ -343,7 +350,7 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
       staff_id: existing?.staff_id || '',
       new_name: cleanStaffLabel(source),
       new_rank: staffRanks.some(r => r.rank === suggestedRank) ? suggestedRank : '',
-      new_fte: extra.fte ?? 1,
+      new_fte: 0,
       mode: existing?.leave_type_id ? 'leave' : 'shift',
       location_id: existing?.location_id || '',
       activity_id: existing?.activity_id || '',
@@ -370,7 +377,7 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
     if (!d) return false;
     if (d.kind === 'location') return !!d.location_id;
     if (d.kind === 'activity') return !!d.activity_id;
-    if (d.kind === 'staff') return d.staff_mode === 'existing' ? !!d.staff_id : !!(d.new_name.trim() && d.new_rank);
+    if (d.kind === 'staff') return d.staff_mode === 'existing' ? !!d.staff_id : !!(d.new_name.trim() && d.new_rank && parseFloat(d.new_fte) >= 0);
     if (d.mode === 'leave') return !!d.leave_type_id;
     return !!(d.location_id && d.activity_id && d.start_time && d.end_time);
   };
@@ -569,7 +576,18 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
                       title={p.rawLabel !== p.name ? `From the sheet: "${p.rawLabel}"` : undefined}
                       className="text-sm font-medium text-gray-900 flex-1 min-w-[8rem] px-2 py-1 border border-gray-300 rounded disabled:opacity-50"
                     />
-                    <span className="text-xs text-gray-500">FTE {p.fte}</span>
+                    <label className="flex items-center gap-1 text-xs text-gray-500">
+                      FTE
+                      <input
+                        type="number"
+                        step="0.05"
+                        min="0"
+                        value={p.fte}
+                        onChange={(e) => updateMissingStaffField(i, 'fte', e.target.value)}
+                        disabled={!p.create}
+                        className="w-16 px-1 py-1 border border-gray-300 rounded text-xs disabled:opacity-50"
+                      />
+                    </label>
                     <select
                       value={p.rank}
                       onChange={(e) => updateMissingStaffField(i, 'rank', e.target.value)}
@@ -812,7 +830,7 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
                         />
                       </div>
                     </div>
-                    <p className="text-xs text-gray-500 mb-4">Locums and casuals are usually FTE 0.</p>
+                    <p className="text-xs text-gray-500 mb-4">FTE starts at 0 (casual/locum) — set it if they work a regular fraction.</p>
                   </>
                 )}
               </>
