@@ -187,7 +187,12 @@ export function extractConsultantWeek(rows, mondayCol) {
     if ((row[0] || '').toString().trim() === 'CALL OBLIGATION') anchors.push(r);
   });
 
-  return anchors.map(r => {
+  // Name read from this week block's own label column, same as the
+  // registrar/intern/locum sections (see weekLabel) — checked 2026-09-25:
+  // every consultant row in the Sept/Oct/Dec INNH files carries the same
+  // name in all four blocks today, but a slot handed to someone else
+  // mid-file must not file their shifts under column A's name.
+  return anchors.flatMap(r => {
     const nameRow = rows[r - 1] || [];
     const callRow = rows[r] || [];
     const fteRow = rows[r + 1] || [];
@@ -208,12 +213,15 @@ export function extractConsultantWeek(rows, mondayCol) {
       };
     });
 
-    return {
-      rawLabel: (nameRow[0] || '').toString().trim(),
+    const label = weekLabel(nameRow, mondayCol);
+    if (!label) return hasRealShift(days) ? [unnamedPerson(r - 1, days)] : [];
+
+    return [{
+      rawLabel: label,
       contactLine: (contactRow[mondayCol] || contactRow[0] || '').toString().trim(),
-      fte: (fteRow[0] || '').toString().trim(),
+      fte: (fteRow[mondayCol - 1] || fteRow[0] || '').toString().trim(),
       days,
-    };
+    }];
   });
 }
 
@@ -292,6 +300,45 @@ export function parseLocumWeek(workbook, weekIndex, sheetName = 'Sheet1') {
   const ws = workbook.Sheets[sheetName];
   const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
   return extractLocumWeek(rows, mondayCol);
+}
+
+// ============================================================
+// PER-WEEK NAME LABELS (Registrar/RMO and Intern sections)
+// ============================================================
+//
+// Confirmed against the INNH Oct 2026 DRAFT (2026-09-25): like the locum
+// section, a registrar/intern slot can change hands mid-file — Jovie
+// Decoyna's row is Irene Roy in weeks 3-4, Cameron Stevenson's is Toby
+// Mungomery in weeks 2-4, and the interns' rows are blank in weeks 3-4
+// (next rotation not named yet). So the name is read from EACH week
+// block's own label column (just left of its Monday), never column A for
+// every week — reading column A filed Irene's and Toby's shifts under
+// the previous person.
+//
+// A row with shifts but no name in that week (the Dec DRAFT has three
+// such registrar rows, a "Day Shift/Clinic/Chemo" Medical Registrar slot,
+// and both intern rows) becomes an `unnamed` entry that importRosterWeek
+// reports as an error, rather than being dropped silently or given to
+// whoever column A names. "Has shifts" means at least one cell resolves
+// to a real code — the contact line ("Alex Parfitt MOB: 04..."), on-call
+// notes ("Obs") and remarks ("overtime shift") on the rows around each
+// name never do.
+
+// Label-column text that isn't a person: FTE/hours numbers, the next
+// section's header, and org-unit header lines.
+const NON_PERSON_LABEL_RE = /^(\d+(\.\d+)?|CALL OBLIGATION|PHO|Interns|Health Profession.*|Organisational.*|Org Unit.*|Senior Health Prof.*)$/i;
+
+function weekLabel(row, mondayCol) {
+  return (row[mondayCol - 1] || '').toString().replace(/\s+/g, ' ').trim();
+}
+
+function hasRealShift(days) {
+  return days.some(d => d.resolvedShift && !d.resolvedShift.unmapped);
+}
+
+// Excel's own 1-based row number, so the officer can find the row.
+function unnamedPerson(r, days) {
+  return { rawLabel: `(no name, Excel row ${r + 1})`, unnamed: true, days };
 }
 
 // ============================================================
@@ -413,22 +460,28 @@ export function extractRmoWeek(rows, sectionStartRow, mondayCol) {
   for (let r = sectionStartRow + 2; r < rows.length; r++) {
     const col0 = (rows[r][0] || '').toString().trim();
     if (/^Week\s+\d/i.test(col0)) break;
-    if (!col0) continue;
+    const label = weekLabel(rows[r], mondayCol);
+    if (label && NON_PERSON_LABEL_RE.test(label)) continue;
 
     const contactRow = rows[r - 1] || [];
-    const days = DAY_LABELS.map((label, i) => {
+    const days = DAY_LABELS.map((dayLabel, i) => {
       const col = mondayCol + i;
       const rawShift = (rows[r][col] || '').toString().trim();
       return {
-        label,
+        label: dayLabel,
         date: dates[i],
         rawShift,
         resolvedShift: rawShift ? resolveRmoShiftCode(rawShift) : null,
       };
     });
 
+    if (!label) {
+      if (hasRealShift(days)) people.push(unnamedPerson(r, days));
+      continue;
+    }
+
     people.push({
-      rawLabel: col0,
+      rawLabel: label,
       contactLine: (contactRow[mondayCol] || contactRow[1] || '').toString().trim(),
       days,
     });
@@ -501,21 +554,26 @@ export function extractInternWeek(rows, sectionStartRow, mondayCol) {
     const col0 = (rows[r][0] || '').toString().trim();
     if (/^Week\s+\d/i.test(col0)) break;
     if (col0 === 'On Call Correct?') break; // start of the validation/summary panel
-    if (!col0) continue;
-    if (/^\d+(\.\d+)?$/.test(col0)) continue; // FTE/hours row for the person just above, not a new person
+    const label = weekLabel(rows[r], mondayCol);
+    if (label && NON_PERSON_LABEL_RE.test(label)) continue; // incl. the FTE/hours row under each intern
 
-    const days = DAY_LABELS.map((label, i) => {
+    const days = DAY_LABELS.map((dayLabel, i) => {
       const col = mondayCol + i;
       const rawShift = (rows[r][col] || '').toString().trim();
       return {
-        label,
+        label: dayLabel,
         date: dates[i],
         rawShift,
         resolvedShift: rawShift ? resolveInternShiftCode(rawShift) : null,
       };
     });
 
-    people.push({ rawLabel: col0, days });
+    if (!label) {
+      if (hasRealShift(days)) people.push(unnamedPerson(r, days));
+      continue;
+    }
+
+    people.push({ rawLabel: label, days });
   }
 
   return people;
@@ -683,10 +741,10 @@ export function getClassicStaffRoster(workbook, sheetName = 'Sheet1') {
   };
 
   WEEK_BLOCK_MONDAY_COLUMNS.forEach(mondayCol => {
-    extractConsultantWeek(rows, mondayCol).forEach(p => add(p.rawLabel, 'consultant', parseClassicFte(p.fte)));
+    extractConsultantWeek(rows, mondayCol).filter(p => !p.unnamed).forEach(p => add(p.rawLabel, 'consultant', parseClassicFte(p.fte)));
     extractLocumWeek(rows, mondayCol).forEach(p => add(p.rawLabel, 'locum', 0));
-    if (rmoStart !== undefined) extractRmoWeek(rows, rmoStart, mondayCol).forEach(p => add(p.rawLabel, 'rmo', 1));
-    if (internStart !== undefined) extractInternWeek(rows, internStart, mondayCol).forEach(p => add(p.rawLabel, 'intern', 1));
+    if (rmoStart !== undefined) extractRmoWeek(rows, rmoStart, mondayCol).filter(p => !p.unnamed).forEach(p => add(p.rawLabel, 'rmo', 1));
+    if (internStart !== undefined) extractInternWeek(rows, internStart, mondayCol).filter(p => !p.unnamed).forEach(p => add(p.rawLabel, 'intern', 1));
   });
 
   return Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name));

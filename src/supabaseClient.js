@@ -4430,6 +4430,12 @@ export async function importRosterWeek(departmentId, people, refLists, { dryRun 
 
   for (let personIndex = 0; personIndex < people.length; personIndex++) {
     const person = people[personIndex];
+    if (person.unnamed) {
+      results.push({ rawLabel: person.rawLabel, ok: false, reason: 'Shifts with no name in this week — not imported. Add the name to the sheet and re-import this week.' });
+      onProgress?.(personIndex + 1, people.length);
+      continue;
+    }
+
     const mappedStaffId = nameMappings.staff?.[staffLabelKey(person.rawLabel)];
     const staff = (mappedStaffId && staffList.find(s => s.staff_id === mappedStaffId)) || matchStaffName(person.rawLabel, staffList);
     if (!staff) {
