@@ -53,7 +53,9 @@ export default function Login() {
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-blue-100 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         <div className="bg-white rounded-lg shadow-lg p-8">
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">Roster</h1>
+          <h1 className="mb-2">
+            <img src={`${process.env.PUBLIC_URL}/rstar-wordmark.png`} alt="Rstar" className="h-12 w-auto" />
+          </h1>
           <p className="text-gray-600 mb-8">Sign in to continue</p>
 
           {error && (
