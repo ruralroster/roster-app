@@ -120,3 +120,33 @@ export function getSessionGroups(shift, boundaries = DEFAULT_SESSION_BOUNDARIES)
 
   return SESSION_GROUP_ORDER.filter(g => groups.has(g));
 }
+
+// ============================================================
+// ONE SHIFT, SEVERAL ROWS
+// ============================================================
+// A shift spanning more than one session is deliberately written as one
+// staff_assignments row per session card it covers (see
+// assignStaffFortnight's cascade and the Day view's
+// cascadeAssignmentAcrossSections) — that's what puts the person on both
+// the Morning and the Afternoon card. Anything that treats a row as "a
+// shift worked" (payroll, calendar export, Case Mix/Fairness counts, the
+// staff Week list) must count those rows once. Same person + date +
+// location + shift times (or shift_id, when the times weren't fetched) +
+// leave code = the same shift.
+export function assignmentShiftKey(a) {
+  const times = a.shifts?.start_time || a.shifts?.end_time
+    ? `${a.shifts?.start_time}-${a.shifts?.end_time}`
+    : a.shift_id;
+  return `${a.staff_id}|${a.date}|${a.location_id}|${times}|${a.leave_code || ''}`;
+}
+
+// Keeps the first row of each shift, in order.
+export function dedupeAssignmentsByShift(assignments) {
+  const seen = new Set();
+  return (assignments || []).filter(a => {
+    const key = assignmentShiftKey(a);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}

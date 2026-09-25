@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { DEFAULT_FTE, computeFairnessRatio, getDatesInRange } from './availabilityUtils';
 import { toLocalDateStr } from './dateUtils';
-import { getSessionGroups } from './shiftSessionUtils';
+import { getSessionGroups, dedupeAssignmentsByShift } from './shiftSessionUtils';
 import { getMondayOfWeek } from './payrollExport';
 import { matchStaffName, staffLabelKey } from './rosterExcelImport';
 
@@ -1262,7 +1262,8 @@ export async function getStaffWeekScheduleForExport(staffId, departmentId, weekS
       activityByKey.set(`${ta.date}|${ta.location_id}`, ta.activity_types?.name || null);
     });
 
-    const enriched = (assignRes.data || []).map(a => ({
+    // A shift spanning two session cards is two rows — one calendar event.
+    const enriched = dedupeAssignmentsByShift(assignRes.data).map(a => ({
       ...a,
       activity_name: activityByKey.get(`${a.date}|${a.location_id}`) || null,
     }));
@@ -2203,7 +2204,7 @@ async function getCaseMixRawData(departmentId, asOfDate) {
       .order('name'),
     supabase
       .from('staff_assignments')
-      .select('staff_id, date, location_id')
+      .select('staff_id, date, location_id, shift_id, leave_code')
       .eq('department_id', departmentId)
       .gte('date', startStr)
       .lte('date', endStr),
@@ -2233,7 +2234,8 @@ async function getCaseMixRawData(departmentId, asOfDate) {
   const totalShiftsByStaff = new Map();
   const statsByStaffActivity = new Map(); // `${staff_id}|${activity_id}` -> { count, lastDate }
 
-  (assignmentsRes.data || []).forEach(a => {
+  // One shift spanning two session cards is two rows — count it once.
+  dedupeAssignmentsByShift(assignmentsRes.data).forEach(a => {
     totalShiftsByStaff.set(a.staff_id, (totalShiftsByStaff.get(a.staff_id) || 0) + 1);
 
     const activityId = activityByKey.get(`${a.date}|${a.location_id}`);
@@ -2357,7 +2359,7 @@ export async function getFairnessReport(departmentId) {
         .order('name'),
       supabase
         .from('staff_assignments')
-        .select('staff_id, date')
+        .select('staff_id, date, location_id, shift_id, leave_code')
         .eq('department_id', departmentId)
         .gte('date', startStr)
         .lte('date', endStr),
@@ -2388,7 +2390,8 @@ export async function getFairnessReport(departmentId) {
 
     const totalShiftsByStaff = new Map();
     const weekendShiftsByStaff = new Map();
-    (assignmentsRes.data || []).forEach(a => {
+    // One shift spanning two session cards is two rows — count it once.
+    dedupeAssignmentsByShift(assignmentsRes.data).forEach(a => {
       totalShiftsByStaff.set(a.staff_id, (totalShiftsByStaff.get(a.staff_id) || 0) + 1);
       const dayOfWeek = new Date(`${a.date}T00:00:00`).getDay();
       if (dayOfWeek === 0 || dayOfWeek === 6) {

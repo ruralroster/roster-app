@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx';
 import { toLocalDateStr } from './dateUtils';
+import { dedupeAssignmentsByShift } from './shiftSessionUtils';
 
 const DAY_HEADERS = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
 
@@ -69,7 +70,8 @@ export function buildPayrollSheetRows({ payCentreNumber, departmentName, periodS
 
   const dataRows = sortedStaff.map(staff => {
     const cells = dayStrs.map(dateStr => {
-      const forCell = assignments.filter(a => a.staff_id === staff.staff_id && a.date === dateStr);
+      // A shift spanning two session cards is two rows — list it once.
+      const forCell = dedupeAssignmentsByShift(assignments.filter(a => a.staff_id === staff.staff_id && a.date === dateStr));
       return formatShiftCell(forCell);
     });
     return [staff.name, staff.payroll_number || '', staff.position_id || '', staff.cost_centre || '', ...cells];
