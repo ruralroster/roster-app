@@ -85,6 +85,21 @@ const RANK_LABEL = {
 
 const toDateStr = toLocalDateStr;
 
+// The Week tab's lists (yours and an expanded starred colleague's) show
+// one line per shift — two assignment rows with the same date, location
+// and shift times (e.g. from joining two cards at the same location) are
+// the same shift as far as the person is concerned, so only the first is
+// shown. Display only; the rows themselves are left alone.
+const dedupeSameShift = (assignments) => {
+  const seen = new Set();
+  return assignments.filter(a => {
+    const key = `${a.date}|${a.location_id}|${a.shifts?.start_time}|${a.shifts?.end_time}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+
 // Why each person is on the Notify Sick modal's list — see
 // getSickCallRecipients in supabaseClient.js.
 const SICK_CALL_REASON_LABEL = {
@@ -1410,7 +1425,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
                             <div className="space-y-2">
                               {(() => {
                                 const byDate = new Map();
-                                colleagueWeekAssignments.forEach((assignment) => {
+                                dedupeSameShift(colleagueWeekAssignments).forEach((assignment) => {
                                   if (!byDate.has(assignment.date)) byDate.set(assignment.date, []);
                                   byDate.get(assignment.date).push(assignment);
                                 });
@@ -1455,7 +1470,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
                     one-line-per-day idea as the officer Fortnight view. */}
                 {(() => {
                   const byDate = new Map();
-                  weekAssignments.forEach((assignment) => {
+                  dedupeSameShift(weekAssignments).forEach((assignment) => {
                     if (!byDate.has(assignment.date)) byDate.set(assignment.date, []);
                     byDate.get(assignment.date).push(assignment);
                   });
