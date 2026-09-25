@@ -213,7 +213,7 @@ export function extractConsultantWeek(rows, mondayCol) {
       };
     });
 
-    const label = weekLabel(nameRow, mondayCol);
+    const label = rowLabelForWeek(nameRow, mondayCol, days);
     if (!label) return hasRealShift(days) ? [unnamedPerson(r - 1, days)] : [];
 
     return [{
@@ -267,8 +267,13 @@ export function extractLocumWeek(rows, mondayCol) {
   const people = [];
   for (let r = weekRow + 2; r < rows.length; r++) {
     if (/^Week\s+\d/i.test((rows[r][0] || '').toString().trim())) break;
-    const label = (rows[r][labelCol] || '').toString().replace(/\s+/g, ' ').trim();
-    if (!label || label.toUpperCase() === 'CALL OBLIGATION') continue;
+    // The on-call notes row sits directly under a name row and its notes
+    // ("Obs") are also real shift codes, so it must never be read as a
+    // nameless shift row itself. Name rows are always 2+ rows apart.
+    const prevRow = rows[r - 1] || [];
+    if (WEEK_BLOCK_MONDAY_COLUMNS.some(m => isPersonLabel(weekLabel(prevRow, m)))) continue;
+    const ownLabel = weekLabel(rows[r], mondayCol);
+    if (ownLabel && !isPersonLabel(ownLabel)) continue; // e.g. the stray "CALL OBLIGATION" row
 
     const callRow = rows[r + 1] || [];
     const callRowIsNotes = !(callRow[labelCol] || '').toString().trim();
@@ -285,6 +290,12 @@ export function extractLocumWeek(rows, mondayCol) {
         onCall: rawOnCall ? parseOnCallNote(rawOnCall) : null,
       };
     });
+
+    const label = rowLabelForWeek(rows[r], mondayCol, days);
+    if (!label) {
+      if (hasRealShift(days)) people.push(unnamedPerson(r, days));
+      continue;
+    }
 
     people.push({ rawLabel: label, days });
   }
@@ -315,14 +326,17 @@ export function parseLocumWeek(workbook, weekIndex, sheetName = 'Sheet1') {
 // every week — reading column A filed Irene's and Toby's shifts under
 // the previous person.
 //
-// A row with shifts but no name in that week (the Dec DRAFT has three
-// such registrar rows, a "Day Shift/Clinic/Chemo" Medical Registrar slot,
-// and both intern rows) becomes an `unnamed` entry that importRosterWeek
-// reports as an error, rather than being dropped silently or given to
-// whoever column A names. "Has shifts" means at least one cell resolves
-// to a real code — the contact line ("Alex Parfitt MOB: 04..."), on-call
-// notes ("Obs") and remarks ("overtime shift") on the rows around each
-// name never do.
+// A row with shifts but no name in that week means the person named on
+// that row in the most recent earlier week is still there — confirmed
+// with the department 2026-09-25 (so the Oct DRAFT's blank intern and
+// Medical Registrar weeks 3-4 are still Anya, Nicholas and Sam). Only a
+// row with shifts and no name in THIS OR ANY EARLIER week of the file
+// (the Dec DRAFT's three new registrar rows, its "Day Shift/Clinic/
+// Chemo" Medical Registrar slot, and both intern rows) becomes an
+// `unnamed` entry, which importRosterWeek reports as an error rather than
+// dropping or guessing. "Has shifts" means at least one cell resolves to
+// a real code — the contact line ("Alex Parfitt MOB: 04..."), notes
+// ("Obs" in the RMO section) and remarks ("overtime shift") never do.
 
 // Label-column text that isn't a person: FTE/hours numbers, the next
 // section's header, and org-unit header lines.
@@ -330,6 +344,25 @@ const NON_PERSON_LABEL_RE = /^(\d+(\.\d+)?|CALL OBLIGATION|PHO|Interns|Health Pr
 
 function weekLabel(row, mondayCol) {
   return (row[mondayCol - 1] || '').toString().replace(/\s+/g, ' ').trim();
+}
+
+function isPersonLabel(label) {
+  return !!label && !NON_PERSON_LABEL_RE.test(label);
+}
+
+// This week's name for the row, or — if it's blank but the row has real
+// shifts this week — the nearest earlier week's name on the same row.
+// '' if neither.
+function rowLabelForWeek(row, mondayCol, days) {
+  const own = weekLabel(row, mondayCol);
+  if (own) return own;
+  if (!hasRealShift(days)) return '';
+  const idx = WEEK_BLOCK_MONDAY_COLUMNS.indexOf(mondayCol);
+  for (let k = idx - 1; k >= 0; k--) {
+    const earlier = weekLabel(row, WEEK_BLOCK_MONDAY_COLUMNS[k]);
+    if (isPersonLabel(earlier)) return earlier;
+  }
+  return '';
 }
 
 function hasRealShift(days) {
@@ -460,8 +493,7 @@ export function extractRmoWeek(rows, sectionStartRow, mondayCol) {
   for (let r = sectionStartRow + 2; r < rows.length; r++) {
     const col0 = (rows[r][0] || '').toString().trim();
     if (/^Week\s+\d/i.test(col0)) break;
-    const label = weekLabel(rows[r], mondayCol);
-    if (label && NON_PERSON_LABEL_RE.test(label)) continue;
+    if (weekLabel(rows[r], mondayCol) && !isPersonLabel(weekLabel(rows[r], mondayCol))) continue;
 
     const contactRow = rows[r - 1] || [];
     const days = DAY_LABELS.map((dayLabel, i) => {
@@ -475,6 +507,7 @@ export function extractRmoWeek(rows, sectionStartRow, mondayCol) {
       };
     });
 
+    const label = rowLabelForWeek(rows[r], mondayCol, days);
     if (!label) {
       if (hasRealShift(days)) people.push(unnamedPerson(r, days));
       continue;
@@ -554,8 +587,7 @@ export function extractInternWeek(rows, sectionStartRow, mondayCol) {
     const col0 = (rows[r][0] || '').toString().trim();
     if (/^Week\s+\d/i.test(col0)) break;
     if (col0 === 'On Call Correct?') break; // start of the validation/summary panel
-    const label = weekLabel(rows[r], mondayCol);
-    if (label && NON_PERSON_LABEL_RE.test(label)) continue; // incl. the FTE/hours row under each intern
+    if (weekLabel(rows[r], mondayCol) && !isPersonLabel(weekLabel(rows[r], mondayCol))) continue; // incl. the FTE/hours row under each intern
 
     const days = DAY_LABELS.map((dayLabel, i) => {
       const col = mondayCol + i;
@@ -568,6 +600,7 @@ export function extractInternWeek(rows, sectionStartRow, mondayCol) {
       };
     });
 
+    const label = rowLabelForWeek(rows[r], mondayCol, days);
     if (!label) {
       if (hasRealShift(days)) people.push(unnamedPerson(r, days));
       continue;
