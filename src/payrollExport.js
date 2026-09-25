@@ -70,8 +70,9 @@ export function buildPayrollSheetRows({ payCentreNumber, departmentName, periodS
 
   const dataRows = sortedStaff.map(staff => {
     const cells = dayStrs.map(dateStr => {
-      // A shift spanning two session cards is two rows — list it once.
-      const forCell = dedupeAssignmentsByShift(assignments.filter(a => a.staff_id === staff.staff_id && a.date === dateStr));
+      // A shift spanning two session cards, or covering two locations at
+      // once, is more than one row — list it once.
+      const forCell = dedupeAssignmentsByShift(assignments.filter(a => a.staff_id === staff.staff_id && a.date === dateStr), { ignoreLocation: true });
       return formatShiftCell(forCell);
     });
     return [staff.name, staff.payroll_number || '', staff.position_id || '', staff.cost_centre || '', ...cells];

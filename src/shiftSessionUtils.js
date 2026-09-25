@@ -133,18 +133,23 @@ export function getSessionGroups(shift, boundaries = DEFAULT_SESSION_BOUNDARIES)
 // staff Week list) must count those rows once. Same person + date +
 // location + shift times (or shift_id, when the times weren't fetched) +
 // leave code = the same shift.
-export function assignmentShiftKey(a) {
+//
+// ignoreLocation: someone covering two locations at once (e.g. Ward 1
+// AND Ward 2 on a weekday "WARDS" day — see splitWeekdayBothWards in
+// rosterExcelImport.js) is still working one shift for payroll and shift
+// totals, though a list of where they are should show both.
+export function assignmentShiftKey(a, { ignoreLocation = false } = {}) {
   const times = a.shifts?.start_time || a.shifts?.end_time
     ? `${a.shifts?.start_time}-${a.shifts?.end_time}`
     : a.shift_id;
-  return `${a.staff_id}|${a.date}|${a.location_id}|${times}|${a.leave_code || ''}`;
+  return `${a.staff_id}|${a.date}|${ignoreLocation ? '' : a.location_id}|${times}|${a.leave_code || ''}`;
 }
 
 // Keeps the first row of each shift, in order.
-export function dedupeAssignmentsByShift(assignments) {
+export function dedupeAssignmentsByShift(assignments, options) {
   const seen = new Set();
   return (assignments || []).filter(a => {
-    const key = assignmentShiftKey(a);
+    const key = assignmentShiftKey(a, options);
     if (seen.has(key)) return false;
     seen.add(key);
     return true;

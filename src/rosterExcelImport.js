@@ -64,7 +64,7 @@ const SINGLE_CODE_MAP = {
   'EDL + OC': clinicalSegment('Emergency', 'Emergency Department Cover', '10:30', '21:00'),
   'Ward 1': clinicalSegment('Ward 1', 'Ward Care Cover', '08:00', '18:00'),
   'Ward 2': clinicalSegment('Ward 2', 'Ward Care Cover', '08:00', '18:00'),
-  'WARD (1&2)': clinicalSegment('Ward 1 and 2 (Weekend Cover)', 'Ward Care Cover', '08:00', '18:00'),
+  'WARD (1&2)': clinicalSegment('Ward 1 and 2 (Weekend Cover)', 'Ward Care Cover', '08:00', '18:00'), // weekday -> both wards, see splitWeekdayBothWards
   'Maternity': clinicalSegment('Maternity', 'Ward Care Cover', '08:00', '18:00'),
   'Admin': clinicalSegment('Non-clinical', 'Admin', '08:00', '18:00'),
   'DMS': clinicalSegment('Non-clinical', 'Admin', '08:00', '18:00'),
@@ -421,6 +421,42 @@ export function findLabeledWeekHeaderRow(rows, labelRegex) {
 
 const TIME_RANGE_RE = /(\d{3,4})\s*-\s*(\d{3,4})/;
 
+// "Both wards" codes — the consultants' "WARD (1&2)" and the registrars'
+// "Day 0800 -1800 WARDS". The combined location exists for weekend cover,
+// but both codes also turn up on weekdays (e.g. WARDS on 20+ weekdays in
+// the Sept/Oct 2026 INNH files), where it means the person covers Ward 1
+// AND Ward 2 at once — confirmed with the department 2026-09-25. So a
+// weekday occurrence becomes two segments, same times, one per ward; a
+// Saturday/Sunday one keeps the weekend-cover location.
+const WEEKEND_BOTH_WARDS_LOCATION = 'Ward 1 and 2 (Weekend Cover)';
+
+function isWeekendDateStr(dateStr) {
+  const match = (dateStr || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!match) return null;
+  const dow = new Date(Number(match[3]), Number(match[2]) - 1, Number(match[1])).getDay();
+  return dow === 0 || dow === 6;
+}
+
+function splitWeekdayBothWards(people) {
+  return people.map(person => ({
+    ...person,
+    days: person.days.map(day => {
+      const segments = day.resolvedShift?.segments;
+      if (!segments?.some(seg => seg.location === WEEKEND_BOTH_WARDS_LOCATION)) return day;
+      if (isWeekendDateStr(day.date) !== false) return day; // weekend, or a date we can't read — leave as is
+      return {
+        ...day,
+        resolvedShift: {
+          ...day.resolvedShift,
+          segments: segments.flatMap(seg => (seg.location === WEEKEND_BOTH_WARDS_LOCATION
+            ? [{ ...seg, location: 'Ward 1' }, { ...seg, location: 'Ward 2' }]
+            : [seg])),
+        },
+      };
+    }),
+  }));
+}
+
 function normalizeHHMM(raw) {
   const digits = raw.padStart(4, '0');
   return `${digits.slice(0, 2)}:${digits.slice(2)}`;
@@ -436,6 +472,9 @@ const RMO_DAY_LOCATION_TOKEN_MAP = {
   'ED': { location: 'Emergency', activity: 'Emergency Department Cover' },
   'WARD 1': { location: 'Ward 1', activity: 'Ward Care Cover' },
   'MATERNITY': { location: 'Maternity', activity: 'Ward Care Cover' },
+  // Both wards — same as the consultants' "WARD (1&2)", and split the
+  // same way on a weekday (see splitWeekdayBothWards).
+  'WARDS': { location: WEEKEND_BOTH_WARDS_LOCATION, activity: 'Ward Care Cover' },
 };
 
 // "Chemo" isn't its own activity in this department — confirmed
@@ -699,12 +738,12 @@ export function getWeekDateRanges(workbook, sheetName = 'Sheet1') {
 // RosterExcelImportTab.jsx.
 export function parseRosterWeek(workbook, weekIndex, sheetName = 'Sheet1') {
   const tag = (people, section, fteOf) => people.map(p => ({ ...p, section, fte: fteOf(p) }));
-  return [
+  return splitWeekdayBothWards([
     ...tag(parseConsultantWeek(workbook, weekIndex, sheetName), 'consultant', p => parseClassicFte(p.fte)),
     ...tag(parseLocumWeek(workbook, weekIndex, sheetName), 'locum', () => 0),
     ...tag(parseRmoWeek(workbook, weekIndex, sheetName), 'rmo', () => 1),
     ...tag(parseInternWeek(workbook, weekIndex, sheetName), 'intern', () => 1),
-  ];
+  ]);
 }
 
 // The key a 'staff' import mapping is saved and looked up under — the

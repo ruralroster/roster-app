@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { DEFAULT_FTE, computeFairnessRatio, getDatesInRange } from './availabilityUtils';
 import { toLocalDateStr } from './dateUtils';
-import { getSessionGroups, dedupeAssignmentsByShift } from './shiftSessionUtils';
+import { getSessionGroups, dedupeAssignmentsByShift, assignmentShiftKey } from './shiftSessionUtils';
 import { getMondayOfWeek } from './payrollExport';
 import { matchStaffName, staffLabelKey } from './rosterExcelImport';
 
@@ -2234,12 +2234,23 @@ async function getCaseMixRawData(departmentId, asOfDate) {
   const totalShiftsByStaff = new Map();
   const statsByStaffActivity = new Map(); // `${staff_id}|${activity_id}` -> { count, lastDate }
 
-  // One shift spanning two session cards is two rows — count it once.
-  dedupeAssignmentsByShift(assignmentsRes.data).forEach(a => {
-    totalShiftsByStaff.set(a.staff_id, (totalShiftsByStaff.get(a.staff_id) || 0) + 1);
+  // One shift is sometimes several rows — spanning two session cards, or
+  // covering two locations at once (Ward 1 + Ward 2). The total counts it
+  // once; exposure counts it once per activity it involved.
+  const countedShifts = new Set();
+  const countedExposure = new Set();
+  (assignmentsRes.data || []).forEach(a => {
+    const shiftKey = assignmentShiftKey(a, { ignoreLocation: true });
+    if (!countedShifts.has(shiftKey)) {
+      countedShifts.add(shiftKey);
+      totalShiftsByStaff.set(a.staff_id, (totalShiftsByStaff.get(a.staff_id) || 0) + 1);
+    }
 
     const activityId = activityByKey.get(`${a.date}|${a.location_id}`);
     if (!activityId) return;
+    const exposureKey = `${shiftKey}|${activityId}`;
+    if (countedExposure.has(exposureKey)) return;
+    countedExposure.add(exposureKey);
 
     const key = `${a.staff_id}|${activityId}`;
     const existing = statsByStaffActivity.get(key);
@@ -2390,8 +2401,9 @@ export async function getFairnessReport(departmentId) {
 
     const totalShiftsByStaff = new Map();
     const weekendShiftsByStaff = new Map();
-    // One shift spanning two session cards is two rows — count it once.
-    dedupeAssignmentsByShift(assignmentsRes.data).forEach(a => {
+    // One shift spanning two session cards, or covering two locations at
+    // once, is more than one row — count it once.
+    dedupeAssignmentsByShift(assignmentsRes.data, { ignoreLocation: true }).forEach(a => {
       totalShiftsByStaff.set(a.staff_id, (totalShiftsByStaff.get(a.staff_id) || 0) + 1);
       const dayOfWeek = new Date(`${a.date}T00:00:00`).getDay();
       if (dayOfWeek === 0 || dayOfWeek === 6) {
