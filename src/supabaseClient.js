@@ -4,6 +4,7 @@ import { toLocalDateStr } from './dateUtils';
 import { getSessionGroups, dedupeAssignmentsByShift, assignmentShiftKey } from './shiftSessionUtils';
 import { getMondayOfWeek } from './payrollExport';
 import { matchStaffName, staffLabelKey } from './rosterExcelImport';
+import { gradeForSection, gradeForRank, gradeCanCover, GRADE_LABEL } from './staffGrade';
 
 console.log('=== supabaseClient.js LOADING ===');
 console.log('Checking environment variables...');
@@ -977,7 +978,7 @@ export async function copyDayActivities(departmentId, fromDate, toDate) {
     const [{ data: sourceCards, error: sourceError }, { data: existingCards, error: existingError }] = await Promise.all([
       supabase
         .from('theatre_activities')
-        .select('location_id, activity_id, shift_id, start_time, end_time')
+        .select('location_id, activity_id, shift_id, start_time, end_time, required_grade')
         .eq('department_id', departmentId)
         .eq('date', fromDateStr),
       supabase
@@ -1002,6 +1003,7 @@ export async function copyDayActivities(departmentId, fromDate, toDate) {
         shift_id: c.shift_id,
         start_time: c.start_time,
         end_time: c.end_time,
+        required_grade: c.required_grade ?? null,
       }));
 
     if (toInsert.length > 0) {
@@ -3039,7 +3041,7 @@ export async function getAvailableShiftsForStaff(staffId, departmentId) {
         .single(),
       supabase
         .from('theatre_activities')
-        .select('theatre_activity_id, date, location_id, locations(name), shifts(name, start_time, end_time), activity_types(name, required_advanced_skills)')
+        .select('theatre_activity_id, date, location_id, required_grade, locations(name), shifts(name, start_time, end_time), activity_types(name, required_advanced_skills)')
         .eq('department_id', departmentId)
         .gte('date', startStr)
         .lte('date', endStr),
@@ -3077,6 +3079,7 @@ export async function getAvailableShiftsForStaff(staffId, departmentId) {
     const rankRow = staffRanks.find(r => r.rank === rank);
     if (!rankRow) return { data: [], error: null }; // rank not configured -> nothing to volunteer for
     const isSenior = !rankRow.requires_supervision;
+    const myGrade = gradeForRank(rankRow);
 
     const restrictions = staffRes.data?.activity_restrictions || [];
     const mySkills = new Set(staffRes.data?.advanced_skills || []);
@@ -3111,6 +3114,7 @@ export async function getAvailableShiftsForStaff(staffId, departmentId) {
         if (!eligibleByRank) return false;
         const ta = theatreById.get(offer.theatre_activity_id);
         if (!ta) return false; // outside the lookahead window, or the card's since been removed
+        if (!gradeCanCover(myGrade, ta.required_grade)) return false; // below the card's grade (e.g. an SMO shift never reaches a registrar or intern)
         const filledRoles = filledRolesByTheatreActivity.get(offer.theatre_activity_id) || new Set();
         if (filledRoles.has(offer.role)) return false; // already filled — stale offer, not yet cleared
         if (!availableDates.has(ta.date)) return false; // staff hasn't confirmed availability
@@ -3132,6 +3136,7 @@ export async function getAvailableShiftsForStaff(staffId, departmentId) {
           shift_end: ta.shifts?.end_time || null,
           activity: ta.activity_types?.name || null,
           role_needed: offer.role,
+          required_grade: ta.required_grade || null,
           already_volunteered: alreadyVolunteered.has(`${offer.theatre_activity_id}|${offer.role}`),
         };
       })
@@ -4420,7 +4425,12 @@ async function replaceExistingRosterForDates(departmentId, dateStrs, dryRun) {
 // unmappedCode (+ within, for half of a split code), missingLocation /
 // missingActivity, or unmatchedLabel (+ the person's section/fte) — see
 // RosterExcelImportTab.jsx's Map… button.
-export async function importRosterWeek(departmentId, people, refLists, { dryRun = true, onProgress } = {}) {
+//
+// addUnnamedAsUnfilled: a row with shifts but no name (person.unnamed)
+// becomes empty, graded cards — unfilled on the roster, ready for the
+// officer to offer for volunteering at the right level — instead of an
+// error. See importUnnamedAsUnfilled below.
+export async function importRosterWeek(departmentId, people, refLists, { dryRun = true, onProgress, addUnnamedAsUnfilled = false } = {}) {
   const { staffList, locations, activities, leaveTypes, nameMappings = { location: {}, activity: {}, staff: {} } } = refLists;
   const findLocation = (name) => {
     const key = name.trim().toLowerCase();
@@ -4446,7 +4456,11 @@ export async function importRosterWeek(departmentId, people, refLists, { dryRun 
   for (let personIndex = 0; personIndex < people.length; personIndex++) {
     const person = people[personIndex];
     if (person.unnamed) {
-      results.push({ rawLabel: person.rawLabel, ok: false, reason: 'Shifts with no name in this week — not imported. Add the name to the sheet and re-import this week.' });
+      // Unfilled cards are written after everyone named (below), so a
+      // named person's shift can never land on — and silently fill — one.
+      if (!addUnnamedAsUnfilled) {
+        results.push({ rawLabel: person.rawLabel, ok: false, reason: 'Shifts with no name in this week — not imported. Add the name to the sheet and re-import this week.' });
+      }
       onProgress?.(personIndex + 1, people.length);
       continue;
     }
@@ -4527,7 +4541,111 @@ export async function importRosterWeek(departmentId, people, refLists, { dryRun 
     onProgress?.(personIndex + 1, people.length);
   }
 
+  if (addUnnamedAsUnfilled) {
+    const unnamed = people.filter(p => p.unnamed);
+    if (unnamed.length > 0) {
+      const unfilledResults = await importUnnamedAsUnfilled(departmentId, unnamed, findLocation, findActivity, dryRun);
+      results.push(...unfilledResults);
+    }
+  }
+
   return { data: results, error: null, deletionSummary };
+}
+
+// Each shift on an unnamed row → its own new, empty theatre_activities
+// card carrying the row's grade (from its sheet section). Always a fresh
+// insert, never a reused card: two unnamed rows with the same shift on
+// the same day are two vacancies. Leave codes are skipped (leave with no
+// person means nothing). An on-call duty activity isn't a card at all —
+// it's reported, and the duty roster is left as it is.
+async function importUnnamedAsUnfilled(departmentId, unnamedPeople, findLocation, findActivity, dryRun) {
+  const results = [];
+
+  const { data: dutyTypes, error: dutyError } = await supabase
+    .from('duty_types')
+    .select('activity_type_id')
+    .eq('department_id', departmentId);
+  if (dutyError) {
+    return unnamedPeople.map(p => ({ rawLabel: p.rawLabel, ok: false, reason: `Couldn't check on-call duty types: ${dutyError.message}` }));
+  }
+  const dutyActivityIds = new Set((dutyTypes || []).map(d => d.activity_type_id));
+
+  for (const person of unnamedPeople) {
+    const grade = gradeForSection(person.section);
+    const gradeLabel = grade ? GRADE_LABEL[grade] : 'Unknown grade';
+
+    for (const day of person.days) {
+      if (!day.rawShift || !day.resolvedShift) continue;
+      const resolved = day.resolvedShift;
+      const entry = { rawLabel: person.rawLabel, date: day.date, rawShift: day.rawShift, unnamed: true, grade };
+
+      if (resolved.unmapped) {
+        const reason = resolved.within
+          ? `Unmapped code: "${resolved.unmapped}" (in "${resolved.within}")`
+          : `Unmapped code: "${resolved.unmapped}"`;
+        results.push({ ...entry, ok: false, reason, unmappedCode: resolved.unmapped });
+        continue;
+      }
+      if (resolved.leaveCode) continue;
+
+      const date = parseExcelDate(day.date);
+      if (!date) {
+        results.push({ ...entry, ok: false, reason: `Could not parse date "${day.date}"` });
+        continue;
+      }
+
+      for (const segment of resolved.segments || []) {
+        const location = findLocation(segment.location);
+        const activity = findActivity(segment.activity);
+        if (!location || !activity) {
+          const missing = [!location ? `location "${segment.location}"` : null, !activity ? `activity "${segment.activity}"` : null].filter(Boolean).join(' and ');
+          results.push({
+            ...entry,
+            ok: false,
+            reason: `Not found: ${missing}`,
+            missingLocation: location ? null : segment.location,
+            missingActivity: activity ? null : segment.activity,
+          });
+          continue;
+        }
+        if (!segment.start || !segment.end) {
+          results.push({ ...entry, ok: false, reason: `No fixed time for ${segment.location}/${segment.activity} — can't resolve a shift` });
+          continue;
+        }
+
+        const unfilled = { ...entry, ok: true, action: 'unfilled', gradeLabel, location: location.name, activity: activity.name, start: segment.start, end: segment.end };
+        if (dutyActivityIds.has(activity.activity_id)) {
+          results.push({ ...unfilled, action: 'unfilled duty' });
+          continue;
+        }
+        if (dryRun) {
+          results.push(unfilled);
+          continue;
+        }
+
+        const { data: shiftId, error: shiftError } = await findOrCreateShift(departmentId, segment.start, segment.end);
+        if (shiftError) {
+          results.push({ ...entry, ok: false, reason: `Failed to resolve shift: ${shiftError.message}` });
+          continue;
+        }
+        const { error: insertError } = await supabase
+          .from('theatre_activities')
+          .insert([{
+            department_id: departmentId,
+            date: toLocalDateStr(date),
+            location_id: location.location_id,
+            activity_id: activity.activity_id,
+            shift_id: shiftId,
+            start_time: segment.start,
+            end_time: segment.end,
+            required_grade: grade,
+          }]);
+        results.push(insertError ? { ...entry, ok: false, reason: `Failed to add unfilled card: ${insertError.message}` } : unfilled);
+      }
+    }
+  }
+
+  return results;
 }
 
 // Saved fixes for import errors — see

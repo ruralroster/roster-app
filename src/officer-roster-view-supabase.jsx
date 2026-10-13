@@ -98,6 +98,7 @@ import { createTheatreActivity,
 import { downloadPayrollExcel, getMondayOfWeek } from './payrollExport';
 import { getSessionGroups, SESSION_GROUP_ORDER, SESSION_GROUP_LABELS, SESSION_DEFAULT_TIMES, DEFAULT_SESSION_BOUNDARIES, getDepartmentSessionBoundaries } from './shiftSessionUtils';
 import { formatFte, DEFAULT_FTE } from './availabilityUtils';
+import { GRADE_LABEL, roleForGrade } from './staffGrade';
 
 const CALENDAR_WEEKS_SHOWN = 4;
 const CALENDAR_DAYS_SHOWN = CALENDAR_WEEKS_SHOWN * 7;
@@ -3633,8 +3634,22 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                 // for the narrower case where the card is only PARTIALLY
                 // staffed (e.g. a consultant's there but no registrar).
                 const locationRequiresBoth = refData.locations.find(l => l.location_id === ta.location_id)?.requires_both_senior_and_junior === true;
-                const missingConsultant = locationRequiresBoth && consultantEntries.length === 0;
-                const missingRegistrar = locationRequiresBoth && registrarEntries.length === 0;
+                // A graded card (an unnamed Excel row imported as unfilled
+                // — see migrations/2026-10-13_theatre_activity_required_
+                // grade.sql) needs its grade's role filled too, so it gets
+                // the same offer-for-volunteering button. Who can see the
+                // offer is then limited by the grade in
+                // getAvailableShiftsForStaff.
+                const gradeRole = ta.required_grade ? roleForGrade(ta.required_grade) : null;
+                const gradeLabel = ta.required_grade ? GRADE_LABEL[ta.required_grade] : null;
+                const missingConsultant = (locationRequiresBoth || gradeRole === 'consultant') && consultantEntries.length === 0;
+                const missingRegistrar = (locationRequiresBoth || gradeRole === 'registrar') && registrarEntries.length === 0;
+                const offerButtonText = (role) => {
+                  if (gradeRole !== role) return `This location needs a ${role} — offer this shift for volunteering`;
+                  if (ta.required_grade === 'smo') return 'Unfilled SMO shift — offer for volunteering (SMOs only)';
+                  if (ta.required_grade === 'registrar') return 'Unfilled Registrar shift — offer for volunteering (registrars and SMOs, not interns)';
+                  return 'Unfilled Intern shift — offer for volunteering';
+                };
                 const hasMissingRequiredRole = missingConsultant || missingRegistrar;
 
                 return (
@@ -3685,6 +3700,14 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                         className="px-2 py-1 border border-gray-300 rounded text-xs"
                       />
                     </div>
+                    {gradeLabel && (
+                      <span
+                        title="Imported from a roster row with no name — only staff at this level or above can be offered it"
+                        className="px-2 py-0.5 bg-amber-100 text-amber-900 text-xs font-semibold rounded-full"
+                      >
+                        Needs {gradeLabel}
+                      </span>
+                    )}
                     {getTotalVolunteerCount(ta.theatre_activity_id) > 0 && (
                       <span className="flex items-center gap-1 px-2 py-0.5 bg-purple-100 text-purple-900 text-xs font-semibold rounded-full">
                         <Hand size={12} />
@@ -3709,7 +3732,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                           onClick={() => handleOfferForVolunteering(ta.theatre_activity_id, 'consultant')}
                           className="w-full mb-2 px-3 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-900 font-medium rounded-lg transition text-xs"
                         >
-                          This location needs a consultant — offer this shift for volunteering
+                          {offerButtonText('consultant')}
                         </button>
                       )
                     )}
@@ -3839,7 +3862,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                           onClick={() => handleOfferForVolunteering(ta.theatre_activity_id, 'registrar')}
                           className="w-full mb-2 px-3 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-900 font-medium rounded-lg transition text-xs"
                         >
-                          This location needs a registrar — offer this shift for volunteering
+                          {offerButtonText('registrar')}
                         </button>
                       )
                     )}

@@ -57,6 +57,7 @@ import { toLocalDateStr } from './dateUtils';
 import { NO_COFFEE, NO_MILK, COFFEE_TYPES, MILK_TYPES, milkIsFixedForCoffeeType, parseCoffeeOrder } from './coffeeUtils';
 import { getMondayOfWeek } from './payrollExport';
 import { isIOS } from './installPrompt';
+import { GRADE_LABEL } from './staffGrade';
 
 const SETTINGS_WEEKS_SHOWN = 4;
 const SETTINGS_DAYS_SHOWN = SETTINGS_WEEKS_SHOWN * 7;
@@ -1647,7 +1648,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
                         </p>
                       </div>
                       <div className="px-3 py-1 bg-purple-100 text-purple-900 text-xs font-semibold rounded uppercase">
-                        {opportunity.role_needed} needed
+                        {opportunity.required_grade ? GRADE_LABEL[opportunity.required_grade] : opportunity.role_needed} needed
                       </div>
                     </div>
 

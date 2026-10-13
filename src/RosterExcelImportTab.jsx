@@ -97,6 +97,10 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
   const [creatingStaff, setCreatingStaff] = useState(false);
   const [creatingProgress, setCreatingProgress] = useState(null); // { current, total }
   const [importProgress, setImportProgress] = useState(null); // { current, total }
+  // A row with shifts but no name: on → empty cards graded by the row's
+  // sheet section (unfilled, ready to offer for volunteering); off → an
+  // error and nothing written. See importRosterWeek.
+  const [addUnnamedAsUnfilled, setAddUnnamedAsUnfilled] = useState(true);
 
   // Saved fixes for import errors (roster_import_mappings) — applied to
   // every dry run / write, and editable from the results list's Map…
@@ -324,7 +328,7 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
       const { data, error: importError, deletionSummary: nextDeletionSummary } = await importRosterWeek(
         departmentId, people,
         { staffList: [...staffList, ...extraStaff], locations, activities, leaveTypes, nameMappings },
-        { dryRun, onProgress: (current, total) => setImportProgress({ current, total }) }
+        { dryRun, addUnnamedAsUnfilled, onProgress: (current, total) => setImportProgress({ current, total }) }
       );
       if (importError) throw importError;
       setResults(data);
@@ -473,7 +477,8 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
     ? activities.filter(a => draftLocation.allowed_activity_ids.includes(a.activity_id))
     : activities;
 
-  const okCount = results?.filter(r => r.ok).length ?? 0;
+  const okCount = results?.filter(r => r.ok && !r.action?.startsWith('unfilled')).length ?? 0;
+  const unfilledCount = results?.filter(r => r.ok && r.action?.startsWith('unfilled')).length ?? 0;
   const errorCount = results?.filter(r => !r.ok).length ?? 0;
 
   return (
@@ -623,6 +628,22 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
 
       {workbook && (
         <div className="mb-4">
+          {format !== 'ed' && (
+            <label className="flex items-start gap-2 mb-3 text-sm text-gray-700 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={addUnnamedAsUnfilled}
+                onChange={(e) => { setAddUnnamedAsUnfilled(e.target.checked); setResults(null); }}
+                className="mt-0.5"
+              />
+              <span>
+                Add unnamed shifts as unfilled
+                <span className="block text-xs text-gray-500">
+                  A row with shifts but no name becomes empty shifts on the roster, marked with the grade of its section (SMO, Registrar or Intern) so they can be offered for volunteering to that level and above only. Untick to leave them off the roster.
+                </span>
+              </span>
+            </label>
+          )}
           <div className="flex gap-2">
             <button
               onClick={() => runImport(true)}
@@ -674,15 +695,23 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
         <div>
           <div className="flex items-center justify-between mb-2">
             <p className="text-sm font-semibold text-gray-900">
-              {wasDryRun ? 'Dry run result' : 'Import result'} — {okCount} would {wasDryRun ? '' : 'did '}succeed, {errorCount} error{errorCount === 1 ? '' : 's'}
+              {wasDryRun ? 'Dry run result' : 'Import result'} — {okCount} would {wasDryRun ? '' : 'did '}succeed, {unfilledCount > 0 ? `${unfilledCount} unfilled, ` : ''}{errorCount} error{errorCount === 1 ? '' : 's'}
             </p>
           </div>
           <div className="max-h-96 overflow-y-auto border border-gray-200 rounded-lg divide-y divide-gray-100">
             {results.map((r, i) => (
-              <div key={i} className={`p-2 text-xs ${r.ok ? 'bg-white' : 'bg-red-50'}`}>
+              <div key={i} className={`p-2 text-xs ${!r.ok ? 'bg-red-50' : r.action?.startsWith('unfilled') ? 'bg-amber-50' : 'bg-white'}`}>
                 <span className="font-semibold text-gray-900">{r.staffName || r.rawLabel}</span>
                 {r.date && <span className="text-gray-500"> · {r.date}</span>}
-                {r.ok ? (
+                {r.action === 'unfilled' ? (
+                  <span className="text-amber-800">
+                    {' — '}Added as unfilled ({r.gradeLabel}): {r.location} / {r.activity} {r.start}–{r.end}
+                  </span>
+                ) : r.action === 'unfilled duty' ? (
+                  <span className="text-amber-800">
+                    {' — '}On-call duty with no name ({r.gradeLabel}): {r.activity} — not changed; assign it in the duty roster
+                  </span>
+                ) : r.ok ? (
                   <span className="text-gray-700">
                     {' — '}
                     {r.action === 'mark unavailable'
