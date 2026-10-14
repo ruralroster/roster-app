@@ -3387,7 +3387,9 @@ export async function getMyCallbacks(staffId) {
 }
 
 // Every completed call in a department started within [fromDate, toDate]
-// (inclusive, local dates) — the officer's Callbacks report.
+// (inclusive, local dates) — the officer's Callbacks report. Explicit
+// columns, not *: the officer record must never include patient data, so
+// nothing added to this table later can reach it by accident.
 export async function getDepartmentCallbacks(departmentId, fromDate, toDate) {
   const end = new Date(`${toLocalDateStr(toDate)}T00:00:00`);
   end.setDate(end.getDate() + 1);
@@ -3395,7 +3397,7 @@ export async function getDepartmentCallbacks(departmentId, fromDate, toDate) {
   try {
     const { data, error } = await supabase
       .from('callbacks')
-      .select('*, staff(name)')
+      .select('callback_id, staff_id, duty_date, duty_type, started_at, ended_at, staff(name)')
       .eq('department_id', departmentId)
       .not('ended_at', 'is', null)
       .gte('started_at', new Date(`${toLocalDateStr(fromDate)}T00:00:00`).toISOString())
