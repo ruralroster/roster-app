@@ -1,12 +1,18 @@
-// Pure helpers for on-call callbacks (see migrations/2026-10-14_callbacks.sql
+// Pure helpers for pay variations — on-call callbacks and overtime (see
+// migrations/2026-10-14_callbacks.sql, 2026-10-15_pay_variations_overtime.sql
 // and CallbackPanel.jsx) — kept free of Supabase/React so they can be unit
 // tested.
 
 import { toLocalDateStr } from './dateUtils';
 
-// Calls shorter than this get a "record it or discard it?" choice at Call
-// Complete; anything at or over it is recorded automatically.
-export const SHORT_CALL_MS = 10 * 60 * 1000;
+// Callbacks/overtime shorter than this get a "record it or discard it?"
+// choice when stopped; anything at or over it is recorded automatically.
+export const SHORT_CALL_MS = 15 * 60 * 1000;
+
+// The Overtime button is live from this long before a rostered shift ends
+// until OVERTIME_AFTER_MS after it ends.
+export const OVERTIME_BEFORE_END_MS = 30 * 60 * 1000;
+export const OVERTIME_AFTER_END_MS = 4 * 60 * 60 * 1000;
 
 // Minimum break after a call before the person should be back at work.
 export const FATIGUE_BREAK_MS = 10 * 60 * 60 * 1000;
@@ -31,21 +37,60 @@ export function onCallWindow(dateStr, startTime, endTime) {
   return { start, end };
 }
 
-// Which of this person's duty assignments (yesterday's and today's — an
-// overnight slot started yesterday is still live this morning) is an
-// on-call window containing `now`. Returns { date, duty_type, label, start,
-// end } or null. Duty types without times, or not counted as on call, never
-// match.
-export function findActiveOnCall(dutyAssignments, dutyTypes, now = new Date()) {
+// Every one of this person's duty assignments (yesterday's and today's — an
+// overnight slot started yesterday is still live this morning) that's an
+// on-call window containing `now` — someone can be on call for more than
+// one slot at once (e.g. ED + Anaesthetics), and gets a Callback button for
+// each. Returns [{ date, duty_type, label, start, end }]. Duty types without
+// times, or not counted as on call, never match.
+export function findActiveOnCalls(dutyAssignments, dutyTypes, now = new Date()) {
+  const result = [];
   for (const da of dutyAssignments) {
     const dt = dutyTypes.find(t => t.key === da.duty_type);
     if (!dt || !dt.counts_as_on_call || !dt.start_time || !dt.end_time) continue;
+    if (result.some(r => r.date === da.date && r.duty_type === da.duty_type)) continue;
     const { start, end } = onCallWindow(da.date, dt.start_time, dt.end_time);
     if (now >= start && now < end) {
-      return { date: da.date, duty_type: da.duty_type, label: dt.label, start, end };
+      result.push({ date: da.date, duty_type: da.duty_type, label: dt.label, start, end });
     }
   }
-  return null;
+  return result;
+}
+
+// This person's rostered shifts (staff_assignments with joined `shifts`,
+// yesterday's and today's) whose overtime window — 30 min before the shift
+// ends to 4 h after — contains `now`. One entry per date+shift (a
+// multi-session shift has several rows). On-call rows are skipped: those
+// get Callback, not Overtime. Returns [{ date, shift_id, label, end }].
+export function findOvertimeShifts(assignments, onCallShiftIds, now = new Date()) {
+  const result = [];
+  for (const a of assignments) {
+    const shift = a.shifts;
+    if (!a.shift_id || !shift?.start_time || !shift?.end_time) continue;
+    if (a.on_call || onCallShiftIds.includes(a.shift_id)) continue;
+    if (result.some(r => r.date === a.date && r.shift_id === a.shift_id)) continue;
+    const { end } = onCallWindow(a.date, shift.start_time, shift.end_time);
+    if (now >= end.getTime() - OVERTIME_BEFORE_END_MS && now < end.getTime() + OVERTIME_AFTER_END_MS) {
+      result.push({ date: a.date, shift_id: a.shift_id, label: shift.name, end });
+    }
+  }
+  return result;
+}
+
+export const VARIATION_KIND_LABEL = { callback: 'Callback', overtime: 'Overtime' };
+
+// What a stored variation row was for: the on-call slot's label, or the
+// shift's name for overtime (needs `shifts(name)` joined).
+export function variationFor(row, dutyTypes) {
+  return row.kind === 'overtime'
+    ? row.shifts?.name || ''
+    : dutyTypes.find(d => d.key === row.duty_type)?.label || row.duty_type || '';
+}
+
+// "Callback — ED On-Call" / "Overtime — Morning".
+export function variationLabel(row, dutyTypes) {
+  const what = variationFor(row, dutyTypes);
+  return `${VARIATION_KIND_LABEL[row.kind] || 'Callback'}${what ? ` — ${what}` : ''}`;
 }
 
 export function fatigueReturnTime(endedAt) {
@@ -74,13 +119,13 @@ export function formatCallDate(date) {
   return new Date(date).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-// The text file downloaded to the staff member's phone at Call Complete —
-// the only place the patient details ever go.
-export function buildCallbackNoteText({ staffName, dutyLabel, startedAt, endedAt, mrn, surname, firstName }) {
+// The text file downloaded to the staff member's phone when a variation is
+// stopped — the only place the patient details ever go.
+export function buildCallbackNoteText({ staffName, variationLabel: label, startedAt, endedAt, mrn, surname, firstName }) {
   const lines = [
-    'On-call callback',
+    'Pay variation',
     `Staff: ${staffName || ''}`,
-    `On call: ${dutyLabel || ''}`,
+    `Type: ${label || ''}`,
     `Date: ${formatCallDate(startedAt)}`,
     `Call started: ${formatClock(startedAt)}`,
     `Call completed: ${formatClock(endedAt)}`,
@@ -94,7 +139,7 @@ export function buildCallbackNoteText({ staffName, dutyLabel, startedAt, endedAt
 export function callbackNoteFilename(startedAt) {
   const d = new Date(startedAt);
   const pad = n => String(n).padStart(2, '0');
-  return `callback_${toLocalDateStr(d)}_${pad(d.getHours())}${pad(d.getMinutes())}.txt`;
+  return `variation_${toLocalDateStr(d)}_${pad(d.getHours())}${pad(d.getMinutes())}.txt`;
 }
 
 // Calls longer than this are rejected when editing times — almost

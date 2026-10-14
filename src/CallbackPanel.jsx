@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { PhoneCall, PhoneOff, AlertCircle, Loader, Download, X, Moon, Trash2, Pencil } from 'lucide-react';
+import { PhoneCall, PhoneOff, AlertCircle, Loader, Download, X, Moon, Trash2, Pencil, Clock } from 'lucide-react';
 import {
-  getMyActiveOnCall,
+  getMyVariationOptions,
   getMyOpenCallback,
   startCallback,
   completeCallback,
@@ -21,33 +21,37 @@ import {
   callbackNoteFilename,
   toDateTimeLocalValue,
   validateCallTimes,
+  variationLabel,
+  variationFor,
+  VARIATION_KIND_LABEL,
 } from './callbackUtils';
 import { buildCsv, downloadTextFile } from './icsExport';
 
-const CALLBACK_CSV_COLUMNS = [
+const VARIATION_CSV_COLUMNS = [
   { header: 'Date', value: c => formatCallDate(c.started_at) },
-  { header: 'On Call', value: c => c.duty_label },
-  { header: 'Call Started', value: c => formatClock(c.started_at) },
-  { header: 'Call Completed', value: c => formatClock(c.ended_at) },
+  { header: 'Type', value: c => VARIATION_KIND_LABEL[c.kind] || 'Callback' },
+  { header: 'For', value: c => c.for },
+  { header: 'Started', value: c => formatClock(c.started_at) },
+  { header: 'Finished', value: c => formatClock(c.ended_at) },
   { header: 'Duration (min)', value: c => Math.round((new Date(c.ended_at) - new Date(c.started_at)) / 60000) },
 ];
 
-const dutyLabelFor = (dutyTypes, key) => dutyTypes.find(d => d.key === key)?.label || key;
-
-// "Call Active" / "Call Complete" card shown at the very top of the staff
-// Variation tab — only while this person is inside one of their own
-// on-call windows, or has a call still running (so a call that runs past
-// the end of the on-call can still be completed). Calls onRecorded after
-// a call is kept, so the My Callbacks list below can refresh.
+// "Variations" card shown at the very top of the staff Variation tab: one
+// Callback button per on-call slot this person is inside right now, and an
+// Overtime button per rostered shift in its overtime window (30 min before
+// it ends to 4 h after). While one is running it becomes a timer with a
+// Stop button — shown even if the on-call/overtime window has since ended,
+// so it can always be stopped. Calls onRecorded after one is kept, so the
+// My Variations list below can refresh.
 export function CallbackBanner({ staffId, departmentId, staffName, dutyTypes, onRecorded }) {
-  const [activeOnCall, setActiveOnCall] = useState(null);
+  const [options, setOptions] = useState({ onCalls: [], shifts: [] });
   const [openCall, setOpenCall] = useState(null);
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [now, setNow] = useState(() => new Date());
 
-  // Call Complete flow: 'confirm-short' (under 10 min: keep or discard?)
+  // Stop flow: 'confirm-short' (under 15 min: keep or discard?)
   // → 'patient' (optional MRN/name, downloaded only) → fatigue notice.
   const [completeStep, setCompleteStep] = useState(null);
   const [completedCall, setCompletedCall] = useState(null); // { started_at, ended_at, callback_id? }
@@ -58,18 +62,18 @@ export function CallbackBanner({ staffId, departmentId, staffName, dutyTypes, on
 
   const refresh = useCallback(async () => {
     if (!staffId || !departmentId) return;
-    const [{ data: onCall, error: onCallErr }, { data: open, error: openErr }] = await Promise.all([
-      getMyActiveOnCall(staffId, departmentId),
+    const [{ data: opts, error: optsErr }, { data: open, error: openErr }] = await Promise.all([
+      getMyVariationOptions(staffId, departmentId),
       getMyOpenCallback(staffId),
     ]);
-    if (onCallErr || openErr) setError(`Couldn't check your on-call status: ${(onCallErr || openErr).message}`);
-    setActiveOnCall(onCall);
+    if (optsErr || openErr) setError(`Couldn't check your on-call/shift status: ${(optsErr || openErr).message}`);
+    setOptions(opts);
     setOpenCall(open);
     setLoaded(true);
   }, [staffId, departmentId]);
 
-  // Re-check every minute, so the button appears/disappears as an on-call
-  // window starts/ends while the app is open.
+  // Re-check every minute, so buttons appear/disappear as on-call and
+  // overtime windows start/end while the app is open.
   useEffect(() => {
     refresh();
     const id = setInterval(refresh, 60 * 1000);
@@ -91,13 +95,12 @@ export function CallbackBanner({ staffId, departmentId, staffName, dutyTypes, on
     return () => clearTimeout(id);
   }, [fatigueUntil]);
 
-  const handleCallActive = async () => {
-    if (!activeOnCall) return;
+  const handleStart = async (start) => {
     setBusy(true);
-    const { data, error: err } = await startCallback(departmentId, staffId, activeOnCall.date, activeOnCall.duty_type);
+    const { data, error: err } = await startCallback(departmentId, staffId, start);
     setBusy(false);
     if (err) {
-      setError(`Couldn't start the call: ${err.message}`);
+      setError(`Couldn't start: ${err.message}`);
       refresh();
       return;
     }
@@ -154,7 +157,7 @@ export function CallbackBanner({ staffId, departmentId, staffName, dutyTypes, on
   const handleDownloadNote = () => {
     downloadTextFile(callbackNoteFilename(completedCall.started_at), 'text/plain', buildCallbackNoteText({
       staffName,
-      dutyLabel: dutyLabelFor(dutyTypes, completedCall.duty_type),
+      variationLabel: variationLabel(completedCall, dutyTypes),
       startedAt: completedCall.started_at,
       endedAt: completedCall.ended_at,
       mrn: mrn.trim(),
@@ -182,7 +185,7 @@ export function CallbackBanner({ staffId, departmentId, staffName, dutyTypes, on
           Please don't reattend until <span className="font-bold">{formatClock(fatigueUntil)}</span>
           {' '}({fatigueUntil.toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })}).
         </p>
-        <p className="text-sm text-indigo-200 mt-4">10 hours after your call ended.</p>
+        <p className="text-sm text-indigo-200 mt-4">10 hours after you finished.</p>
       </div>
     </div>
   );
@@ -192,9 +195,9 @@ export function CallbackBanner({ staffId, departmentId, staffName, dutyTypes, on
       <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
         {completeStep === 'confirm-short' ? (
           <>
-            <h2 className="text-xl font-bold text-gray-900 mb-2">Short call</h2>
+            <h2 className="text-xl font-bold text-gray-900 mb-2">Under 15 minutes</h2>
             <p className="text-sm text-gray-700 mb-6">
-              This call lasted {formatDuration(new Date(completedCall.ended_at) - new Date(completedCall.started_at))} — under 10 minutes. Do you want to record it?
+              This {completedCall.kind === 'overtime' ? 'overtime' : 'call'} lasted {formatDuration(new Date(completedCall.ended_at) - new Date(completedCall.started_at))} — under 15 minutes. Do you want to record it?
             </p>
             <div className="flex gap-3">
               <button
@@ -216,14 +219,14 @@ export function CallbackBanner({ staffId, departmentId, staffName, dutyTypes, on
         ) : (
           <>
             <div className="flex items-start justify-between mb-2">
-              <h2 className="text-xl font-bold text-gray-900">Call recorded</h2>
+              <h2 className="text-xl font-bold text-gray-900">{VARIATION_KIND_LABEL[completedCall.kind] || 'Callback'} recorded</h2>
               <button onClick={finishPatientStep} className="p-1 hover:bg-gray-100 rounded-lg"><X size={20} /></button>
             </div>
             <p className="text-sm text-gray-700 mb-1">
               {formatClock(completedCall.started_at)} – {formatClock(completedCall.ended_at)} ({formatDuration(new Date(completedCall.ended_at) - new Date(completedCall.started_at))})
             </p>
             <p className="text-xs text-gray-500 mb-4">
-              Optional: who was the call about? This is <span className="font-semibold">only saved to a text file on this phone</span> — the app never stores patient details.
+              Optional: which patient was this for? This is <span className="font-semibold">only saved to a text file on this phone</span> — the app never stores patient details.
             </p>
             <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">MRN</label>
             <input value={mrn} onChange={e => setMrn(e.target.value)} inputMode="numeric" autoComplete="off" className="w-full px-3 py-2 border border-gray-300 rounded-lg mb-3" />
@@ -256,7 +259,8 @@ export function CallbackBanner({ staffId, departmentId, staffName, dutyTypes, on
     </div>
   );
 
-  if (!loaded || (!activeOnCall && !openCall)) {
+  const hasOptions = options.onCalls.length > 0 || options.shifts.length > 0;
+  if (!loaded || (!hasOptions && !openCall)) {
     return <>{completeModal}{fatigueNotice}</>;
   }
 
@@ -264,7 +268,7 @@ export function CallbackBanner({ staffId, departmentId, staffName, dutyTypes, on
     <>
       {openCall ? (
         <div className="bg-red-600 text-white rounded-lg shadow-sm p-6 mb-6">
-          <p className="text-xs font-semibold uppercase tracking-wide text-red-100">Call in progress · {dutyLabelFor(dutyTypes, openCall.duty_type)}</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-red-100">In progress · {variationLabel(openCall, dutyTypes)}</p>
           <p className="text-4xl font-bold font-mono my-2">{formatElapsed(now - new Date(openCall.started_at))}</p>
           <p className="text-sm text-red-100 mb-4">Started {formatClock(openCall.started_at)}</p>
           <button
@@ -273,23 +277,43 @@ export function CallbackBanner({ staffId, departmentId, staffName, dutyTypes, on
             className="w-full py-4 bg-white text-red-700 text-lg font-bold rounded-lg flex items-center justify-center gap-2 disabled:opacity-50"
           >
             {busy ? <Loader size={20} className="animate-spin" /> : <PhoneOff size={20} />}
-            Call Complete
+            {openCall.kind === 'overtime' ? 'Overtime Complete' : 'Call Complete'}
           </button>
         </div>
       ) : (
-        <div className="bg-green-600 text-white rounded-lg shadow-sm p-6 mb-6">
-          <p className="text-xs font-semibold uppercase tracking-wide text-green-100">You're on call</p>
-          <p className="text-lg font-bold mb-4">
-            {activeOnCall.label} · until {formatClock(activeOnCall.end)}
-          </p>
-          <button
-            onClick={handleCallActive}
-            disabled={busy}
-            className="w-full py-4 bg-white text-green-700 text-lg font-bold rounded-lg flex items-center justify-center gap-2 disabled:opacity-50"
-          >
-            {busy ? <Loader size={20} className="animate-spin" /> : <PhoneCall size={20} />}
-            Call Active
-          </button>
+        <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
+          <h1 className="text-2xl font-bold text-gray-900">Variations</h1>
+          <p className="text-sm text-gray-500 mb-4">Tap when it starts — tap again when you're done.</p>
+          <div className="space-y-3">
+            {options.onCalls.map(oc => (
+              <button
+                key={`${oc.date}-${oc.duty_type}`}
+                onClick={() => handleStart({ kind: 'callback', dutyDate: oc.date, dutyType: oc.duty_type })}
+                disabled={busy}
+                className="w-full py-4 px-4 bg-green-600 hover:bg-green-700 text-white rounded-lg flex items-center gap-3 disabled:opacity-50 text-left"
+              >
+                {busy ? <Loader size={22} className="animate-spin flex-shrink-0" /> : <PhoneCall size={22} className="flex-shrink-0" />}
+                <span>
+                  <span className="block text-lg font-bold">Callback — {oc.label}</span>
+                  <span className="block text-xs text-green-100">On call until {formatClock(oc.end)}</span>
+                </span>
+              </button>
+            ))}
+            {options.shifts.map(sh => (
+              <button
+                key={`${sh.date}-${sh.shift_id}`}
+                onClick={() => handleStart({ kind: 'overtime', dutyDate: sh.date, shiftId: sh.shift_id })}
+                disabled={busy}
+                className="w-full py-4 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg flex items-center gap-3 disabled:opacity-50 text-left"
+              >
+                {busy ? <Loader size={22} className="animate-spin flex-shrink-0" /> : <Clock size={22} className="flex-shrink-0" />}
+                <span>
+                  <span className="block text-lg font-bold">Overtime — {sh.label}</span>
+                  <span className="block text-xs text-blue-100">Shift ends {formatClock(sh.end)}</span>
+                </span>
+              </button>
+            ))}
+          </div>
         </div>
       )}
       {error && (
@@ -304,9 +328,9 @@ export function CallbackBanner({ staffId, departmentId, staffName, dutyTypes, on
   );
 }
 
-// "My Callbacks" — this person's recorded calls (times only), to copy into
-// the payroll variation form. Times can be corrected (e.g. Call Complete
-// tapped late); download as CSV, then delete once submitted.
+// "My Variations" — this person's recorded callbacks and overtime (times
+// only), to copy into the payroll variation form. Times can be corrected
+// (e.g. Complete tapped late); download as CSV, then delete once submitted.
 export function MyCallbacks({ staffId, dutyTypes, refreshKey }) {
   const [callbacks, setCallbacks] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -323,20 +347,20 @@ export function MyCallbacks({ staffId, dutyTypes, refreshKey }) {
     const load = async () => {
       setLoading(true);
       const { data, error: err } = await getMyCallbacks(staffId);
-      setError(err ? `Failed to load your callbacks: ${err.message}` : null);
+      setError(err ? `Failed to load your variations: ${err.message}` : null);
       setCallbacks(data);
       setLoading(false);
     };
     load();
   }, [staffId, refreshKey]);
 
-  const rows = callbacks.map(c => ({ ...c, duty_label: dutyLabelFor(dutyTypes, c.duty_type) }));
+  const rows = callbacks.map(c => ({ ...c, label: variationLabel(c, dutyTypes), for: variationFor(c, dutyTypes) }));
   const totalMs = rows.reduce((sum, c) => sum + (new Date(c.ended_at) - new Date(c.started_at)), 0);
 
   const handleDelete = async (ids) => {
     const message = ids.length === 1
-      ? 'Delete this callback record? Make sure it is on your payroll variation form first.'
-      : `Delete all ${ids.length} callback records? Make sure they are on your payroll variation form first.`;
+      ? 'Delete this record? Make sure it is on your payroll variation form first.'
+      : `Delete all ${ids.length} records? Make sure they are on your payroll variation form first.`;
     if (!window.confirm(message)) return;
     for (const id of ids) {
       const { error: err } = await deleteCallback(id);
@@ -382,7 +406,7 @@ export function MyCallbacks({ staffId, dutyTypes, refreshKey }) {
   return (
     <>
       <p className="text-xs text-gray-600 mb-4">
-        Calls you've recorded while on call — use these for your payroll variation form. Tap the pencil to correct a time. Download them, then delete them once submitted.
+        Callbacks and overtime you've recorded — use these for your payroll variation form. Tap the pencil to correct a time. Download them, then delete them once submitted.
       </p>
       {error && (
         <div className="mb-4 p-3 bg-red-50 border border-red-300 rounded-lg flex gap-2 items-start">
@@ -391,14 +415,14 @@ export function MyCallbacks({ staffId, dutyTypes, refreshKey }) {
         </div>
       )}
       {rows.length === 0 ? (
-        <p className="text-sm text-gray-500">No callbacks recorded.</p>
+        <p className="text-sm text-gray-500">No variations recorded.</p>
       ) : (
         <>
           <div className="flex items-center justify-between mb-3">
-            <p className="text-sm text-gray-700">{rows.length} call{rows.length === 1 ? '' : 's'} · {formatDuration(totalMs)} total</p>
+            <p className="text-sm text-gray-700">{rows.length} record{rows.length === 1 ? '' : 's'} · {formatDuration(totalMs)} total</p>
             <div className="flex gap-2">
               <button
-                onClick={() => downloadTextFile('my_callbacks.csv', 'text/csv', buildCsv(CALLBACK_CSV_COLUMNS, rows))}
+                onClick={() => downloadTextFile('my_variations.csv', 'text/csv', buildCsv(VARIATION_CSV_COLUMNS, rows))}
                 className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-medium rounded-lg transition flex items-center gap-1.5"
               >
                 <Download size={14} />
@@ -415,9 +439,9 @@ export function MyCallbacks({ staffId, dutyTypes, refreshKey }) {
           <div className="divide-y divide-gray-200 border border-gray-200 rounded-lg">
             {rows.map(c => (editingId === c.callback_id ? (
               <div key={c.callback_id} className="px-3 py-3 bg-blue-50">
-                <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">Call started</label>
+                <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">Started</label>
                 <input type="datetime-local" value={editStart} onChange={e => setEditStart(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg mb-3" />
-                <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">Call completed</label>
+                <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">Finished</label>
                 <input type="datetime-local" value={editEnd} onChange={e => setEditEnd(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg mb-3" />
                 {editError && <p className="text-sm text-red-700 mb-3">{editError}</p>}
                 <div className="flex gap-2">
@@ -438,7 +462,7 @@ export function MyCallbacks({ staffId, dutyTypes, refreshKey }) {
                 <div>
                   <p className="text-sm font-medium text-gray-900">{formatCallDate(c.started_at)}</p>
                   <p className="text-xs text-gray-600">
-                    {formatClock(c.started_at)} – {formatClock(c.ended_at)} · {formatDuration(new Date(c.ended_at) - new Date(c.started_at))} · {c.duty_label}
+                    {formatClock(c.started_at)} – {formatClock(c.ended_at)} · {formatDuration(new Date(c.ended_at) - new Date(c.started_at))} · {c.label}
                     {c.edited_at && <span className="ml-1 text-amber-700">· edited</span>}
                   </p>
                 </div>

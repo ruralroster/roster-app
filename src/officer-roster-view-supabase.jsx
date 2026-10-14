@@ -5399,7 +5399,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
             </CollapsibleSection>
 
             {/* Reports & Compliance Group — Case Mix Report,
-                On-Call & Weekend Fairness, On-Call Callbacks, Rule Violations */}
+                On-Call & Weekend Fairness, Pay Variations, Rule Violations */}
             <CollapsibleSection title="Reports & Compliance">
             {/* Case Mix Report Section */}
             <CollapsibleSection title="Case Mix Report">
@@ -5411,8 +5411,9 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
               <FairnessReport departmentId={departmentId} refreshKey={staffVersion} />
             </CollapsibleSection>
 
-            {/* On-call callbacks staff recorded from their Variation tab */}
-            <CollapsibleSection title="On-Call Callbacks">
+            {/* Pay variations (callbacks + overtime) staff recorded from
+                their Variation tab */}
+            <CollapsibleSection title="Pay Variations">
               <CallbacksReport departmentId={departmentId} refreshKey={staffVersion} />
             </CollapsibleSection>
 

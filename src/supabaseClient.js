@@ -5,7 +5,7 @@ import { getSessionGroups, dedupeAssignmentsByShift, assignmentShiftKey } from '
 import { getMondayOfWeek } from './payrollExport';
 import { matchStaffName, staffLabelKey } from './rosterExcelImport';
 import { gradeForSection, gradeForRank, gradeCanCover, GRADE_LABEL } from './staffGrade';
-import { findActiveOnCall } from './callbackUtils';
+import { findActiveOnCalls, findOvertimeShifts } from './callbackUtils';
 
 console.log('=== supabaseClient.js LOADING ===');
 console.log('Checking environment variables...');
@@ -3279,40 +3279,67 @@ export async function clearVolunteerRequestsForRole(theatreActivityId, role) {
 }
 
 // ============================================================
-// CALLBACKS — see migrations/2026-10-14_callbacks.sql. Start/end times of
-// calls a staff member took while on call, for their payroll variation
-// form. No patient details are ever sent here (see CallbackPanel.jsx).
+// PAY VARIATIONS — see migrations/2026-10-14_callbacks.sql and
+// 2026-10-15_pay_variations_overtime.sql. Start/end times of callbacks
+// (called in while on call) and overtime (stayed back past a rostered
+// shift), for the staff member's payroll variation form. Stored in the
+// `callbacks` table, kind = 'callback' | 'overtime'. No patient details are
+// ever sent here (see CallbackPanel.jsx).
 // ============================================================
 
-// This staff member's on-call window that's live right now, if any —
-// checks yesterday's and today's duty_assignments, since an overnight slot
-// (e.g. 21:00-08:00) assigned yesterday is still running this morning.
-export async function getMyActiveOnCall(staffId, departmentId, now = new Date()) {
+// What this staff member can start a pay variation for right now:
+// `onCalls` — each on-call slot they're inside (one Callback button each;
+// someone can be on call for ED and Anaesthetics at once), and `shifts` —
+// each rostered shift in its overtime window (see findOvertimeShifts).
+// Checks yesterday's and today's rows, since overnight slots/shifts started
+// yesterday are still running this morning.
+export async function getMyVariationOptions(staffId, departmentId, now = new Date()) {
   const yesterday = new Date(now);
   yesterday.setDate(yesterday.getDate() - 1);
+  const fromStr = toLocalDateStr(yesterday);
+  const toStr = toLocalDateStr(now);
 
   try {
-    const [dutyRes, dutyTypesRes] = await Promise.all([
+    const [dutyRes, dutyTypesRes, assignRes] = await Promise.all([
       supabase
         .from('duty_assignments')
         .select('date, duty_type')
         .eq('department_id', departmentId)
         .eq('staff_id', staffId)
-        .gte('date', toLocalDateStr(yesterday))
-        .lte('date', toLocalDateStr(now)),
+        .gte('date', fromStr)
+        .lte('date', toStr),
       supabase
         .from('duty_types')
-        .select('key, label, counts_as_on_call, start_time, end_time')
+        .select('key, label, counts_as_on_call, start_time, end_time, shift_id')
         .eq('department_id', departmentId)
         .eq('active', true),
+      supabase
+        .from('staff_assignments')
+        .select('date, shift_id, on_call, shifts(name, start_time, end_time)')
+        .eq('department_id', departmentId)
+        .eq('staff_id', staffId)
+        .gte('date', fromStr)
+        .lte('date', toStr),
     ]);
     if (dutyRes.error) throw dutyRes.error;
     if (dutyTypesRes.error) throw dutyTypesRes.error;
+    if (assignRes.error) throw assignRes.error;
 
-    return { data: findActiveOnCall(dutyRes.data || [], dutyTypesRes.data || [], now), error: null };
+    const dutyTypes = dutyTypesRes.data || [];
+    // Every duty type's own linked "<label> On Call" shift — those
+    // staff_assignments rows are on-call cards, not shifts to claim
+    // overtime on.
+    const onCallShiftIds = dutyTypes.map(d => d.shift_id).filter(Boolean);
+    return {
+      data: {
+        onCalls: findActiveOnCalls(dutyRes.data || [], dutyTypes, now),
+        shifts: findOvertimeShifts(assignRes.data || [], onCallShiftIds, now),
+      },
+      error: null,
+    };
   } catch (err) {
-    console.error('getMyActiveOnCall error:', err);
-    return { data: null, error: err };
+    console.error('getMyVariationOptions error:', err);
+    return { data: { onCalls: [], shifts: [] }, error: err };
   }
 }
 
@@ -3321,7 +3348,7 @@ export async function getMyOpenCallback(staffId) {
   try {
     const { data, error } = await supabase
       .from('callbacks')
-      .select('*')
+      .select('*, shifts(name)')
       .eq('staff_id', staffId)
       .is('ended_at', null)
       .maybeSingle();
@@ -3332,12 +3359,14 @@ export async function getMyOpenCallback(staffId) {
   }
 }
 
-export async function startCallback(departmentId, staffId, dutyDate, dutyType) {
+// kind 'callback': { dutyDate, dutyType }; kind 'overtime': { dutyDate,
+// shiftId } — dutyDate is the date the on-call/shift started.
+export async function startCallback(departmentId, staffId, { kind, dutyDate, dutyType = null, shiftId = null }) {
   try {
     const { data, error } = await supabase
       .from('callbacks')
-      .insert([{ department_id: departmentId, staff_id: staffId, duty_date: dutyDate, duty_type: dutyType }])
-      .select()
+      .insert([{ department_id: departmentId, staff_id: staffId, kind, duty_date: dutyDate, duty_type: dutyType, shift_id: shiftId }])
+      .select('*, shifts(name)')
       .single();
 
     return { data, error };
@@ -3352,7 +3381,7 @@ export async function completeCallback(callbackId, endedAt = new Date()) {
       .from('callbacks')
       .update({ ended_at: new Date(endedAt).toISOString() })
       .eq('callback_id', callbackId)
-      .select()
+      .select('*, shifts(name)')
       .single();
 
     return { data, error };
@@ -3373,7 +3402,7 @@ export async function updateCallbackTimes(callbackId, startedAt, endedAt) {
         edited_at: new Date().toISOString(),
       })
       .eq('callback_id', callbackId)
-      .select()
+      .select('*, shifts(name)')
       .single();
 
     return { data, error };
@@ -3396,7 +3425,7 @@ export async function getMyCallbacks(staffId) {
   try {
     const { data, error } = await supabase
       .from('callbacks')
-      .select('*')
+      .select('*, shifts(name)')
       .eq('staff_id', staffId)
       .not('ended_at', 'is', null)
       .order('started_at', { ascending: false });
@@ -3407,8 +3436,8 @@ export async function getMyCallbacks(staffId) {
   }
 }
 
-// Every completed call in a department started within [fromDate, toDate]
-// (inclusive, local dates) — the officer's Callbacks report. Explicit
+// Every completed variation in a department started within [fromDate,
+// toDate] (inclusive, local dates) — the officer's Pay Variations report. Explicit
 // columns, not *: the officer record must never include patient data, so
 // nothing added to this table later can reach it by accident.
 export async function getDepartmentCallbacks(departmentId, fromDate, toDate) {
@@ -3418,7 +3447,7 @@ export async function getDepartmentCallbacks(departmentId, fromDate, toDate) {
   try {
     const { data, error } = await supabase
       .from('callbacks')
-      .select('callback_id, staff_id, duty_date, duty_type, started_at, ended_at, edited_at, staff(name)')
+      .select('callback_id, staff_id, kind, duty_date, duty_type, shift_id, started_at, ended_at, edited_at, staff(name), shifts(name)')
       .eq('department_id', departmentId)
       .not('ended_at', 'is', null)
       .gte('started_at', new Date(`${toLocalDateStr(fromDate)}T00:00:00`).toISOString())

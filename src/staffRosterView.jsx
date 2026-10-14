@@ -188,7 +188,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
   const [sickRecipients, setSickRecipients] = useState([]);
   const [loadingSickRecipients, setLoadingSickRecipients] = useState(false);
   const [sickMessage, setSickMessage] = useState('');
-  // Bumped when a callback is recorded, so My Callbacks reloads.
+  // Bumped when a callback/overtime is recorded, so My Variations reloads.
   const [callbacksVersion, setCallbacksVersion] = useState(0);
 
   // Search state
@@ -1605,8 +1605,9 @@ export default function StaffRosterView({ departmentId, staffId }) {
       return (
         <div className="p-4 pb-24">
           <div className="max-w-2xl mx-auto">
-            {/* On-call "Call Active" / "Call Complete" — always first, above
-                Available Shifts, and only shown while on call. */}
+            {/* Variations — Callback (one per on-call slot) / Overtime
+                buttons. Always first, above Available Shifts, and only
+                shown while on call or near the end of a rostered shift. */}
             <CallbackBanner
               staffId={staffId}
               departmentId={departmentId}
@@ -1724,7 +1725,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
             </div>
 
             <div className="mt-6">
-              <CollapsibleSection title="My Callbacks">
+              <CollapsibleSection title="My Variations">
                 <MyCallbacks staffId={staffId} dutyTypes={dutyTypes} refreshKey={callbacksVersion} />
               </CollapsibleSection>
             </div>
