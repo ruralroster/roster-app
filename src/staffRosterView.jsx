@@ -1605,9 +1605,9 @@ export default function StaffRosterView({ departmentId, staffId }) {
       return (
         <div className="p-4 pb-24">
           <div className="max-w-2xl mx-auto">
-            {/* Variations — Callback (one per on-call slot) / Overtime
-                buttons. Always first, above Available Shifts, and only
-                shown while on call or near the end of a rostered shift. */}
+            {/* Order: Variations (Callback per on-call slot / Overtime
+                buttons — only while on call or near the end of a rostered
+                shift), My Variations, Notify Sick, then Available Shifts. */}
             <CallbackBanner
               staffId={staffId}
               departmentId={departmentId}
@@ -1615,6 +1615,46 @@ export default function StaffRosterView({ departmentId, staffId }) {
               dutyTypes={dutyTypes}
               onRecorded={() => setCallbacksVersion(v => v + 1)}
             />
+            <CollapsibleSection title="My Variations">
+              <MyCallbacks staffId={staffId} dutyTypes={dutyTypes} refreshKey={callbacksVersion} />
+            </CollapsibleSection>
+
+            {/* Shared error box for Notify Sick and Volunteer below */}
+            {volunteerError && (
+              <div className="mb-6 p-3 bg-red-50 border border-red-300 rounded-lg flex gap-2 items-start">
+                <AlertCircle size={18} className="text-red-600 flex-shrink-0 mt-0.5" />
+                <p className="text-sm text-red-700">{volunteerError}</p>
+              </div>
+            )}
+
+            <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
+              <h2 className="text-lg font-bold text-gray-900 mb-1">Notify Sick</h2>
+              <p className="text-sm text-gray-500 mb-4">
+                {todayHasShift
+                  ? "Let your officer know you can't make today's shift."
+                  : "You don't have a shift scheduled today."}
+              </p>
+              {mySickReportToday ? (
+                <p className={`text-sm font-medium text-center py-2 rounded-lg ${
+                  mySickReportToday.status === 'approved' ? 'bg-green-50 text-green-800'
+                  : mySickReportToday.status === 'denied' ? 'bg-red-50 text-red-800'
+                  : 'bg-orange-50 text-orange-800'
+                }`}>
+                  {mySickReportToday.status === 'approved' && 'Approved by your officer.'}
+                  {mySickReportToday.status === 'denied' && 'Your officer denied this report — get in touch with them directly.'}
+                  {mySickReportToday.status === 'pending' && "Sent — your supervisors will see it next time they open the app. Waiting on your officer's approval."}
+                </p>
+              ) : (
+                <button
+                  onClick={handleOpenSickModal}
+                  disabled={!todayHasShift}
+                  className="w-full bg-red-600 hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-medium py-2 rounded-lg transition"
+                >
+                  Notify Sick
+                </button>
+              )}
+            </div>
+
             <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
               <h1 className="text-2xl font-bold text-gray-900">Available Shifts</h1>
               <p className="text-sm text-gray-500">Shifts your officers have opened up for volunteering, over the next 30 days</p>
@@ -1627,12 +1667,6 @@ export default function StaffRosterView({ departmentId, staffId }) {
                   />
                   Hide registrar shifts
                 </label>
-              )}
-              {volunteerError && (
-                <div className="mt-4 p-3 bg-red-50 border border-red-300 rounded-lg flex gap-2 items-start">
-                  <AlertCircle size={18} className="text-red-600 flex-shrink-0 mt-0.5" />
-                  <p className="text-sm text-red-700">{volunteerError}</p>
-                </div>
               )}
             </div>
 
@@ -1695,40 +1729,6 @@ export default function StaffRosterView({ departmentId, staffId }) {
                 ))}
               </div>
             )}
-
-            <div className="bg-white rounded-lg shadow-sm p-6 mt-6">
-              <h2 className="text-lg font-bold text-gray-900 mb-1">Notify Sick</h2>
-              <p className="text-sm text-gray-500 mb-4">
-                {todayHasShift
-                  ? "Let your officer know you can't make today's shift."
-                  : "You don't have a shift scheduled today."}
-              </p>
-              {mySickReportToday ? (
-                <p className={`text-sm font-medium text-center py-2 rounded-lg ${
-                  mySickReportToday.status === 'approved' ? 'bg-green-50 text-green-800'
-                  : mySickReportToday.status === 'denied' ? 'bg-red-50 text-red-800'
-                  : 'bg-orange-50 text-orange-800'
-                }`}>
-                  {mySickReportToday.status === 'approved' && 'Approved by your officer.'}
-                  {mySickReportToday.status === 'denied' && 'Your officer denied this report — get in touch with them directly.'}
-                  {mySickReportToday.status === 'pending' && "Sent — your supervisors will see it next time they open the app. Waiting on your officer's approval."}
-                </p>
-              ) : (
-                <button
-                  onClick={handleOpenSickModal}
-                  disabled={!todayHasShift}
-                  className="w-full bg-red-600 hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-medium py-2 rounded-lg transition"
-                >
-                  Notify Sick
-                </button>
-              )}
-            </div>
-
-            <div className="mt-6">
-              <CollapsibleSection title="My Variations">
-                <MyCallbacks staffId={staffId} dutyTypes={dutyTypes} refreshKey={callbacksVersion} />
-              </CollapsibleSection>
-            </div>
 
             {showSickModal && (
               <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
