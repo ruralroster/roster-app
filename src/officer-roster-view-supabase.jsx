@@ -6,6 +6,7 @@ import StaffAvailabilityTab from './StaffAvailabilityTab';
 import ShiftPatternRulesUI from './ShiftPatternRulesUI';
 import CaseMixReport from './CaseMixReport';
 import FairnessReport from './FairnessReport';
+import CallbacksReport from './CallbacksReport';
 import RuleViolationsReport, { createDefaultRuleCheckState } from './RuleViolationsReport';
 import InvestigateViolationModal from './InvestigateViolationModal';
 import DayReviewModal from './DayReviewModal';
@@ -1270,6 +1271,12 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
 
   const handleCreateDutyType = async () => {
     if (!newDutyTypeLabel.trim() || !departmentId) return;
+    // On-call slots need a start/end so the staff app knows when the
+    // "Call Active" callback button is live (see CallbackPanel.jsx).
+    if (newDutyTypeCountsAsOnCall && !(newDutyTypeStartTime && newDutyTypeEndTime)) {
+      setError('On-call duty types need a start and end time.');
+      return;
+    }
 
     try {
       const nextSortOrder = refData.dutyTypes.reduce((max, d) => Math.max(max, d.sort_order), -1) + 1;
@@ -1298,6 +1305,10 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
 
   const handleUpdateDutyType = async () => {
     if (!editingDutyTypeId || !editDutyTypeLabel.trim()) return;
+    if (editDutyTypeCountsAsOnCall && !(editDutyTypeStartTime && editDutyTypeEndTime)) {
+      setError('On-call duty types need a start and end time.');
+      return;
+    }
 
     try {
       const editingDutyType = refData.dutyTypes.find(d => d.duty_type_id === editingDutyTypeId);
@@ -5388,7 +5399,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
             </CollapsibleSection>
 
             {/* Reports & Compliance Group — Case Mix Report,
-                On-Call & Weekend Fairness, Rule Violations */}
+                On-Call & Weekend Fairness, On-Call Callbacks, Rule Violations */}
             <CollapsibleSection title="Reports & Compliance">
             {/* Case Mix Report Section */}
             <CollapsibleSection title="Case Mix Report">
@@ -5398,6 +5409,11 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
             {/* On-Call / Weekend Fairness Section */}
             <CollapsibleSection title="On-Call & Weekend Fairness">
               <FairnessReport departmentId={departmentId} refreshKey={staffVersion} />
+            </CollapsibleSection>
+
+            {/* On-call callbacks staff recorded from their Variation tab */}
+            <CollapsibleSection title="On-Call Callbacks">
+              <CallbacksReport departmentId={departmentId} refreshKey={staffVersion} />
             </CollapsibleSection>
 
             {/* Rule Violations Section — ED-specific hard scheduling rules

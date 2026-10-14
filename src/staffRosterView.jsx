@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight, ChevronDown, X, AlertCircle, Loader, Search,
 import TwoFactorSettings from './TwoFactorSettings';
 import ChangePassword from './ChangePassword';
 import StaffWalkthrough from './StaffWalkthrough';
+import { CallbackBanner, MyCallbacks } from './CallbackPanel';
 import {
   getStaffById,
   getStaffAssignmentsForStaffDate,
@@ -187,6 +188,8 @@ export default function StaffRosterView({ departmentId, staffId }) {
   const [sickRecipients, setSickRecipients] = useState([]);
   const [loadingSickRecipients, setLoadingSickRecipients] = useState(false);
   const [sickMessage, setSickMessage] = useState('');
+  // Bumped when a callback is recorded, so My Callbacks reloads.
+  const [callbacksVersion, setCallbacksVersion] = useState(0);
 
   // Search state
   const [searchQuery, setSearchQuery] = useState('');
@@ -1602,6 +1605,15 @@ export default function StaffRosterView({ departmentId, staffId }) {
       return (
         <div className="p-4 pb-24">
           <div className="max-w-2xl mx-auto">
+            {/* On-call "Call Active" / "Call Complete" — always first, above
+                Available Shifts, and only shown while on call. */}
+            <CallbackBanner
+              staffId={staffId}
+              departmentId={departmentId}
+              staffName={staffMember?.name}
+              dutyTypes={dutyTypes}
+              onRecorded={() => setCallbacksVersion(v => v + 1)}
+            />
             <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
               <h1 className="text-2xl font-bold text-gray-900">Available Shifts</h1>
               <p className="text-sm text-gray-500">Shifts your officers have opened up for volunteering, over the next 30 days</p>
@@ -1709,6 +1721,12 @@ export default function StaffRosterView({ departmentId, staffId }) {
                   Notify Sick
                 </button>
               )}
+            </div>
+
+            <div className="mt-6">
+              <CollapsibleSection title="My Callbacks">
+                <MyCallbacks staffId={staffId} dutyTypes={dutyTypes} refreshKey={callbacksVersion} />
+              </CollapsibleSection>
             </div>
 
             {showSickModal && (

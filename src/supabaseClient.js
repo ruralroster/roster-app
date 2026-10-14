@@ -5,6 +5,7 @@ import { getSessionGroups, dedupeAssignmentsByShift, assignmentShiftKey } from '
 import { getMondayOfWeek } from './payrollExport';
 import { matchStaffName, staffLabelKey } from './rosterExcelImport';
 import { gradeForSection, gradeForRank, gradeCanCover, GRADE_LABEL } from './staffGrade';
+import { findActiveOnCall } from './callbackUtils';
 
 console.log('=== supabaseClient.js LOADING ===');
 console.log('Checking environment variables...');
@@ -3274,6 +3275,137 @@ export async function clearVolunteerRequestsForRole(theatreActivityId, role) {
     return { error };
   } catch (err) {
     return { error: err };
+  }
+}
+
+// ============================================================
+// CALLBACKS — see migrations/2026-10-14_callbacks.sql. Start/end times of
+// calls a staff member took while on call, for their payroll variation
+// form. No patient details are ever sent here (see CallbackPanel.jsx).
+// ============================================================
+
+// This staff member's on-call window that's live right now, if any —
+// checks yesterday's and today's duty_assignments, since an overnight slot
+// (e.g. 21:00-08:00) assigned yesterday is still running this morning.
+export async function getMyActiveOnCall(staffId, departmentId, now = new Date()) {
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+
+  try {
+    const [dutyRes, dutyTypesRes] = await Promise.all([
+      supabase
+        .from('duty_assignments')
+        .select('date, duty_type')
+        .eq('department_id', departmentId)
+        .eq('staff_id', staffId)
+        .gte('date', toLocalDateStr(yesterday))
+        .lte('date', toLocalDateStr(now)),
+      supabase
+        .from('duty_types')
+        .select('key, label, counts_as_on_call, start_time, end_time')
+        .eq('department_id', departmentId)
+        .eq('active', true),
+    ]);
+    if (dutyRes.error) throw dutyRes.error;
+    if (dutyTypesRes.error) throw dutyTypesRes.error;
+
+    return { data: findActiveOnCall(dutyRes.data || [], dutyTypesRes.data || [], now), error: null };
+  } catch (err) {
+    console.error('getMyActiveOnCall error:', err);
+    return { data: null, error: err };
+  }
+}
+
+// The call this staff member has in progress (ended_at null), if any.
+export async function getMyOpenCallback(staffId) {
+  try {
+    const { data, error } = await supabase
+      .from('callbacks')
+      .select('*')
+      .eq('staff_id', staffId)
+      .is('ended_at', null)
+      .maybeSingle();
+
+    return { data, error };
+  } catch (err) {
+    return { data: null, error: err };
+  }
+}
+
+export async function startCallback(departmentId, staffId, dutyDate, dutyType) {
+  try {
+    const { data, error } = await supabase
+      .from('callbacks')
+      .insert([{ department_id: departmentId, staff_id: staffId, duty_date: dutyDate, duty_type: dutyType }])
+      .select()
+      .single();
+
+    return { data, error };
+  } catch (err) {
+    return { data: null, error: err };
+  }
+}
+
+export async function completeCallback(callbackId, endedAt = new Date()) {
+  try {
+    const { data, error } = await supabase
+      .from('callbacks')
+      .update({ ended_at: new Date(endedAt).toISOString() })
+      .eq('callback_id', callbackId)
+      .select()
+      .single();
+
+    return { data, error };
+  } catch (err) {
+    return { data: null, error: err };
+  }
+}
+
+export async function deleteCallback(callbackId) {
+  try {
+    const { error } = await supabase.from('callbacks').delete().eq('callback_id', callbackId);
+    return { error };
+  } catch (err) {
+    return { error: err };
+  }
+}
+
+// This staff member's completed calls, most recent first.
+export async function getMyCallbacks(staffId) {
+  try {
+    const { data, error } = await supabase
+      .from('callbacks')
+      .select('*')
+      .eq('staff_id', staffId)
+      .not('ended_at', 'is', null)
+      .order('started_at', { ascending: false });
+
+    return { data: data || [], error };
+  } catch (err) {
+    return { data: [], error: err };
+  }
+}
+
+// Every completed call in a department started within [fromDate, toDate]
+// (inclusive, local dates) — the officer's Callbacks report.
+export async function getDepartmentCallbacks(departmentId, fromDate, toDate) {
+  const end = new Date(`${toLocalDateStr(toDate)}T00:00:00`);
+  end.setDate(end.getDate() + 1);
+
+  try {
+    const { data, error } = await supabase
+      .from('callbacks')
+      .select('*, staff(name)')
+      .eq('department_id', departmentId)
+      .not('ended_at', 'is', null)
+      .gte('started_at', new Date(`${toLocalDateStr(fromDate)}T00:00:00`).toISOString())
+      .lt('started_at', end.toISOString())
+      .order('started_at', { ascending: false });
+
+    return { data: data || [], error };
+  } catch (err) {
+    console.error('getDepartmentCallbacks error:', err);
+    return { data: [], error: err };
   }
 }
 
