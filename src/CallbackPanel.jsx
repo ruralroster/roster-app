@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { PhoneCall, PhoneOff, AlertCircle, Loader, Download, X, Moon, Trash2 } from 'lucide-react';
+import { PhoneCall, PhoneOff, AlertCircle, Loader, Download, X, Moon, Trash2, Pencil } from 'lucide-react';
 import {
   getMyActiveOnCall,
   getMyOpenCallback,
@@ -7,6 +7,7 @@ import {
   completeCallback,
   deleteCallback,
   getMyCallbacks,
+  updateCallbackTimes,
 } from './supabaseClient';
 import {
   SHORT_CALL_MS,
@@ -18,6 +19,8 @@ import {
   formatCallDate,
   buildCallbackNoteText,
   callbackNoteFilename,
+  toDateTimeLocalValue,
+  validateCallTimes,
 } from './callbackUtils';
 import { buildCsv, downloadTextFile } from './icsExport';
 
@@ -302,11 +305,18 @@ export function CallbackBanner({ staffId, departmentId, staffName, dutyTypes, on
 }
 
 // "My Callbacks" — this person's recorded calls (times only), to copy into
-// the payroll variation form. Download as CSV, then delete once submitted.
+// the payroll variation form. Times can be corrected (e.g. Call Complete
+// tapped late); download as CSV, then delete once submitted.
 export function MyCallbacks({ staffId, dutyTypes, refreshKey }) {
   const [callbacks, setCallbacks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  // Inline time correction for one call at a time.
+  const [editingId, setEditingId] = useState(null);
+  const [editStart, setEditStart] = useState('');
+  const [editEnd, setEditEnd] = useState('');
+  const [editError, setEditError] = useState(null);
+  const [savingEdit, setSavingEdit] = useState(false);
 
   useEffect(() => {
     if (!staffId) return;
@@ -339,12 +349,40 @@ export function MyCallbacks({ staffId, dutyTypes, refreshKey }) {
     setError(null);
   };
 
+  const startEdit = (c) => {
+    setEditingId(c.callback_id);
+    setEditStart(toDateTimeLocalValue(c.started_at));
+    setEditEnd(toDateTimeLocalValue(c.ended_at));
+    setEditError(null);
+  };
+
+  const handleSaveEdit = async () => {
+    // datetime-local values carry no timezone, so new Date() reads them as
+    // this phone's local time — same as how they were shown.
+    const validation = validateCallTimes(editStart, editEnd);
+    if (validation) {
+      setEditError(validation);
+      return;
+    }
+    setSavingEdit(true);
+    const { data, error: err } = await updateCallbackTimes(editingId, new Date(editStart), new Date(editEnd));
+    setSavingEdit(false);
+    if (err) {
+      setEditError(`Failed to save: ${err.message}`);
+      return;
+    }
+    setCallbacks(prev => prev
+      .map(c => (c.callback_id === data.callback_id ? data : c))
+      .sort((a, b) => new Date(b.started_at) - new Date(a.started_at)));
+    setEditingId(null);
+  };
+
   if (loading) return <div className="text-center py-4"><Loader size={20} className="animate-spin mx-auto" /></div>;
 
   return (
     <>
       <p className="text-xs text-gray-600 mb-4">
-        Calls you've recorded while on call — use these for your payroll variation form. Download them, then delete them once submitted.
+        Calls you've recorded while on call — use these for your payroll variation form. Tap the pencil to correct a time. Download them, then delete them once submitted.
       </p>
       {error && (
         <div className="mb-4 p-3 bg-red-50 border border-red-300 rounded-lg flex gap-2 items-start">
@@ -375,19 +413,45 @@ export function MyCallbacks({ staffId, dutyTypes, refreshKey }) {
             </div>
           </div>
           <div className="divide-y divide-gray-200 border border-gray-200 rounded-lg">
-            {rows.map(c => (
+            {rows.map(c => (editingId === c.callback_id ? (
+              <div key={c.callback_id} className="px-3 py-3 bg-blue-50">
+                <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">Call started</label>
+                <input type="datetime-local" value={editStart} onChange={e => setEditStart(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg mb-3" />
+                <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">Call completed</label>
+                <input type="datetime-local" value={editEnd} onChange={e => setEditEnd(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg mb-3" />
+                {editError && <p className="text-sm text-red-700 mb-3">{editError}</p>}
+                <div className="flex gap-2">
+                  <button onClick={() => setEditingId(null)} className="flex-1 py-2 bg-gray-100 hover:bg-gray-200 text-gray-800 text-sm font-medium rounded-lg transition">
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleSaveEdit}
+                    disabled={savingEdit}
+                    className="flex-1 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition disabled:opacity-50"
+                  >
+                    {savingEdit ? 'Saving…' : 'Save'}
+                  </button>
+                </div>
+              </div>
+            ) : (
               <div key={c.callback_id} className="flex items-center justify-between px-3 py-2">
                 <div>
                   <p className="text-sm font-medium text-gray-900">{formatCallDate(c.started_at)}</p>
                   <p className="text-xs text-gray-600">
                     {formatClock(c.started_at)} – {formatClock(c.ended_at)} · {formatDuration(new Date(c.ended_at) - new Date(c.started_at))} · {c.duty_label}
+                    {c.edited_at && <span className="ml-1 text-amber-700">· edited</span>}
                   </p>
                 </div>
-                <button onClick={() => handleDelete([c.callback_id])} className="p-2 text-gray-400 hover:text-red-600" title="Delete">
-                  <Trash2 size={16} />
-                </button>
+                <div className="flex">
+                  <button onClick={() => startEdit(c)} className="p-2 text-gray-400 hover:text-blue-600" title="Edit times">
+                    <Pencil size={16} />
+                  </button>
+                  <button onClick={() => handleDelete([c.callback_id])} className="p-2 text-gray-400 hover:text-red-600" title="Delete">
+                    <Trash2 size={16} />
+                  </button>
+                </div>
               </div>
-            ))}
+            )))}
           </div>
         </>
       )}

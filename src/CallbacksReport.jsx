@@ -14,6 +14,7 @@ const CSV_COLUMNS = [
   { header: 'Call Started', value: c => formatClock(c.started_at) },
   { header: 'Call Completed', value: c => formatClock(c.ended_at) },
   { header: 'Duration (min)', value: c => Math.round(durationMs(c) / 60000) },
+  { header: 'Times Edited', value: c => (c.edited_at ? 'Yes' : '') },
 ];
 
 // Officer view of every on-call callback staff have recorded (times only —
@@ -94,7 +95,10 @@ export default function CallbacksReport({ departmentId, refreshKey }) {
                   <td className="px-3 py-2 border border-gray-300 font-medium">{c.staff?.name}</td>
                   <td className="px-3 py-2 border border-gray-300">{formatCallDate(c.started_at)}</td>
                   <td className="px-3 py-2 border border-gray-300">{c.duty_label}</td>
-                  <td className="px-3 py-2 border border-gray-300">{formatClock(c.started_at)}–{formatClock(c.ended_at)}</td>
+                  <td className="px-3 py-2 border border-gray-300">
+                    {formatClock(c.started_at)}–{formatClock(c.ended_at)}
+                    {c.edited_at && <span className="ml-2 px-1.5 py-0.5 bg-amber-100 text-amber-800 text-xs rounded" title="Times corrected by the staff member after recording">edited</span>}
+                  </td>
                   <td className="px-3 py-2 border border-gray-300 text-right">{formatDuration(durationMs(c))}</td>
                 </tr>
               ))}

@@ -96,3 +96,26 @@ export function callbackNoteFilename(startedAt) {
   const pad = n => String(n).padStart(2, '0');
   return `callback_${toLocalDateStr(d)}_${pad(d.getHours())}${pad(d.getMinutes())}.txt`;
 }
+
+// Calls longer than this are rejected when editing times — almost
+// certainly a typo (wrong day) rather than a real call.
+export const MAX_CALL_MS = 24 * 60 * 60 * 1000;
+
+// Date → the 'YYYY-MM-DDTHH:MM' local string a <input type="datetime-local">
+// expects.
+export function toDateTimeLocalValue(date) {
+  const d = new Date(date);
+  const pad = n => String(n).padStart(2, '0');
+  return `${toLocalDateStr(d)}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// Error message for an edited start/end pair, or null if it's fine.
+export function validateCallTimes(startedAt, endedAt, now = new Date()) {
+  const start = new Date(startedAt);
+  const end = new Date(endedAt);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return 'Enter both a start and an end time.';
+  if (end <= start) return 'The call must end after it started.';
+  if (end > now) return "The end time can't be in the future.";
+  if (end - start > MAX_CALL_MS) return 'A call can be at most 24 hours long — check the dates.';
+  return null;
+}

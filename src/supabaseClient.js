@@ -3361,6 +3361,27 @@ export async function completeCallback(callbackId, endedAt = new Date()) {
   }
 }
 
+// A staff member correcting a recorded call's times from My Callbacks —
+// stamps edited_at so the officer report can flag hand-edited times.
+export async function updateCallbackTimes(callbackId, startedAt, endedAt) {
+  try {
+    const { data, error } = await supabase
+      .from('callbacks')
+      .update({
+        started_at: new Date(startedAt).toISOString(),
+        ended_at: new Date(endedAt).toISOString(),
+        edited_at: new Date().toISOString(),
+      })
+      .eq('callback_id', callbackId)
+      .select()
+      .single();
+
+    return { data, error };
+  } catch (err) {
+    return { data: null, error: err };
+  }
+}
+
 export async function deleteCallback(callbackId) {
   try {
     const { error } = await supabase.from('callbacks').delete().eq('callback_id', callbackId);
@@ -3397,7 +3418,7 @@ export async function getDepartmentCallbacks(departmentId, fromDate, toDate) {
   try {
     const { data, error } = await supabase
       .from('callbacks')
-      .select('callback_id, staff_id, duty_date, duty_type, started_at, ended_at, staff(name)')
+      .select('callback_id, staff_id, duty_date, duty_type, started_at, ended_at, edited_at, staff(name)')
       .eq('department_id', departmentId)
       .not('ended_at', 'is', null)
       .gte('started_at', new Date(`${toLocalDateStr(fromDate)}T00:00:00`).toISOString())

@@ -1,4 +1,4 @@
-import { findActiveOnCall, onCallWindow, fatigueReturnTime, formatElapsed, formatDuration, buildCallbackNoteText } from './callbackUtils';
+import { findActiveOnCall, onCallWindow, fatigueReturnTime, formatElapsed, formatDuration, buildCallbackNoteText, validateCallTimes, toDateTimeLocalValue } from './callbackUtils';
 
 const dutyTypes = [
   { key: 'anaes', label: 'Anaesthetics On-Call', counts_as_on_call: true, start_time: '21:00:00', end_time: '08:00:00' },
@@ -66,5 +66,24 @@ describe('formatting', () => {
     expect(text).toContain('MRN: 1234567');
     expect(text).toContain('Patient: SMITH, Jane');
     expect(text).toContain('Duration: 45m');
+  });
+});
+
+describe('editing call times', () => {
+  const now = at('2026-10-14T09:00:00');
+
+  it('accepts a sensible correction, including one crossing midnight', () => {
+    expect(validateCallTimes('2026-10-13T23:40', '2026-10-14T01:15', now)).toBeNull();
+  });
+
+  it('rejects an end before the start, a future end, or a >24h call', () => {
+    expect(validateCallTimes('2026-10-14T02:00', '2026-10-14T01:00', now)).toMatch(/end after/);
+    expect(validateCallTimes('2026-10-14T08:00', '2026-10-14T10:00', now)).toMatch(/future/);
+    expect(validateCallTimes('2026-10-12T02:00', '2026-10-14T03:00', now)).toMatch(/24 hours/);
+    expect(validateCallTimes('', '2026-10-14T03:00', now)).toMatch(/both/);
+  });
+
+  it('formats a datetime-local value in local time', () => {
+    expect(toDateTimeLocalValue(at('2026-10-14T02:05:00'))).toBe('2026-10-14T02:05');
   });
 });
