@@ -157,6 +157,36 @@ export function applyCodeMappings(people, codeMap, baseResolve) {
   }));
 }
 
+// Trial (2026-10-16, from department feedback): an "X/Y" dual
+// allocation like "Ward 2/ED" puts the person in X — the first
+// allocation — for the whole day, at X's own standalone times (Ward 2's
+// 08:00–18:00), instead of splitting AM X / PM Y. Run after
+// applyCodeMappings, with the same codeMap/baseResolve. Only the first
+// half needs to be known, so "OT/Endo2" with an unmapped Endo2 still
+// imports as OT. Switched on/off from the import tab.
+export function applyPrimaryAllocation(people, codeMap, baseResolve) {
+  const lookup = (c) => codeMap[c] || baseResolve(c);
+
+  const primaryFor = (rawShift, current) => {
+    const code = (rawShift || '').replace(/\s+/g, ' ').trim();
+    if (!code.includes('/')) return current;
+    const isSplit = current?.segments?.length === 2 || (current?.unmapped && current?.within);
+    if (!isSplit) return current;
+    const firstPart = code.split('/')[0].trim();
+    const primary = firstPart ? lookup(firstPart) : null;
+    if (!primary?.segments?.length) return current;
+    return { segments: [primary.segments[0]], primaryOf: code };
+  };
+
+  return people.map(person => ({
+    ...person,
+    days: person.days.map(day => {
+      const resolvedShift = primaryFor(day.rawShift, day.resolvedShift);
+      return resolvedShift === day.resolvedShift ? day : { ...day, resolvedShift };
+    }),
+  }));
+}
+
 // CALL OBLIGATION column text — confirmed rule (2026-08-25):
 //   "Oncall" -> this person is on-call for ED
 //   "Anaes"  -> this person is on-call for Anaesthetics

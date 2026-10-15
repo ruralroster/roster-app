@@ -1196,7 +1196,7 @@ export async function getStaffAssignmentsForWeek(staffId, weekStartDate) {
   try {
     const { data, error } = await supabase
       .from('staff_assignments')
-      .select('*, locations(name), shifts(name, start_time, end_time, session)')
+      .select('*, locations(name), shifts(name, start_time, end_time, session), theatre_activities(activity_id)')
       .eq('staff_id', staffId)
       .gte('date', startStr)
       .lte('date', endStr)

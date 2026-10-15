@@ -59,6 +59,7 @@ import { NO_COFFEE, NO_MILK, COFFEE_TYPES, MILK_TYPES, milkIsFixedForCoffeeType,
 import { getMondayOfWeek } from './payrollExport';
 import { isIOS } from './installPrompt';
 import { GRADE_LABEL } from './staffGrade';
+import { jobCategoryFor, jobCardStyle, jobBoxStyle, isOnCallForCategory } from './jobColours';
 
 const SETTINGS_WEEKS_SHOWN = 4;
 const SETTINGS_DAYS_SHOWN = SETTINGS_WEEKS_SHOWN * 7;
@@ -616,7 +617,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
   // sharing the same location, and to merge cards that are really the same
   // location+activity split across more than one underlying record).
   useEffect(() => {
-    const dayTabNeedsIt = activeTab === 'day';
+    const dayTabNeedsIt = activeTab === 'day' || activeTab === 'week'; // week: job-type colours
     const restrictionsTabNeedsIt = activeTab === 'settings' && settingsSubTab === 'restrictions';
     if ((!dayTabNeedsIt && !restrictionsTabNeedsIt) || !departmentId) return;
 
@@ -1042,6 +1043,9 @@ export default function StaffRosterView({ departmentId, staffId }) {
   // RENDER CONTENT
   // ============================================================
 
+  // An assignment's activity name, for its job-type colour (jobColours.js).
+  const activityNameFor = (assignment) => activityTypes.find(a => a.activity_id === assignment.theatre_activities?.activity_id)?.name;
+
   const renderContent = () => {
     if (activeTab === 'day') {
       // Morning/Afternoon/Night group the WHOLE department's assignments (not
@@ -1161,10 +1165,14 @@ export default function StaffRosterView({ departmentId, staffId }) {
                           : [];
 
                         return (
-                          <div key={assignment.assignment_id} className="rounded-lg border border-gray-200 overflow-hidden">
+                          <div
+                            key={assignment.assignment_id}
+                            style={jobCardStyle(jobCategoryFor(assignment.locations?.name, activityNameFor(assignment)))}
+                            className="rounded-lg border border-l-4 overflow-hidden"
+                          >
                             <button
                               onClick={() => setExpandedAllocationId(isExpanded ? null : assignment.assignment_id)}
-                              className="w-full flex items-center justify-between gap-3 p-3 text-left hover:bg-gray-50 transition"
+                              className="w-full flex items-center justify-between gap-3 p-3 text-left hover:bg-black/5 transition"
                             >
                               <div>
                                 <p className="text-sm font-bold text-gray-900">{assignment.locations?.name}</p>
@@ -1240,6 +1248,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
                         key,
                         locationId,
                         locationName: assignment.locations?.name,
+                        jobCategory: jobCategoryFor(assignment.locations?.name, activity?.name),
                         activityLabel: activity ? (activity.abbreviation ? `${activity.name} (${activity.abbreviation})` : activity.name) : null,
                         assignmentsByStaff: new Map(),
                       });
@@ -1263,30 +1272,41 @@ export default function StaffRosterView({ departmentId, staffId }) {
                         <p className="text-sm text-gray-500">No assignments.</p>
                       ) : (
                         <div className="space-y-4">
-                          {byLocationActivity.map(({ key, locationName, activityLabel, assignments }) => {
+                          {byLocationActivity.map(({ key, locationName, jobCategory, activityLabel, assignments }) => {
                             const cardHasYou = assignments.some(a => a.staff_id === staffId);
+                            // Card and name-box colours match the Excel
+                            // roster's job colours (jobColours.js); your own
+                            // card gets a ring instead of turning blue.
                             return (
-                              <div key={key} className={`border-l-4 rounded-lg p-4 ${cardHasYou ? 'border-blue-500 bg-blue-50' : 'border-gray-300 bg-gray-50'}`}>
+                              <div key={key} style={jobCardStyle(jobCategory)} className={`border-l-4 rounded-lg p-4 ${cardHasYou ? 'ring-2 ring-blue-500' : ''}`}>
                                 <h3 className="text-lg font-bold text-gray-900 mb-2">
                                   {locationName}{activityLabel && <span className="text-sm font-medium text-gray-500"> — {activityLabel}</span>}
                                 </h3>
                                 <div className="space-y-2">
                                   {assignments.map(assignment => {
                                     const isYou = assignment.staff_id === staffId;
+                                    const onCall = assignment.on_call || isOnCallForCategory(
+                                      jobCategory,
+                                      todayOnCall.filter(d => d.staff_id === assignment.staff_id).map(d => d.duty_type),
+                                      dutyTypes
+                                    );
+                                    const boxStyle = jobBoxStyle(jobCategory, onCall);
+                                    // Text takes the on-call box's own colour.
+                                    const subTextClass = onCall ? 'opacity-90' : 'text-gray-600';
                                     return (
-                                      <div key={assignment.assignment_id} className={`flex items-center justify-between gap-2 p-2 rounded ${isYou ? 'bg-blue-100' : 'bg-white'}`}>
+                                      <div key={assignment.assignment_id} style={boxStyle} className={`flex items-center justify-between gap-2 p-2 rounded ${isYou ? 'ring-2 ring-blue-600' : ''}`}>
                                         <div>
-                                          <p className="text-sm font-medium text-gray-900 flex items-center gap-2">
-                                            <button onClick={() => handleViewStaffDetail(assignment.staff_id)} className="hover:underline hover:text-blue-700">
+                                          <p className={`text-sm font-medium flex items-center gap-2 ${onCall ? '' : 'text-gray-900'}`}>
+                                            <button onClick={() => handleViewStaffDetail(assignment.staff_id)} className={`hover:underline ${onCall ? '' : 'hover:text-blue-700'}`}>
                                               {assignment.staff?.name}
                                             </button>
                                             {isYou && <span className="px-2 py-0.5 bg-blue-600 text-white text-xs font-semibold rounded-full">You</span>}
                                           </p>
-                                          <p className="text-xs text-gray-600">
+                                          <p className={`text-xs ${subTextClass}`}>
                                             {assignment.shifts?.name} ({assignment.shifts?.start_time?.slice(0, 5)} - {assignment.shifts?.end_time?.slice(0, 5)})
                                           </p>
                                         </div>
-                                        <p className="text-xs font-medium text-gray-600">{RANK_LABEL[assignment.staff?.rank] || assignment.role}</p>
+                                        <p className={`text-xs font-medium ${subTextClass}`}>{RANK_LABEL[assignment.staff?.rank] || assignment.role}</p>
                                       </div>
                                     );
                                   })}
@@ -1471,8 +1491,12 @@ export default function StaffRosterView({ departmentId, staffId }) {
                         {new Date(date).toLocaleDateString('en-AU', { weekday: 'long', month: 'short', day: 'numeric' })}
                       </p>
                       <div className="space-y-3">
-                        {assignments.map((assignment, i) => (
-                          <div key={assignment.assignment_id} className={i > 0 ? 'pt-3 border-t border-gray-100' : ''}>
+                        {assignments.map((assignment) => (
+                          <div
+                            key={assignment.assignment_id}
+                            style={jobCardStyle(jobCategoryFor(assignment.locations?.name, activityNameFor(assignment)))}
+                            className="p-3 rounded-lg border border-l-4"
+                          >
                             <div className="flex items-start justify-between gap-2">
                               <h3 className="text-base font-bold text-gray-900">{assignment.locations?.name}</h3>
                               <p className="text-xs font-medium text-gray-600 capitalize flex-shrink-0">{assignment.role}</p>

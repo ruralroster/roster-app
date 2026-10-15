@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { AlertCircle, Loader, Upload, X } from 'lucide-react';
 import { importRosterWeek, createStaff, updateStaffFTE, updateDepartmentRosterImportFormat, getRosterImportMappings, saveRosterImportMapping, deleteRosterImportMapping } from './supabaseClient';
-import { getWeekDateRanges, parseRosterWeek, applyCodeMappings, resolveShiftCode, resolveRmoShiftCode, resolveInternShiftCode, getClassicStaffRoster, matchStaffName, cleanStaffLabel, staffLabelKey } from './rosterExcelImport';
+import { getWeekDateRanges, parseRosterWeek, applyCodeMappings, applyPrimaryAllocation, resolveShiftCode, resolveRmoShiftCode, resolveInternShiftCode, getClassicStaffRoster, matchStaffName, cleanStaffLabel, staffLabelKey } from './rosterExcelImport';
 import { getEdSheetNames, getEdWeekDateRanges, parseEdWeek, getEdStaffRoster, resolveEdShiftCode } from './edRosterExcelImport';
 
 // The classic format has a separate code table per section (consultant /
@@ -101,6 +101,10 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
   // sheet section (unfilled, ready to offer for volunteering); off → an
   // error and nothing written. See importRosterWeek.
   const [addUnnamedAsUnfilled, setAddUnnamedAsUnfilled] = useState(true);
+  // A dual allocation like "Ward 2/ED": on (the trial, from 2026-10-16) →
+  // the first allocation for the whole day; off → split AM/PM as before.
+  // See applyPrimaryAllocation.
+  const [usePrimaryAllocation, setUsePrimaryAllocation] = useState(true);
 
   // Saved fixes for import errors (roster_import_mappings) — applied to
   // every dry run / write, and editable from the results list's Map…
@@ -323,7 +327,9 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
     try {
       const { codeMap, nameMappings } = buildMappingLookups(mappingList);
       const parsed = format === 'ed' ? parseEdWeek(workbook, sheetName, weekIndex) : parseRosterWeek(workbook, weekIndex);
-      const people = applyCodeMappings(parsed, codeMap, format === 'ed' ? resolveEdShiftCode : resolveClassicAnySection);
+      const baseResolve = format === 'ed' ? resolveEdShiftCode : resolveClassicAnySection;
+      const mapped = applyCodeMappings(parsed, codeMap, baseResolve);
+      const people = usePrimaryAllocation ? applyPrimaryAllocation(mapped, codeMap, baseResolve) : mapped;
       setImportProgress({ current: 0, total: people.length });
       const { data, error: importError, deletionSummary: nextDeletionSummary } = await importRosterWeek(
         departmentId, people,
@@ -640,6 +646,22 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
                 Add unnamed shifts as unfilled
                 <span className="block text-xs text-gray-500">
                   A row with shifts but no name becomes empty shifts on the roster, marked with the grade of its section (SMO, Registrar or Intern) so they can be offered for volunteering to that level and above only. Untick to leave them off the roster.
+                </span>
+              </span>
+            </label>
+          )}
+          {format !== 'ed' && (
+            <label className="flex items-start gap-2 mb-3 text-sm text-gray-700 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={usePrimaryAllocation}
+                onChange={(e) => { setUsePrimaryAllocation(e.target.checked); setResults(null); }}
+                className="mt-0.5"
+              />
+              <span>
+                Dual allocations: first allocation for the whole day (trial)
+                <span className="block text-xs text-gray-500">
+                  A shift like "Ward 2/ED" puts the person in Ward 2 for the whole day instead of Ward 2 in the morning and ED in the afternoon. Untick to split the day as before.
                 </span>
               </span>
             </label>

@@ -1,0 +1,82 @@
+// ============================================================
+// JOB-TYPE COLOURS
+// ============================================================
+//
+// Matches the colours the department's own Excel roster
+// (Rosters/innisfail/*.xlsx) already uses for each kind of job, so a card
+// in the app reads the same as the cell it came from:
+//   Emergency  — A1DBA2 ("Day 0800-1800 ED", "ED 0800 - 1800")
+//   Ward       — B4C7E7 ("Day 0800-1800 WARD 1", "Ward 0800-1800")
+//   Theatre    — 00B0F0 (OT, Dental, Endo, LSCS, Anaes clinic)
+//   Maternity  — FF6161 ("Day 0800 - 1800 Maternity")
+// Read off the 2026-10-12 and 2026-12-07 DRAFT files' cell fills.
+// Clinic/Admin cells are left white on the sheet, so they get no colour
+// here either.
+//
+// Each job type has two shades: `card` (pale, the location card's
+// background) and `box` (the roster colour itself, the background of a
+// person's name box on that card). Someone on call for that job gets
+// ON_CALL_BOX instead — the roster's own on-call magenta (FF00FF, the
+// "EDL + OC" / "Oncall + Anaes" cells), so the on-call person stands out
+// on their card.
+//
+// There's no location "type" field in the schema, so the job type is a
+// name-based heuristic over the location name, falling back to the
+// activity name (e.g. the generic "Clinic" location running
+// Anaesthetics reads as Theatre, same as "Anaes clinic" on the sheet).
+
+export const JOB_COLOURS = {
+  emergency: { label: 'Emergency', card: '#ECF8EC', border: '#5FAF61', box: '#A1DBA2' },
+  ward: { label: 'Ward', card: '#F0F4FB', border: '#6F8FC9', box: '#B4C7E7' },
+  theatre: { label: 'Theatre', card: '#E0F6FE', border: '#0091C7', box: '#7FD7F7' },
+  maternity: { label: 'Maternity', card: '#FFEFEF', border: '#E04848', box: '#FFA6A6' },
+};
+
+// Dark text, as on the sheet — white on this magenta is hard to read.
+export const ON_CALL_BOX = { background: '#FF00FF', color: '#111827' };
+
+const NEUTRAL_CARD = { card: '#FFFFFF', border: '#D1D5DB', box: '#F3F4F6' };
+
+function categoryForText(text) {
+  if (!text) return null;
+  if (/non.?clinical|\badmin\b/i.test(text)) return 'none';
+  if (/\bed\b|emergency/i.test(text)) return 'emergency';
+  if (/theatre|theater|\bot\b|endo|dental|surg|anaes|lscs|procedur/i.test(text)) return 'theatre';
+  if (/maternity|obstet|\bobs\b|birth|labour/i.test(text)) return 'maternity';
+  if (/\bward/i.test(text)) return 'ward';
+  return null;
+}
+
+// 'emergency' | 'ward' | 'theatre' | 'maternity' | null
+export function jobCategoryFor(locationName, activityName) {
+  const fromLocation = categoryForText(locationName);
+  if (fromLocation) return fromLocation === 'none' ? null : fromLocation;
+  const fromActivity = categoryForText(activityName);
+  return fromActivity && fromActivity !== 'none' ? fromActivity : null;
+}
+
+// Inline styles (not Tailwind classes) since the colours are the roster's
+// exact hex values.
+export function jobCardStyle(category) {
+  const c = JOB_COLOURS[category] || NEUTRAL_CARD;
+  return { backgroundColor: c.card, borderColor: c.border };
+}
+
+export function jobBoxStyle(category, onCall = false) {
+  if (onCall) return { backgroundColor: ON_CALL_BOX.background, color: ON_CALL_BOX.color };
+  const c = JOB_COLOURS[category] || NEUTRAL_CARD;
+  return { backgroundColor: c.box, color: '#111827' };
+}
+
+// Whether a person holds an on-call duty (duty_assignments) for this same
+// job type — e.g. "ED on call" on an Emergency card. dutyTypes: the
+// department's duty_types rows; dutyKeys: the duty_type keys this person
+// holds today.
+export function isOnCallForCategory(category, dutyKeys, dutyTypes) {
+  if (!category || !dutyKeys?.length) return false;
+  return dutyKeys.some(key => {
+    const dutyType = dutyTypes.find(dt => dt.key === key);
+    if (!dutyType || dutyType.counts_as_on_call === false) return false;
+    return categoryForText(dutyType.label || dutyType.key) === category;
+  });
+}

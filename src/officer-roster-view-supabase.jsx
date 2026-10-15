@@ -16,6 +16,7 @@ import CollapsibleSection from './CollapsibleSection';
 import ChangePassword from './ChangePassword';
 import TwoFactorSettings from './TwoFactorSettings';
 import { toLocalDateStr } from './dateUtils';
+import { jobCategoryFor, jobCardStyle, jobBoxStyle, isOnCallForCategory } from './jobColours';
 import { ChevronLeft, ChevronRight, X, AlertCircle, Loader, Hand, Settings } from 'lucide-react';
 import { createTheatreActivity,
   initializeDepartment,
@@ -2375,10 +2376,13 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     return staffAssignments.filter(a => a.staff_id === staffId && a.role === 'consultant').length;
   };
 
-  const StaffBadge = ({ name, clickable = true }) => (
+  // style: the card's job-type box colour (see jobColours.js); without
+  // one it keeps the original plain blue.
+  const StaffBadge = ({ name, clickable = true, style }) => (
     <button
       onClick={() => clickable && setSelectedStaff(name)}
-      className="px-3 py-2 text-sm rounded font-medium transition bg-blue-100 text-blue-900 hover:bg-blue-200"
+      style={style}
+      className={`px-3 py-2 text-sm rounded font-medium transition hover:brightness-95 ${style ? '' : 'bg-blue-100 text-blue-900 hover:bg-blue-200'}`}
     >
       {name}
     </button>
@@ -2734,24 +2738,28 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
               // whichever shift starts earliest in the day, used to sort
               // and colour the fortnight grid's day cells — see
               // dayColumnMinWidth's callers below.
-              startSessionGroup: null, startLocationName: null,
+              startSessionGroup: null, startLocationName: null, startActivityName: null,
+              anyOnCall: false,
             });
           }
           return byStaff.get(staffId);
         };
-        const noteStartTime = (person, startTime, sessionGroup, locationName) => {
+        const noteStartTime = (person, startTime, sessionGroup, locationName, activityName) => {
           if (!startTime) return;
           if (!person.earliestStartTime || startTime < person.earliestStartTime) {
             person.earliestStartTime = startTime;
             person.startSessionGroup = sessionGroup || null;
             if (locationName !== undefined) person.startLocationName = locationName || null;
+            if (activityName !== undefined) person.startActivityName = activityName || null;
           }
         };
 
         allocations.forEach(a => {
           const person = getOrCreate(a.staff_id, a.staff?.name);
           person.assignmentIds.push(a.assignment_id);
-          noteStartTime(person, a.shifts?.start_time, getSessionGroups(a.shifts, sessionBoundaries)[0], a.locations?.name);
+          if (a.on_call) person.anyOnCall = true;
+          const activityName = refData.activities.find(act => act.activity_id === a.theatre_activities?.activity_id)?.name;
+          noteStartTime(person, a.shifts?.start_time, getSessionGroups(a.shifts, sessionBoundaries)[0], a.locations?.name, activityName);
           const activityKey = a.theatre_activities?.activity_id || 'none';
           if (!person.activityGroups.has(activityKey)) {
             person.activityGroups.set(activityKey, { label: activityLabelFor(a), sessions: new Set() });
@@ -2809,16 +2817,14 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
         return 'ward';
       };
 
-      // High-contrast fills for the day cell's per-person pills, one per
-      // starting session, plus on-call's own colour — chosen dark enough
-      // that white text on top stays easily readable.
-      const SESSION_COLOR_CLASSES = {
-        morning: 'bg-emerald-700 text-white',
-        afternoon: 'bg-blue-700 text-white',
-        night: 'bg-fuchsia-700 text-white',
+      // Day cell pills are coloured by the job type of the location the
+      // person starts in, matching the Excel roster (see jobColours.js) —
+      // the session is already in the pill's text (AM/PM/Night). On-call
+      // pills, and anyone on call for the job they're rostered in, are magenta.
+      const pillStyleFor = (person, dayDutyKeys = []) => {
+        const category = jobCategoryFor(person.startLocationName, person.startActivityName);
+        return jobBoxStyle(category, person.anyOnCall || isOnCallForCategory(category, dayDutyKeys, refData.dutyTypes));
       };
-      const NO_SESSION_COLOR_CLASS = 'bg-gray-500 text-white';
-      const ON_CALL_COLOR_CLASS = 'bg-orange-600 text-white';
       const SELECTED_STAFF_RING_CLASS = 'ring-2 ring-inset ring-gray-900';
 
       // Sorts a day's regular (non-duty) entries by the location group
@@ -3007,7 +3013,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                     // once in their location's group — rather than one
                     // line trying to represent both. See
                     // sortByLocationThenSession for the location list's
-                    // ordering and SESSION_COLOR_CLASSES for its colours.
+                    // ordering and pillStyleFor for its colours.
                     const onCallPeople = Array.from(groupAllocationsByStaff([], dayDutyAssignments).values())
                       .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
                     const locationPeople = Array.from(groupAllocationsByStaff(dayAllocations, []).values())
@@ -3034,7 +3040,8 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                           {onCallPeople.map(person => (
                             <div
                               key={`oncall-${person.staffId}`}
-                              className={`text-[10px] leading-tight px-1 py-0.5 rounded whitespace-nowrap flex items-center justify-between gap-1 ${ON_CALL_COLOR_CLASS} ${
+                              style={jobBoxStyle(null, true)}
+                              className={`text-[10px] leading-tight px-1 py-0.5 rounded whitespace-nowrap flex items-center justify-between gap-1 ${
                                 person.staffId === fortnightSelectedStaffId ? SELECTED_STAFF_RING_CLASS : ''
                               }`}
                             >
@@ -3051,7 +3058,8 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                           {locationPeople.map(person => (
                             <div
                               key={`loc-${person.staffId}`}
-                              className={`text-[10px] leading-tight px-1 py-0.5 rounded whitespace-nowrap flex items-center justify-between gap-1 ${SESSION_COLOR_CLASSES[person.startSessionGroup] || NO_SESSION_COLOR_CLASS} ${
+                              style={pillStyleFor(person, dayDutyAssignments.filter(d => d.staff_id === person.staffId).map(d => d.duty_type))}
+                              className={`text-[10px] leading-tight px-1 py-0.5 rounded whitespace-nowrap flex items-center justify-between gap-1 ${
                                 person.staffId === fortnightSelectedStaffId ? SELECTED_STAFF_RING_CLASS : ''
                               }`}
                             >
@@ -3663,10 +3671,24 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                 };
                 const hasMissingRequiredRole = missingConsultant || missingRegistrar;
 
+                // Job-type colours matching the Excel roster — see
+                // jobColours.js. The unstaffed/missing-role warnings above
+                // still take over the card's background when they apply.
+                const jobCategory = jobCategoryFor(ta.locations?.name, activityNameFor(ta));
+                const dutyKeysFor = (staffId) => refData.dutyTypes.filter(dt => dutyAssignments[dt.key] === staffId).map(dt => dt.key);
+                const badgeStyleFor = (entry) => jobBoxStyle(
+                  jobCategory,
+                  entry.onCall || isOnCallForCategory(jobCategory, dutyKeysFor(entry.staffId), refData.dutyTypes)
+                );
+
                 return (
-                <div key={`${ta.theatre_activity_id}-${groupKey}`} className={`rounded-lg shadow-sm p-6 border-l-4 ${
-                  hasNobodyAssigned ? 'bg-red-50 border-red-300' : hasMissingRequiredRole ? 'bg-amber-50 border-amber-400' : 'bg-white border-blue-500'
-                }`}>
+                <div
+                  key={`${ta.theatre_activity_id}-${groupKey}`}
+                  style={hasNobodyAssigned || hasMissingRequiredRole ? undefined : jobCardStyle(jobCategory)}
+                  className={`rounded-lg shadow-sm p-6 border-l-4 ${
+                    hasNobodyAssigned ? 'bg-red-50 border-red-300' : hasMissingRequiredRole ? 'bg-amber-50 border-amber-400' : ''
+                  }`}
+                >
                   <div className="flex items-start justify-between gap-3 mb-4">
                     <div className="flex-1">
                       <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Activity</label>
@@ -3751,8 +3773,8 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                       {consultantEntries.map(entry => {
                         const shift = refData.shifts.find(s => s.shift_id === entry.shiftId);
                         return (
-                          <div key={entry.localId} className="flex items-center gap-2 flex-wrap p-2 bg-gray-50 rounded-lg border border-gray-200">
-                            <StaffBadge name={entry.staffName} />
+                          <div key={entry.localId} className="flex items-center gap-2 flex-wrap p-2 bg-white/60 rounded-lg border border-black/10">
+                            <StaffBadge name={entry.staffName} style={badgeStyleFor(entry)} />
                             <span className="text-xs text-gray-500">({getConsultantAllocationCount(entry.staffId)}/2)</span>
                             {shift && (
                               <span className="text-xs text-gray-500">
@@ -3881,8 +3903,8 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                       {registrarEntries.map(entry => {
                         const shift = refData.shifts.find(s => s.shift_id === entry.shiftId);
                         return (
-                          <div key={entry.localId} className="flex items-center gap-2 flex-wrap p-2 bg-gray-50 rounded-lg border border-gray-200">
-                            <StaffBadge name={entry.staffName} />
+                          <div key={entry.localId} className="flex items-center gap-2 flex-wrap p-2 bg-white/60 rounded-lg border border-black/10">
+                            <StaffBadge name={entry.staffName} style={badgeStyleFor(entry)} />
                             {shift && (
                               <span className="text-xs text-gray-500">
                                 {shift.name} ({shift.start_time?.slice(0, 5)}–{shift.end_time?.slice(0, 5)})
