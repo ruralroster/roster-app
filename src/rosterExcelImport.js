@@ -784,6 +784,28 @@ export function matchStaffName(rawLabel, staffList) {
   return null;
 }
 
+// Likely-the-same-person suggestions for a label matchStaffName couldn't
+// match: same surname and first initial ("Thomas Newman" -> Tom Newman,
+// "Rach Boland" -> Rachel Boland), or same first name and surname initial
+// (a misspelt surname). Never used to match on its own — the import tab
+// asks the officer, and a yes saves a 'staff' mapping, same as Fix name.
+export function suggestStaffMatches(rawLabel, staffList) {
+  const words = cleanStaffLabel(rawLabel).toLowerCase().split(' ').filter(Boolean);
+  if (words.length < 2) return [];
+  const first = words[0];
+  const last = words[words.length - 1];
+  return staffList.filter(s => {
+    const staffWords = (s.name || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
+    if (staffWords.length < 2) return false;
+    const staffFirst = staffWords[0];
+    const staffLast = staffWords[staffWords.length - 1];
+    if (staffFirst === first && staffLast === last) return false; // a real match, not a suggestion
+    const sameSurnameAndInitial = staffLast === last && staffFirst[0] === first[0];
+    const sameFirstAndSurnameInitial = staffFirst === first && staffLast[0] === last[0];
+    return sameSurnameAndInitial || sameFirstAndSurnameInitial;
+  });
+}
+
 // The real Mon/Sun dates for each of the file's week blocks — lets a
 // picker show "Week 2 (24/08–30/08)" instead of an opaque index.
 export function getWeekDateRanges(workbook, sheetName = 'Sheet1') {

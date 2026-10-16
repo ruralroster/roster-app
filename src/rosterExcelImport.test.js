@@ -24,3 +24,27 @@ describe('applyPrimaryAllocation', () => {
     expect(p.days[0].resolvedShift.segments[0].location).toBe('General Theatre');
   });
 });
+
+describe('suggestStaffMatches', () => {
+  const { suggestStaffMatches } = require('./rosterExcelImport');
+  const staff = [
+    { staff_id: 'tom', name: 'Tom Newman' },
+    { staff_id: 'rachel', name: 'Rachel Boland' },
+    { staff_id: 'james', name: 'James Boland' },
+    { staff_id: 'sally', name: 'Sally Barkla' },
+  ];
+  const ids = (label) => suggestStaffMatches(label, staff).map(s => s.staff_id);
+
+  test('same surname and first initial', () => {
+    expect(ids('Thomas Newman  ED')).toEqual(['tom']);
+    expect(ids('Rach Boland Obstetrics')).toEqual(['rachel']);
+  });
+  test('same first name and surname initial', () => {
+    expect(ids('Sally Barkley')).toEqual(['sally']);
+  });
+  test('an exact name, or someone else entirely, suggests nobody', () => {
+    expect(ids('Tom Newman')).toEqual([]);
+    expect(ids('Daniel Charles Anaesthetics')).toEqual([]);
+    expect(ids('Newman')).toEqual([]);
+  });
+});

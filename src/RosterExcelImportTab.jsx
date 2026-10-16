@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { AlertCircle, Loader, Upload, X } from 'lucide-react';
 import { importRosterWeek, createStaff, updateStaffFTE, updateDepartmentRosterImportFormat, getRosterImportMappings, saveRosterImportMapping, deleteRosterImportMapping } from './supabaseClient';
-import { getWeekDateRanges, parseRosterWeek, applyCodeMappings, applyPrimaryAllocation, resolveShiftCode, resolveRmoShiftCode, resolveInternShiftCode, getClassicStaffRoster, matchStaffName, cleanStaffLabel, staffLabelKey } from './rosterExcelImport';
+import { getWeekDateRanges, parseRosterWeek, applyCodeMappings, applyPrimaryAllocation, resolveShiftCode, resolveRmoShiftCode, resolveInternShiftCode, getClassicStaffRoster, matchStaffName, suggestStaffMatches, cleanStaffLabel, staffLabelKey } from './rosterExcelImport';
 import { getEdSheetNames, getEdWeekDateRanges, parseEdWeek, getEdStaffRoster, resolveEdShiftCode } from './edRosterExcelImport';
 
 // The classic format has a separate code table per section (consultant /
@@ -244,7 +244,10 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
         .filter(p => !mappedLabels.has(staffLabelKey(p.rawLabel)) && !matchStaffName(p.rawLabel, knownStaff))
         .map(p => {
           const rank = suggestClassicRank(p.section);
-          return { rawLabel: p.rawLabel, name: p.name, fte: 0, suggestedRank: rank, rank, create: true };
+          // A likely existing record ("Thomas Newman" vs Tom Newman) starts
+          // unticked, so the question gets answered before a duplicate is made.
+          const suggestedStaff = suggestStaffMatches(p.rawLabel, knownStaff);
+          return { rawLabel: p.rawLabel, name: p.name, fte: 0, suggestedRank: rank, rank, create: suggestedStaff.length === 0, suggestedStaff };
         });
       setMissingStaff(missing);
       return;
@@ -253,14 +256,18 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
     const existingNames = new Set(knownStaff.map(s => s.name.trim().toLowerCase()));
     const missing = roster
       .filter(p => !existingNames.has(p.name.toLowerCase()) && !mappedLabels.has(staffLabelKey(p.name)))
-      .map(p => ({
-        rawLabel: p.name,
-        name: p.name,
-        fte: 0,
-        suggestedRank: p.suggestedRank,
-        rank: staffRanks.some(r => r.rank === p.suggestedRank) ? p.suggestedRank : '',
-        create: true,
-      }));
+      .map(p => {
+        const suggestedStaff = suggestStaffMatches(p.name, knownStaff);
+        return {
+          rawLabel: p.name,
+          name: p.name,
+          fte: 0,
+          suggestedRank: p.suggestedRank,
+          rank: staffRanks.some(r => r.rank === p.suggestedRank) ? p.suggestedRank : '',
+          create: suggestedStaff.length === 0,
+          suggestedStaff,
+        };
+      });
     setMissingStaff(missing);
   };
 
@@ -449,6 +456,21 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
     }
   };
 
+  // "Same person?" yes — from a results row or the missing staff list.
+  // Saves the sheet label -> existing record mapping (same as Fix name),
+  // then refreshes whichever list asked.
+  const handleConfirmSamePerson = async (rawLabel, staffId, from) => {
+    setError(null);
+    const { error: saveError } = await saveRosterImportMapping(departmentId, { kind: 'staff', source: staffMappingSource(rawLabel), staff_id: staffId });
+    if (saveError) {
+      setError(`Failed to save the name match: ${saveError.message}`);
+      return;
+    }
+    const fresh = await loadMappings();
+    if (from === 'missing') checkMissingStaff([], fresh);
+    else await runImport(true, fresh);
+  };
+
   const handleDeleteMapping = async (mappingId) => {
     const { error: deleteError } = await deleteRosterImportMapping(mappingId);
     if (deleteError) {
@@ -620,6 +642,18 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
                         <option key={r.rule_id} value={r.rank}>{r.rank}</option>
                       ))}
                     </select>
+                    {p.suggestedStaff?.map(st => (
+                      <span key={st.staff_id} className="text-xs text-purple-900 basis-full flex items-center gap-2">
+                        Is this {st.name}?
+                        <button
+                          onClick={() => handleConfirmSamePerson(p.rawLabel, st.staff_id, 'missing')}
+                          className="px-2 py-0.5 bg-purple-600 hover:bg-purple-700 text-white font-medium rounded transition"
+                        >
+                          Yes, same person
+                        </button>
+                        <span className="text-gray-500">or tick the box to create a new record</span>
+                      </span>
+                    ))}
                     {p.suggestedRank && !staffRanks.some(r => r.rank === p.suggestedRank) && (
                       <span className="text-xs text-amber-700 basis-full">
                         Suggested rank "{p.suggestedRank}" doesn't exist yet — add it in Settings → Ranks, or pick a different one.
@@ -780,6 +814,15 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
                 ) : (
                   <span className="text-red-700"> — {r.reason || r.error}</span>
                 )}
+                {!r.ok && r.suggestedStaff?.map(st => (
+                  <button
+                    key={`same-${st.staff_id}`}
+                    onClick={() => handleConfirmSamePerson(r.unmatchedLabel, st.staff_id, 'results')}
+                    className="ml-2 px-2 py-0.5 bg-purple-100 hover:bg-purple-200 text-purple-900 font-medium rounded transition"
+                  >
+                    Same person as {st.name}?
+                  </button>
+                ))}
                 {mappableTargets(r).map(t => (
                   <button
                     key={`${t.kind}|${t.source}`}

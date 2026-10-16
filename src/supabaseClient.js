@@ -3,7 +3,7 @@ import { DEFAULT_FTE, computeFairnessRatio, getDatesInRange } from './availabili
 import { toLocalDateStr } from './dateUtils';
 import { getSessionGroups, dedupeAssignmentsByShift, assignmentShiftKey } from './shiftSessionUtils';
 import { getMondayOfWeek } from './payrollExport';
-import { matchStaffName, staffLabelKey, onCallKindsForDay, dutyTypeForOnCallKind, ON_CALL_KIND_LABEL } from './rosterExcelImport';
+import { matchStaffName, suggestStaffMatches, staffLabelKey, onCallKindsForDay, dutyTypeForOnCallKind, ON_CALL_KIND_LABEL } from './rosterExcelImport';
 import { gradeForSection, gradeForRank, gradeCanCover, GRADE_LABEL } from './staffGrade';
 import { findActiveOnCalls, findOvertimeShifts } from './callbackUtils';
 
@@ -4784,7 +4784,11 @@ export async function importRosterWeek(departmentId, people, refLists, { dryRun 
 
     const staff = staffFor(person);
     if (!staff) {
-      results.push({ rawLabel: person.rawLabel, ok: false, reason: 'No matching staff record', unmatchedLabel: person.rawLabel, section: person.section, fte: person.fte });
+      results.push({
+        rawLabel: person.rawLabel, ok: false, reason: 'No matching staff record', unmatchedLabel: person.rawLabel, section: person.section, fte: person.fte,
+        // e.g. "Thomas Newman" -> Tom Newman — offered to the officer, never applied on its own.
+        suggestedStaff: suggestStaffMatches(person.rawLabel, staffList).map(st => ({ staff_id: st.staff_id, name: st.name })),
+      });
       onProgress?.(personIndex + 1, people.length);
       continue;
     }
