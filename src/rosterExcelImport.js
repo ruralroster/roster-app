@@ -206,6 +206,40 @@ export function parseOnCallNote(rawNote) {
   };
 }
 
+// The on-call kinds ('ed' | 'anaes' | 'obs') one parsed day puts this
+// person on: its CALL OBLIGATION note, plus "EDL + OC" — the EDL shift
+// is the ED on-call shift. Days from sections with no notes row
+// (Registrar/RMO, Intern, the ED format) give none.
+export function onCallKindsForDay(day) {
+  const kinds = new Set();
+  if (day.onCall?.ed) kinds.add('ed');
+  if (day.onCall?.anaes) kinds.add('anaes');
+  if (day.onCall?.obs) kinds.add('obs');
+  if ((day.rawShift || '').trim() === 'EDL + OC') kinds.add('ed');
+  return Array.from(kinds);
+}
+
+export const ON_CALL_KIND_LABEL = { ed: 'ED', anaes: 'Anaesthetics', obs: 'Obstetrics' };
+
+const ON_CALL_KIND_DUTY_LABEL_RE = {
+  ed: /\bed\b|emergency/i,
+  anaes: /anaes/i,
+  obs: /\bobs|obstet/i,
+};
+
+// The department's on-call duty type (duty_types row) for one kind,
+// matched by label — e.g. Innisfail's "ED on call (Night)",
+// "Anaesthetics on-call (Night)", "Obstetrics on-call (Night)". Day roles
+// that don't count as on-call ("Anaesthetics (AM)") are never picked.
+// Exactly one match or null: with none, or more than one, the import
+// reports the note rather than guessing a slot.
+export function dutyTypeForOnCallKind(kind, dutyTypes = []) {
+  const re = ON_CALL_KIND_DUTY_LABEL_RE[kind];
+  if (!re) return null;
+  const matches = dutyTypes.filter(dt => dt.active !== false && dt.counts_as_on_call !== false && re.test(dt.label || dt.key));
+  return matches.length === 1 ? matches[0] : null;
+}
+
 // Finds every "CALL OBLIGATION" anchor row and, for the given week's
 // Monday column, extracts that consultant's name label, contact line,
 // FTE, and each of the 7 days' resolved shift/leave + on-call.

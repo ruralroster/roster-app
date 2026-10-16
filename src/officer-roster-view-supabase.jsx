@@ -5144,6 +5144,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                 locations={refData.locations}
                 activities={refData.activities}
                 leaveTypes={refData.leaveTypes}
+                dutyTypes={refData.dutyTypes}
                 staffRanks={refData.staffRanks}
                 onStaffChanged={refreshStaffList}
                 isSuperAdmin={isSuperAdmin}

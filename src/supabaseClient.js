@@ -3,7 +3,7 @@ import { DEFAULT_FTE, computeFairnessRatio, getDatesInRange } from './availabili
 import { toLocalDateStr } from './dateUtils';
 import { getSessionGroups, dedupeAssignmentsByShift, assignmentShiftKey } from './shiftSessionUtils';
 import { getMondayOfWeek } from './payrollExport';
-import { matchStaffName, staffLabelKey } from './rosterExcelImport';
+import { matchStaffName, staffLabelKey, onCallKindsForDay, dutyTypeForOnCallKind, ON_CALL_KIND_LABEL } from './rosterExcelImport';
 import { gradeForSection, gradeForRank, gradeCanCover, GRADE_LABEL } from './staffGrade';
 import { findActiveOnCalls, findOvertimeShifts } from './callbackUtils';
 
@@ -4553,8 +4553,25 @@ function rosterDateStrsFromPeople(people) {
 // see importRosterWeek's header for why a re-import replaces rather than
 // merges. Always counts first, dry run or not: the dry-run preview needs
 // the number even though it isn't deleting anything yet.
-async function replaceExistingRosterForDates(departmentId, dateStrs, dryRun) {
-  if (dateStrs.length === 0) return { existingAssignmentCount: 0, existingCardCount: 0 };
+//
+// dutyKeys: the on-call duty types this import writes (see
+// importRosterWeek) — their duty_assignments rows on these dates are
+// replaced too, so a re-import never leaves a previous import's on-call
+// behind. Other duty types (e.g. "Anaesthetics (AM)") are never touched.
+async function replaceExistingRosterForDates(departmentId, dateStrs, dryRun, dutyKeys = []) {
+  if (dateStrs.length === 0) return { existingAssignmentCount: 0, existingCardCount: 0, existingDutyCount: 0 };
+
+  let existingDutyCount = 0;
+  if (dutyKeys.length > 0) {
+    const { count, error: dutyCountError } = await supabase
+      .from('duty_assignments')
+      .select('duty_id', { count: 'exact', head: true })
+      .eq('department_id', departmentId)
+      .in('date', dateStrs)
+      .in('duty_type', dutyKeys);
+    if (dutyCountError) throw dutyCountError;
+    existingDutyCount = count || 0;
+  }
 
   const { count: existingAssignmentCount, error: assignCountError } = await supabase
     .from('staff_assignments')
@@ -4590,9 +4607,19 @@ async function replaceExistingRosterForDates(departmentId, dateStrs, dryRun) {
       .eq('department_id', departmentId)
       .in('date', dateStrs);
     if (deleteCardsError) throw deleteCardsError;
+
+    if (dutyKeys.length > 0) {
+      const { error: deleteDutyError } = await supabase
+        .from('duty_assignments')
+        .delete()
+        .eq('department_id', departmentId)
+        .in('date', dateStrs)
+        .in('duty_type', dutyKeys);
+      if (deleteDutyError) throw deleteDutyError;
+    }
   }
 
-  return { existingAssignmentCount: existingAssignmentCount || 0, existingCardCount: existingCardCount || 0 };
+  return { existingAssignmentCount: existingAssignmentCount || 0, existingCardCount: existingCardCount || 0, existingDutyCount };
 }
 
 // people: the array returned by parseConsultantWeek/parseRmoWeek/
@@ -4614,8 +4641,15 @@ async function replaceExistingRosterForDates(departmentId, dateStrs, dryRun) {
 // becomes empty, graded cards — unfilled on the roster, ready for the
 // officer to offer for volunteering at the right level — instead of an
 // error. See importUnnamedAsUnfilled below.
+//
+// On call: the classic format's CALL OBLIGATION notes ("Oncall", "Anaes",
+// "Obs", "Oncall + Anaes"...) and its "EDL + OC" shift become
+// duty_assignments in refLists.dutyTypes' matching on-call slots (see
+// dutyTypeForOnCallKind), replacing those slots on the file's dates. Two
+// people down for the same slot on the same day is an error for the
+// second, never a silent overwrite.
 export async function importRosterWeek(departmentId, people, refLists, { dryRun = true, onProgress, addUnnamedAsUnfilled = false } = {}) {
-  const { staffList, locations, activities, leaveTypes, nameMappings = { location: {}, activity: {}, staff: {} } } = refLists;
+  const { staffList, locations, activities, leaveTypes, dutyTypes = [], nameMappings = { location: {}, activity: {}, staff: {} } } = refLists;
   const findLocation = (name) => {
     const key = name.trim().toLowerCase();
     return locations.find(l => l.name.trim().toLowerCase() === key)
@@ -4628,11 +4662,23 @@ export async function importRosterWeek(departmentId, people, refLists, { dryRun 
   };
   const results = [];
 
+  // Only a file with a notes row (the classic format's consultant/locum
+  // sections) speaks for on-call at all — an ED-format import leaves the
+  // duty roster exactly as it is.
+  const fileHasOnCallNotes = people.some(p => p.days.some(d => 'rawOnCall' in d));
+  const onCallDutyByKind = {};
+  if (fileHasOnCallNotes) {
+    Object.keys(ON_CALL_KIND_LABEL).forEach(kind => { onCallDutyByKind[kind] = dutyTypeForOnCallKind(kind, dutyTypes); });
+  }
+  const managedDutyKeys = Object.values(onCallDutyByKind).filter(Boolean).map(dt => dt.key);
+  // "dateStr|dutyKey" -> { staffId, staffName }, first person wins.
+  const onCallClaims = new Map();
+
   const dateStrs = rosterDateStrsFromPeople(people);
   let deletionSummary;
   try {
-    const { existingAssignmentCount, existingCardCount } = await replaceExistingRosterForDates(departmentId, dateStrs, dryRun);
-    deletionSummary = { dateStrs, existingAssignmentCount, existingCardCount, applied: !dryRun && dateStrs.length > 0 };
+    const { existingAssignmentCount, existingCardCount, existingDutyCount } = await replaceExistingRosterForDates(departmentId, dateStrs, dryRun, managedDutyKeys);
+    deletionSummary = { dateStrs, existingAssignmentCount, existingCardCount, existingDutyCount, applied: !dryRun && dateStrs.length > 0 };
   } catch (err) {
     return { data: [], error: err, deletionSummary: null };
   }
@@ -4658,6 +4704,27 @@ export async function importRosterWeek(departmentId, people, refLists, { dryRun 
     }
 
     for (const day of person.days) {
+      if (fileHasOnCallNotes) {
+        for (const kind of onCallKindsForDay(day)) {
+          const onCallEntry = { rawLabel: person.rawLabel, staffId: staff.staff_id, staffName: staff.name, date: day.date };
+          const dutyType = onCallDutyByKind[kind];
+          const date = parseExcelDate(day.date);
+          if (!dutyType) {
+            results.push({ ...onCallEntry, ok: false, reason: `On call (${ON_CALL_KIND_LABEL[kind]}) — no single matching on-call slot in the department's duty types, not imported` });
+          } else if (!date) {
+            results.push({ ...onCallEntry, ok: false, reason: `Could not parse date "${day.date}"` });
+          } else {
+            const claimKey = `${toLocalDateStr(date)}|${dutyType.key}`;
+            const existing = onCallClaims.get(claimKey);
+            if (!existing) {
+              onCallClaims.set(claimKey, { staffId: staff.staff_id, staffName: staff.name, date, onCallEntry, dutyType });
+            } else if (existing.staffId !== staff.staff_id) {
+              results.push({ ...onCallEntry, ok: false, reason: `${dutyType.label}: ${existing.staffName} is already down for it on this day — not imported` });
+            }
+          }
+        }
+      }
+
       if (!day.rawShift || !day.resolvedShift) continue;
       const resolved = day.resolvedShift;
       const entry = { rawLabel: person.rawLabel, staffId: staff.staff_id, staffName: staff.name, date: day.date, rawShift: day.rawShift };
@@ -4723,6 +4790,16 @@ export async function importRosterWeek(departmentId, people, refLists, { dryRun 
     }
 
     onProgress?.(personIndex + 1, people.length);
+  }
+
+  for (const { staffId, date, onCallEntry, dutyType } of onCallClaims.values()) {
+    const onCallResult = { ...onCallEntry, ok: true, action: 'on call', dutyLabel: dutyType.label };
+    if (dryRun) {
+      results.push(onCallResult);
+      continue;
+    }
+    const { error } = await updateDutyAssignment(departmentId, date, dutyType.key, staffId);
+    results.push({ ...onCallResult, ok: !error, error: error?.message });
   }
 
   if (addUnnamedAsUnfilled) {

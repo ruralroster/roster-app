@@ -45,7 +45,7 @@ const FORMATS = [
 // safe: assignStaffFortnight (which the real write goes through) already
 // joins an existing card instead of duplicating it, and a leave day just
 // re-marks the same availability row.
-export default function RosterExcelImportTab({ departmentId, department, staffList, locations, activities, leaveTypes, staffRanks = [], onStaffChanged, isSuperAdmin = false, onDepartmentChanged }) {
+export default function RosterExcelImportTab({ departmentId, department, staffList, locations, activities, leaveTypes, dutyTypes = [], staffRanks = [], onStaffChanged, isSuperAdmin = false, onDepartmentChanged }) {
   const [format, setFormat] = useState(() => department?.roster_import_format || 'classic');
   const [savingFormat, setSavingFormat] = useState(false);
 
@@ -333,7 +333,7 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
       setImportProgress({ current: 0, total: people.length });
       const { data, error: importError, deletionSummary: nextDeletionSummary } = await importRosterWeek(
         departmentId, people,
-        { staffList: [...staffList, ...extraStaff], locations, activities, leaveTypes, nameMappings },
+        { staffList: [...staffList, ...extraStaff], locations, activities, leaveTypes, dutyTypes, nameMappings },
         { dryRun, addUnnamedAsUnfilled, onProgress: (current, total) => setImportProgress({ current, total }) }
       );
       if (importError) throw importError;
@@ -690,23 +690,23 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
 
       {deletionSummary && (
         <div className={`mb-3 p-3 rounded-lg border flex gap-2 items-start ${
-          deletionSummary.existingAssignmentCount === 0 && deletionSummary.existingCardCount === 0
+          deletionSummary.existingAssignmentCount === 0 && deletionSummary.existingCardCount === 0 && !deletionSummary.existingDutyCount
             ? 'bg-gray-50 border-gray-200'
             : 'bg-amber-50 border-amber-300'
         }`}>
           <AlertCircle size={16} className={`flex-shrink-0 mt-0.5 ${
-            deletionSummary.existingAssignmentCount === 0 && deletionSummary.existingCardCount === 0 ? 'text-gray-400' : 'text-amber-600'
+            deletionSummary.existingAssignmentCount === 0 && deletionSummary.existingCardCount === 0 && !deletionSummary.existingDutyCount ? 'text-gray-400' : 'text-amber-600'
           }`} />
           <p className="text-xs text-gray-700">
-            {deletionSummary.existingAssignmentCount === 0 && deletionSummary.existingCardCount === 0 ? (
+            {deletionSummary.existingAssignmentCount === 0 && deletionSummary.existingCardCount === 0 && !deletionSummary.existingDutyCount ? (
               <>No existing roster data found for the {deletionSummary.dateStrs.length} date{deletionSummary.dateStrs.length === 1 ? '' : 's'} in this file — nothing to replace.</>
             ) : deletionSummary.applied ? (
               <>
-                This file is the source of truth for these dates — <strong>{deletionSummary.existingAssignmentCount}</strong> existing assignment{deletionSummary.existingAssignmentCount === 1 ? '' : 's'} across <strong>{deletionSummary.existingCardCount}</strong> card{deletionSummary.existingCardCount === 1 ? '' : 's'} {deletionSummary.existingCardCount === 1 ? 'was' : 'were'} deleted before writing the roster below.
+                This file is the source of truth for these dates — <strong>{deletionSummary.existingAssignmentCount}</strong> existing assignment{deletionSummary.existingAssignmentCount === 1 ? '' : 's'} across <strong>{deletionSummary.existingCardCount}</strong> card{deletionSummary.existingCardCount === 1 ? '' : 's'} {deletionSummary.existingCardCount === 1 ? 'was' : 'were'} deleted{deletionSummary.existingDutyCount > 0 && <>, along with <strong>{deletionSummary.existingDutyCount}</strong> on-call slot{deletionSummary.existingDutyCount === 1 ? '' : 's'}</>}, before writing the roster below.
               </>
             ) : (
               <>
-                This file is the source of truth for these dates — writing it for real will <strong>delete {deletionSummary.existingAssignmentCount}</strong> existing assignment{deletionSummary.existingAssignmentCount === 1 ? '' : 's'} across <strong>{deletionSummary.existingCardCount}</strong> card{deletionSummary.existingCardCount === 1 ? '' : 's'} before writing the roster below. On-call duty assignments and recorded leave are never touched by an import.
+                This file is the source of truth for these dates — writing it for real will <strong>delete {deletionSummary.existingAssignmentCount}</strong> existing assignment{deletionSummary.existingAssignmentCount === 1 ? '' : 's'} across <strong>{deletionSummary.existingCardCount}</strong> card{deletionSummary.existingCardCount === 1 ? '' : 's'}{deletionSummary.existingDutyCount > 0 && <>, and <strong>{deletionSummary.existingDutyCount}</strong> on-call slot{deletionSummary.existingDutyCount === 1 ? '' : 's'} (ED/Anaesthetics/Obstetrics on call, replaced by the sheet's CALL OBLIGATION row)</>}, before writing the roster below. Other duty slots and recorded leave are never touched by an import.
               </>
             )}
           </p>
@@ -738,7 +738,9 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
                     {' — '}
                     {r.action === 'mark unavailable'
                       ? `Leave (${r.leaveCode})`
-                      : `${r.location} / ${r.activity} ${r.start}–${r.end}`}
+                      : r.action === 'on call'
+                        ? `On call: ${r.dutyLabel}`
+                        : `${r.location} / ${r.activity} ${r.start}–${r.end}`}
                   </span>
                 ) : (
                   <span className="text-red-700"> — {r.reason || r.error}</span>
