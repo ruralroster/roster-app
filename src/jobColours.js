@@ -15,10 +15,11 @@
 //
 // Each job type has two shades: `card` (pale, the location card's
 // background) and `box` (the roster colour itself, the background of a
-// person's name box on that card). Someone on call for that job keeps the
-// job's box colour but gets an ON_CALL_BORDER outline — the roster's own
-// on-call magenta (FF00FF, the "EDL + OC" / "Oncall + Anaes" cells), so the
-// on-call person stands out while every ED box still reads as ED.
+// person's name box on that card). Someone on call that day — for any
+// on-call slot, whatever job the card is — keeps the job's box colour but
+// gets an ON_CALL_BORDER outline: the roster's own on-call magenta
+// (FF00FF, the "EDL + OC" / "Oncall + Anaes" cells), so the on-call person
+// stands out while every ED box still reads as ED.
 //
 // There's no location "type" field in the schema, so the job type is a
 // name-based heuristic over the location name, falling back to the
@@ -72,15 +73,15 @@ export function jobBoxStyle(category, onCall = false, borderWidth = 2) {
   return style;
 }
 
-// Whether a person holds an on-call duty (duty_assignments) for this same
-// job type — e.g. "ED on call" on an Emergency card. dutyTypes: the
-// department's duty_types rows; dutyKeys: the duty_type keys this person
-// holds today.
-export function isOnCallForCategory(category, dutyKeys, dutyTypes) {
-  if (!category || !dutyKeys?.length) return false;
+// Whether a person holds any on-call duty (duty_assignments) today — e.g.
+// an anaesthetist on call tonight working a Ward shift still gets the
+// border on their Ward card. Day roles that don't count as on call
+// ("Anaesthetics (AM)") don't. dutyTypes: the department's duty_types
+// rows; dutyKeys: the duty_type keys this person holds today.
+export function holdsOnCallDuty(dutyKeys, dutyTypes) {
+  if (!dutyKeys?.length) return false;
   return dutyKeys.some(key => {
     const dutyType = dutyTypes.find(dt => dt.key === key);
-    if (!dutyType || dutyType.counts_as_on_call === false) return false;
-    return categoryForText(dutyType.label || dutyType.key) === category;
+    return !!dutyType && dutyType.counts_as_on_call !== false;
   });
 }

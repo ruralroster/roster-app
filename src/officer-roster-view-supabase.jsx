@@ -16,7 +16,7 @@ import CollapsibleSection from './CollapsibleSection';
 import ChangePassword from './ChangePassword';
 import TwoFactorSettings from './TwoFactorSettings';
 import { toLocalDateStr } from './dateUtils';
-import { jobCategoryFor, jobCardStyle, jobBoxStyle, isOnCallForCategory } from './jobColours';
+import { jobCategoryFor, jobCardStyle, jobBoxStyle, holdsOnCallDuty } from './jobColours';
 import { ChevronLeft, ChevronRight, X, AlertCircle, Loader, Hand, Settings } from 'lucide-react';
 import { createTheatreActivity,
   initializeDepartment,
@@ -2820,11 +2820,11 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
       // Day cell pills are coloured by the job type of the location the
       // person starts in, matching the Excel roster (see jobColours.js) —
       // the session is already in the pill's text (AM/PM/Night). On-call
-      // pills, and anyone on call for the job they're rostered in, get a
+      // pills, and anyone on call that day whatever their job, get a
       // magenta outline.
       const pillStyleFor = (person, dayDutyKeys = []) => {
         const category = jobCategoryFor(person.startLocationName, person.startActivityName);
-        return jobBoxStyle(category, person.anyOnCall || isOnCallForCategory(category, dayDutyKeys, refData.dutyTypes));
+        return jobBoxStyle(category, person.anyOnCall || holdsOnCallDuty(dayDutyKeys, refData.dutyTypes));
       };
       // Outside the pill, so it still shows on an on-call pill, whose
       // magenta outline sits just inside the edge.
@@ -3681,7 +3681,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                 const dutyKeysFor = (staffId) => refData.dutyTypes.filter(dt => dutyAssignments[dt.key] === staffId).map(dt => dt.key);
                 const badgeStyleFor = (entry) => jobBoxStyle(
                   jobCategory,
-                  entry.onCall || isOnCallForCategory(jobCategory, dutyKeysFor(entry.staffId), refData.dutyTypes)
+                  entry.onCall || holdsOnCallDuty(dutyKeysFor(entry.staffId), refData.dutyTypes)
                 );
 
                 return (

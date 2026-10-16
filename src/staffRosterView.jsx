@@ -59,7 +59,7 @@ import { NO_COFFEE, NO_MILK, COFFEE_TYPES, MILK_TYPES, milkIsFixedForCoffeeType,
 import { getMondayOfWeek } from './payrollExport';
 import { isIOS } from './installPrompt';
 import { GRADE_LABEL } from './staffGrade';
-import { jobCategoryFor, jobCardStyle, jobBoxStyle, isOnCallForCategory } from './jobColours';
+import { jobCategoryFor, jobCardStyle, jobBoxStyle, holdsOnCallDuty } from './jobColours';
 
 const SETTINGS_WEEKS_SHOWN = 4;
 const SETTINGS_DAYS_SHOWN = SETTINGS_WEEKS_SHOWN * 7;
@@ -1285,8 +1285,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
                                 <div className="space-y-2">
                                   {assignments.map(assignment => {
                                     const isYou = assignment.staff_id === staffId;
-                                    const onCall = assignment.on_call || isOnCallForCategory(
-                                      jobCategory,
+                                    const onCall = assignment.on_call || holdsOnCallDuty(
                                       todayOnCall.filter(d => d.staff_id === assignment.staff_id).map(d => d.duty_type),
                                       dutyTypes
                                     );

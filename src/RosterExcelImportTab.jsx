@@ -795,9 +795,13 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
         </div>
       )}
 
+      {/* Collapsed by default — they're applied to every run either way,
+          and the Map… buttons in the results open them for editing. */}
       {mappings.length > 0 && (
-        <div className="mt-4">
-          <p className="text-xs font-semibold text-gray-600 uppercase mb-2">Saved mappings</p>
+        <details className="mt-4">
+          <summary className="text-xs font-semibold text-gray-600 uppercase mb-2 cursor-pointer select-none hover:text-gray-900">
+            Saved mappings ({mappings.length})
+          </summary>
           <div className="border border-gray-200 rounded-lg divide-y divide-gray-100">
             {mappings.map(m => (
               <div key={m.mapping_id} className="p-2 text-xs flex items-center justify-between gap-2">
@@ -823,7 +827,7 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
               </div>
             ))}
           </div>
-        </div>
+        </details>
       )}
 
       {mappingDraft && (
