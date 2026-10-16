@@ -63,11 +63,12 @@ export function jobCardStyle(category) {
 
 // The on-call border is an inset outline rather than a CSS border so it
 // doesn't change the box's size, and doesn't clash with the Tailwind
-// rings (box-shadow) used for "You" and the selected person.
-export function jobBoxStyle(category, onCall = false) {
+// rings (box-shadow) used for "You" and the selected person. borderWidth
+// in px — the staff view's larger name rows use a thicker one.
+export function jobBoxStyle(category, onCall = false, borderWidth = 2) {
   const c = JOB_COLOURS[category] || NEUTRAL_CARD;
   const style = { backgroundColor: c.box, color: '#111827' };
-  if (onCall) Object.assign(style, { outline: `2px solid ${ON_CALL_BORDER}`, outlineOffset: '-2px' });
+  if (onCall) Object.assign(style, { outline: `${borderWidth}px solid ${ON_CALL_BORDER}`, outlineOffset: `-${borderWidth}px` });
   return style;
 }
 

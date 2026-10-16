@@ -1290,7 +1290,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
                                       todayOnCall.filter(d => d.staff_id === assignment.staff_id).map(d => d.duty_type),
                                       dutyTypes
                                     );
-                                    const boxStyle = jobBoxStyle(jobCategory, onCall);
+                                    const boxStyle = jobBoxStyle(jobCategory, onCall, 4);
                                     return (
                                       <div key={assignment.assignment_id} style={boxStyle} className={`flex items-center justify-between gap-2 p-2 rounded ${isYou ? 'ring-2 ring-blue-600' : ''}`}>
                                         <div>
