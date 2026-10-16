@@ -17,6 +17,7 @@ import ChangePassword from './ChangePassword';
 import TwoFactorSettings from './TwoFactorSettings';
 import { toLocalDateStr } from './dateUtils';
 import { jobCategoryFor, jobCardStyle, jobBoxStyle, holdsOnCallDuty } from './jobColours';
+import { edLateOnCallFor } from './edLateOnCall';
 import { ChevronLeft, ChevronRight, X, AlertCircle, Loader, Hand, Settings } from 'lucide-react';
 import { createTheatreActivity,
   initializeDepartment,
@@ -2694,6 +2695,16 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
       fortnightDutyAssignments.forEach(d => {
         (dutyAllocationsByDate[d.date] = dutyAllocationsByDate[d.date] || []).push(d);
       });
+      // A day with nobody in the ED on-call slot shows the consultant on
+      // the ED late as ED on call (see edLateOnCall.js) — display only,
+      // marked `derived` so removing them never touches the empty slot.
+      Object.entries(allocationsByDate).forEach(([dateStr, dayAllocations]) => {
+        const dayDuty = dutyAllocationsByDate[dateStr] || [];
+        const edLate = edLateOnCallFor(dayAllocations, dayDuty.map(d => d.duty_type), refData.dutyTypes);
+        if (edLate) {
+          dutyAllocationsByDate[dateStr] = [...dayDuty, { date: dateStr, duty_type: edLate.dutyKey, staff_id: edLate.staffId, staff: { name: edLate.staffName }, derived: true }];
+        }
+      });
 
       const dutyTypeByKey = new Map(refData.dutyTypes.map(dt => [dt.key, dt]));
 
@@ -2771,13 +2782,13 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
         dutyEntries.forEach(d => {
           if (!d.staff_id) return;
           const person = getOrCreate(d.staff_id, d.staff?.name);
-          person.dutyKeys.push(d.duty_type);
+          if (!d.derived) person.dutyKeys.push(d.duty_type);
           const groupKey = `duty:${d.duty_type}`;
           const dutyType = dutyTypeByKey.get(d.duty_type);
           const dutyHasTimes = dutyType?.start_time && dutyType?.end_time;
           noteStartTime(person, dutyType?.start_time, dutyHasTimes ? getSessionGroups(dutyType, sessionBoundaries)[0] : null);
           if (!person.activityGroups.has(groupKey)) {
-            person.activityGroups.set(groupKey, { label: dutyType?.label || d.duty_type, sessions: new Set() });
+            person.activityGroups.set(groupKey, { label: `${dutyType?.label || d.duty_type}${d.derived ? ', ED late' : ''}`, sessions: new Set() });
           }
           if (dutyHasTimes) {
             const group = person.activityGroups.get(groupKey);
@@ -3290,6 +3301,14 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     }
 
     if (activeTab === 'day' && selectedDate && !loadingDate) {
+      // Nobody in the ED on-call slot today → the consultant on the ED
+      // late is on call (display only — see edLateOnCall.js).
+      const edLateOnCall = edLateOnCallFor(
+        staffAssignments,
+        Object.keys(dutyAssignments).filter(key => dutyAssignments[key]),
+        refData.dutyTypes
+      );
+
       const getDutyStaffName = (dutyType) => {
         const staffId = dutyAssignments[dutyType];
         if (!staffId) return null;
@@ -3425,13 +3444,14 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
               {(() => {
                 const dutyByStaff = new Map();
                 refData.dutyTypes.filter(d => d.active !== false).forEach(dutyType => {
-                  const staffId = dutyAssignments[dutyType.key];
+                  const edLateStandIn = edLateOnCall?.dutyKey === dutyType.key;
+                  const staffId = dutyAssignments[dutyType.key] || (edLateStandIn ? edLateOnCall.staffId : null);
                   if (!staffId) return;
                   if (!dutyByStaff.has(staffId)) {
                     const staffMember = refData.staff.find(s => s.staff_id === staffId);
                     dutyByStaff.set(staffId, { staffId, name: staffMember?.name || '?', labels: [] });
                   }
-                  dutyByStaff.get(staffId).labels.push(dutyType.label);
+                  dutyByStaff.get(staffId).labels.push(edLateStandIn ? `${dutyType.label}, on the ED late` : dutyType.label);
                 });
 
                 if (dutyByStaff.size === 0) return null;
@@ -3467,9 +3487,11 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                           <option key={s.staff_id} value={s.staff_id}>{s.name}{s.unavailable ? ' (unavailable)' : ''}</option>
                         ))}
                       </select>
-                      {!getDutyStaffName(dutyType.key) && (
+                      {!getDutyStaffName(dutyType.key) && (edLateOnCall?.dutyKey === dutyType.key ? (
+                        <p className="text-xs text-indigo-700 italic mt-1">Unassigned, so {edLateOnCall.staffName} on the ED late is on call</p>
+                      ) : (
                         <p className="text-xs text-red-500 italic mt-1">Unassigned</p>
-                      )}
+                      ))}
                     </div>
                   ))}
                 </div>
@@ -3678,7 +3700,10 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                 // jobColours.js. The unstaffed/missing-role warnings above
                 // still take over the card's background when they apply.
                 const jobCategory = jobCategoryFor(ta.locations?.name, activityNameFor(ta));
-                const dutyKeysFor = (staffId) => refData.dutyTypes.filter(dt => dutyAssignments[dt.key] === staffId).map(dt => dt.key);
+                const dutyKeysFor = (staffId) => [
+                  ...refData.dutyTypes.filter(dt => dutyAssignments[dt.key] === staffId).map(dt => dt.key),
+                  ...(edLateOnCall?.staffId === staffId ? [edLateOnCall.dutyKey] : []),
+                ];
                 const badgeStyleFor = (entry) => jobBoxStyle(
                   jobCategory,
                   entry.onCall || holdsOnCallDuty(dutyKeysFor(entry.staffId), refData.dutyTypes)

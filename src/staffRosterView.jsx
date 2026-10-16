@@ -60,6 +60,7 @@ import { getMondayOfWeek } from './payrollExport';
 import { isIOS } from './installPrompt';
 import { GRADE_LABEL } from './staffGrade';
 import { jobCategoryFor, jobCardStyle, jobBoxStyle, holdsOnCallDuty } from './jobColours';
+import { edLateOnCallFor } from './edLateOnCall';
 
 const SETTINGS_WEEKS_SHOWN = 4;
 const SETTINGS_DAYS_SHOWN = SETTINGS_WEEKS_SHOWN * 7;
@@ -129,7 +130,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
   // Day tab state
   const [todayAssignments, setTodayAssignments] = useState([]); // this staff member's own assignments
   const [todayAllAssignments, setTodayAllAssignments] = useState([]); // whole department's assignments, for the Morning/Afternoon/Night "who is where" lookup
-  const [todayOnCall, setTodayOnCall] = useState([]);
+  const [todayOnCallRows, setTodayOnCall] = useState([]); // duty_assignments; see todayOnCall below
   // Which of "My allocations for today" row is expanded to show who else
   // is on that same session, if any.
   const [expandedAllocationId, setExpandedAllocationId] = useState(null);
@@ -1043,6 +1044,14 @@ export default function StaffRosterView({ departmentId, staffId }) {
   // RENDER CONTENT
   // ============================================================
 
+  // Today's on-call, plus — when nobody's in the ED on-call slot — the
+  // consultant on the ED late, who's on call instead (display only, see
+  // edLateOnCall.js).
+  const todayEdLate = edLateOnCallFor(todayAllAssignments, todayOnCallRows.map(d => d.duty_type), dutyTypes);
+  const todayOnCall = todayEdLate
+    ? [...todayOnCallRows, { duty_type: todayEdLate.dutyKey, staff_id: todayEdLate.staffId, staff: { name: todayEdLate.staffName }, derived: true }]
+    : todayOnCallRows;
+
   // An assignment's activity name, for its job-type colour (jobColours.js).
   const activityNameFor = (assignment) => activityTypes.find(a => a.activity_id === assignment.theatre_activities?.activity_id)?.name;
 
@@ -1121,6 +1130,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
                                   {duty.staff.name}
                                 </button>
                               ) : 'Unassigned'}
+                              {duty?.derived && <span className="text-xs font-normal text-gray-500">(on the ED late)</span>}
                               {isYou && <span className="px-2 py-0.5 bg-blue-600 text-white text-xs font-semibold rounded-full">You</span>}
                             </p>
                           </div>
