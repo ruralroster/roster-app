@@ -2820,12 +2820,15 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
       // Day cell pills are coloured by the job type of the location the
       // person starts in, matching the Excel roster (see jobColours.js) —
       // the session is already in the pill's text (AM/PM/Night). On-call
-      // pills, and anyone on call for the job they're rostered in, are magenta.
+      // pills, and anyone on call for the job they're rostered in, get a
+      // magenta outline.
       const pillStyleFor = (person, dayDutyKeys = []) => {
         const category = jobCategoryFor(person.startLocationName, person.startActivityName);
         return jobBoxStyle(category, person.anyOnCall || isOnCallForCategory(category, dayDutyKeys, refData.dutyTypes));
       };
-      const SELECTED_STAFF_RING_CLASS = 'ring-2 ring-inset ring-gray-900';
+      // Outside the pill, so it still shows on an on-call pill, whose
+      // magenta outline sits just inside the edge.
+      const SELECTED_STAFF_RING_CLASS = 'ring-2 ring-gray-900';
 
       // Sorts a day's regular (non-duty) entries by the location group
       // they start in (ED, then Theatre, then Ward), then by the specific

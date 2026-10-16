@@ -15,10 +15,10 @@
 //
 // Each job type has two shades: `card` (pale, the location card's
 // background) and `box` (the roster colour itself, the background of a
-// person's name box on that card). Someone on call for that job gets
-// ON_CALL_BOX instead — the roster's own on-call magenta (FF00FF, the
-// "EDL + OC" / "Oncall + Anaes" cells), so the on-call person stands out
-// on their card.
+// person's name box on that card). Someone on call for that job keeps the
+// job's box colour but gets an ON_CALL_BORDER outline — the roster's own
+// on-call magenta (FF00FF, the "EDL + OC" / "Oncall + Anaes" cells), so the
+// on-call person stands out while every ED box still reads as ED.
 //
 // There's no location "type" field in the schema, so the job type is a
 // name-based heuristic over the location name, falling back to the
@@ -32,8 +32,7 @@ export const JOB_COLOURS = {
   maternity: { label: 'Maternity', card: '#FFEFEF', border: '#E04848', box: '#FFA6A6' },
 };
 
-// Dark text, as on the sheet — white on this magenta is hard to read.
-export const ON_CALL_BOX = { background: '#FF00FF', color: '#111827' };
+export const ON_CALL_BORDER = '#FF00FF';
 
 const NEUTRAL_CARD = { card: '#FFFFFF', border: '#D1D5DB', box: '#F3F4F6' };
 
@@ -62,10 +61,14 @@ export function jobCardStyle(category) {
   return { backgroundColor: c.card, borderColor: c.border };
 }
 
+// The on-call border is an inset outline rather than a CSS border so it
+// doesn't change the box's size, and doesn't clash with the Tailwind
+// rings (box-shadow) used for "You" and the selected person.
 export function jobBoxStyle(category, onCall = false) {
-  if (onCall) return { backgroundColor: ON_CALL_BOX.background, color: ON_CALL_BOX.color };
   const c = JOB_COLOURS[category] || NEUTRAL_CARD;
-  return { backgroundColor: c.box, color: '#111827' };
+  const style = { backgroundColor: c.box, color: '#111827' };
+  if (onCall) Object.assign(style, { outline: `2px solid ${ON_CALL_BORDER}`, outlineOffset: '-2px' });
+  return style;
 }
 
 // Whether a person holds an on-call duty (duty_assignments) for this same

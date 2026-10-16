@@ -1,4 +1,4 @@
-import { jobCategoryFor, jobBoxStyle, isOnCallForCategory, ON_CALL_BOX, JOB_COLOURS } from './jobColours';
+import { jobCategoryFor, jobBoxStyle, isOnCallForCategory, ON_CALL_BORDER, JOB_COLOURS } from './jobColours';
 
 describe('jobCategoryFor', () => {
   test.each([
@@ -17,9 +17,11 @@ describe('jobCategoryFor', () => {
 });
 
 describe('jobBoxStyle', () => {
-  test('uses the roster colour for the job, red when on call', () => {
+  test('uses the roster colour for the job, with a magenta outline when on call', () => {
     expect(jobBoxStyle('emergency').backgroundColor).toBe(JOB_COLOURS.emergency.box);
-    expect(jobBoxStyle('emergency', true).backgroundColor).toBe(ON_CALL_BOX.background);
+    expect(jobBoxStyle('emergency').outline).toBeUndefined();
+    expect(jobBoxStyle('emergency', true).backgroundColor).toBe(JOB_COLOURS.emergency.box);
+    expect(jobBoxStyle('emergency', true).outline).toContain(ON_CALL_BORDER);
   });
 });
 

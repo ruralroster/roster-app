@@ -1291,22 +1291,20 @@ export default function StaffRosterView({ departmentId, staffId }) {
                                       dutyTypes
                                     );
                                     const boxStyle = jobBoxStyle(jobCategory, onCall);
-                                    // Text takes the on-call box's own colour.
-                                    const subTextClass = onCall ? 'opacity-90' : 'text-gray-600';
                                     return (
                                       <div key={assignment.assignment_id} style={boxStyle} className={`flex items-center justify-between gap-2 p-2 rounded ${isYou ? 'ring-2 ring-blue-600' : ''}`}>
                                         <div>
-                                          <p className={`text-sm font-medium flex items-center gap-2 ${onCall ? '' : 'text-gray-900'}`}>
-                                            <button onClick={() => handleViewStaffDetail(assignment.staff_id)} className={`hover:underline ${onCall ? '' : 'hover:text-blue-700'}`}>
+                                          <p className="text-sm font-medium text-gray-900 flex items-center gap-2">
+                                            <button onClick={() => handleViewStaffDetail(assignment.staff_id)} className="hover:underline hover:text-blue-700">
                                               {assignment.staff?.name}
                                             </button>
                                             {isYou && <span className="px-2 py-0.5 bg-blue-600 text-white text-xs font-semibold rounded-full">You</span>}
                                           </p>
-                                          <p className={`text-xs ${subTextClass}`}>
+                                          <p className="text-xs text-gray-600">
                                             {assignment.shifts?.name} ({assignment.shifts?.start_time?.slice(0, 5)} - {assignment.shifts?.end_time?.slice(0, 5)})
                                           </p>
                                         </div>
-                                        <p className={`text-xs font-medium ${subTextClass}`}>{RANK_LABEL[assignment.staff?.rank] || assignment.role}</p>
+                                        <p className="text-xs font-medium text-gray-600">{RANK_LABEL[assignment.staff?.rank] || assignment.role}</p>
                                       </div>
                                     );
                                   })}
