@@ -70,6 +70,35 @@ const OCT_FILE = path.join(__dirname, '..', 'Rosters', 'innisfail', '2026 Octobe
     expect(new Set(slots).size).toBe(slots.length);
   });
 
+  // 13/10: Adrian Connor on EDL + OC with "Oncall + Anaes", Daniel
+  // Charles on Anaes clinic with "Anaes".
+  const clashFor = (data) => data.find(r => r.action === 'on call clash' && r.date === '13/10/2026');
+  const staffIdOf = (name) => staffList.find(s => s.name === name).staff_id;
+
+  test('two people down for one slot is a clash, the EDL + OC person suggested', async () => {
+    const { data } = await importRosterWeek('dept', people, refLists, { dryRun: true });
+    const clash = clashFor(data);
+    expect(clash.ok).toBe(false);
+    expect(clash.dutyLabel).toBe('Anaesthetics on-call (Night)');
+    expect(clash.candidates.map(c => c.staffName).sort()).toEqual(['Adrian Connor', 'Daniel Charles']);
+    expect(clash.suggestedStaffId).toBe(staffIdOf('Adrian Connor'));
+    // His ED on call isn't contested.
+    expect(data.filter(r => r.action === 'on call' && r.date === '13/10/2026' && r.dutyLabel === 'ED on call (Night)').map(r => r.staffName)).toEqual(['Adrian Connor']);
+  });
+
+  test('a real run with an unchosen clash writes nothing', async () => {
+    const { error, deletionSummary } = await importRosterWeek('dept', people, refLists, { dryRun: false });
+    expect(error.message).toMatch(/Choose who's on call/);
+    expect(deletionSummary).toBeNull();
+  });
+
+  test('the officer\'s choice settles the clash', async () => {
+    const clashKey = clashFor((await importRosterWeek('dept', people, refLists, { dryRun: true })).data).clashKey;
+    const { data } = await importRosterWeek('dept', people, refLists, { dryRun: true, onCallChoices: { [clashKey]: staffIdOf('Daniel Charles') } });
+    expect(clashFor(data).ok).toBe(true);
+    expect(clashFor(data).chosenStaffId).toBe(staffIdOf('Daniel Charles'));
+  });
+
   test('an ED-format-style file with no notes row writes no on-call', async () => {
     const noNotes = people.map(p => ({ ...p, days: p.days.map(({ rawOnCall, onCall, ...d }) => d) }));
     const { data } = await importRosterWeek('dept', noNotes, refLists, { dryRun: true });

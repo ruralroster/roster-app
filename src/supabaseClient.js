@@ -4645,10 +4645,17 @@ async function replaceExistingRosterForDates(departmentId, dateStrs, dryRun, dut
 // On call: the classic format's CALL OBLIGATION notes ("Oncall", "Anaes",
 // "Obs", "Oncall + Anaes"...) and its "EDL + OC" shift become
 // duty_assignments in refLists.dutyTypes' matching on-call slots (see
-// dutyTypeForOnCallKind), replacing those slots on the file's dates. Two
-// people down for the same slot on the same day is an error for the
-// second, never a silent overwrite.
-export async function importRosterWeek(departmentId, people, refLists, { dryRun = true, onProgress, addUnnamedAsUnfilled = false } = {}) {
+// dutyTypeForOnCallKind), replacing those slots on the file's dates.
+//
+// Two or more people down for the same slot on the same day is a clash
+// (e.g. one on "EDL + OC" with "Oncall + Anaes" and an anaesthetist on
+// clinic with "Anaes" — usually the EDL person does ED on call and the
+// other does Anaesthetics). Each clash comes back as an 'on call clash'
+// result naming the candidates, with the "EDL + OC" person as the
+// suggestion; the officer picks one in the preview, passed back as
+// onCallChoices ({ clashKey: staff_id, or '' for nobody }). A real run
+// with any clash still unchosen writes nothing at all.
+export async function importRosterWeek(departmentId, people, refLists, { dryRun = true, onProgress, addUnnamedAsUnfilled = false, onCallChoices = {} } = {}) {
   const { staffList, locations, activities, leaveTypes, dutyTypes = [], nameMappings = { location: {}, activity: {}, staff: {} } } = refLists;
   const findLocation = (name) => {
     const key = name.trim().toLowerCase();
@@ -4671,8 +4678,88 @@ export async function importRosterWeek(departmentId, people, refLists, { dryRun 
     Object.keys(ON_CALL_KIND_LABEL).forEach(kind => { onCallDutyByKind[kind] = dutyTypeForOnCallKind(kind, dutyTypes); });
   }
   const managedDutyKeys = Object.values(onCallDutyByKind).filter(Boolean).map(dt => dt.key);
-  // "dateStr|dutyKey" -> { staffId, staffName }, first person wins.
-  const onCallClaims = new Map();
+
+  const staffFor = (person) => {
+    const mappedStaffId = nameMappings.staff?.[staffLabelKey(person.rawLabel)];
+    return (mappedStaffId && staffList.find(s => s.staff_id === mappedStaffId)) || matchStaffName(person.rawLabel, staffList);
+  };
+
+  // Every on-call claim on the file, gathered before anything is deleted
+  // so an unchosen clash can stop a real run up front. Unmatched people
+  // are left out here — they're already reported below.
+  const onCallSlots = new Map(); // "dateStr|dutyKey" -> { date, dutyType, candidates: [{ staffId, staffName, rawLabel, onEdl }] }
+  const onCallResults = [];
+  if (fileHasOnCallNotes) {
+    people.forEach(person => {
+      if (person.unnamed) return;
+      const staff = staffFor(person);
+      if (!staff) return;
+      person.days.forEach(day => {
+        onCallKindsForDay(day).forEach(kind => {
+          const onCallEntry = { rawLabel: person.rawLabel, staffId: staff.staff_id, staffName: staff.name, date: day.date };
+          const dutyType = onCallDutyByKind[kind];
+          const date = parseExcelDate(day.date);
+          if (!dutyType) {
+            onCallResults.push({ ...onCallEntry, ok: false, reason: `On call (${ON_CALL_KIND_LABEL[kind]}) — no single matching on-call slot in the department's duty types, not imported` });
+            return;
+          }
+          if (!date) {
+            onCallResults.push({ ...onCallEntry, ok: false, reason: `Could not parse date "${day.date}"` });
+            return;
+          }
+          const slotKey = `${toLocalDateStr(date)}|${dutyType.key}`;
+          if (!onCallSlots.has(slotKey)) onCallSlots.set(slotKey, { date, dateLabel: day.date, dutyType, candidates: [] });
+          const slot = onCallSlots.get(slotKey);
+          const onEdl = (day.rawShift || '').trim() === 'EDL + OC';
+          const existing = slot.candidates.find(c => c.staffId === staff.staff_id);
+          if (existing) existing.onEdl = existing.onEdl || onEdl;
+          else slot.candidates.push({ staffId: staff.staff_id, staffName: staff.name, rawLabel: person.rawLabel, onEdl });
+        });
+      });
+    });
+  }
+
+  // slot -> who it's written for (staff_id), '' for nobody, undefined for
+  // a clash still waiting on the officer.
+  const onCallWinners = [];
+  let unchosenClashes = 0;
+  onCallSlots.forEach((slot, slotKey) => {
+    if (slot.candidates.length === 1) {
+      onCallWinners.push({ slot, staffId: slot.candidates[0].staffId, result: { ...slot.candidates[0], date: slot.dateLabel, ok: true, action: 'on call', dutyLabel: slot.dutyType.label } });
+      return;
+    }
+    const edlCandidates = slot.candidates.filter(c => c.onEdl);
+    const choice = onCallChoices[slotKey];
+    const chosen = choice !== undefined && (choice === '' || slot.candidates.some(c => c.staffId === choice)) ? choice : undefined;
+    const result = {
+      rawLabel: slot.dutyType.label,
+      date: slot.dateLabel,
+      ok: chosen !== undefined,
+      action: 'on call clash',
+      clashKey: slotKey,
+      dutyLabel: slot.dutyType.label,
+      candidates: slot.candidates,
+      suggestedStaffId: edlCandidates.length === 1 ? edlCandidates[0].staffId : null,
+      chosenStaffId: chosen,
+      reason: chosen === undefined ? `${slot.candidates.length} people down for ${slot.dutyType.label} — choose who's on call` : undefined,
+    };
+    if (chosen === undefined) {
+      unchosenClashes++;
+      onCallResults.push(result);
+    } else if (chosen === '') {
+      onCallResults.push(result);
+    } else {
+      onCallWinners.push({ slot, staffId: chosen, result });
+    }
+  });
+
+  if (!dryRun && unchosenClashes > 0) {
+    return {
+      data: [...onCallResults, ...onCallWinners.map(w => w.result)],
+      error: new Error(`Choose who's on call for ${unchosenClashes} on-call clash${unchosenClashes === 1 ? '' : 'es'} in the dry run first — nothing was written`),
+      deletionSummary: null,
+    };
+  }
 
   const dateStrs = rosterDateStrsFromPeople(people);
   let deletionSummary;
@@ -4695,8 +4782,7 @@ export async function importRosterWeek(departmentId, people, refLists, { dryRun 
       continue;
     }
 
-    const mappedStaffId = nameMappings.staff?.[staffLabelKey(person.rawLabel)];
-    const staff = (mappedStaffId && staffList.find(s => s.staff_id === mappedStaffId)) || matchStaffName(person.rawLabel, staffList);
+    const staff = staffFor(person);
     if (!staff) {
       results.push({ rawLabel: person.rawLabel, ok: false, reason: 'No matching staff record', unmatchedLabel: person.rawLabel, section: person.section, fte: person.fte });
       onProgress?.(personIndex + 1, people.length);
@@ -4704,27 +4790,6 @@ export async function importRosterWeek(departmentId, people, refLists, { dryRun 
     }
 
     for (const day of person.days) {
-      if (fileHasOnCallNotes) {
-        for (const kind of onCallKindsForDay(day)) {
-          const onCallEntry = { rawLabel: person.rawLabel, staffId: staff.staff_id, staffName: staff.name, date: day.date };
-          const dutyType = onCallDutyByKind[kind];
-          const date = parseExcelDate(day.date);
-          if (!dutyType) {
-            results.push({ ...onCallEntry, ok: false, reason: `On call (${ON_CALL_KIND_LABEL[kind]}) — no single matching on-call slot in the department's duty types, not imported` });
-          } else if (!date) {
-            results.push({ ...onCallEntry, ok: false, reason: `Could not parse date "${day.date}"` });
-          } else {
-            const claimKey = `${toLocalDateStr(date)}|${dutyType.key}`;
-            const existing = onCallClaims.get(claimKey);
-            if (!existing) {
-              onCallClaims.set(claimKey, { staffId: staff.staff_id, staffName: staff.name, date, onCallEntry, dutyType });
-            } else if (existing.staffId !== staff.staff_id) {
-              results.push({ ...onCallEntry, ok: false, reason: `${dutyType.label}: ${existing.staffName} is already down for it on this day — not imported` });
-            }
-          }
-        }
-      }
-
       if (!day.rawShift || !day.resolvedShift) continue;
       const resolved = day.resolvedShift;
       const entry = { rawLabel: person.rawLabel, staffId: staff.staff_id, staffName: staff.name, date: day.date, rawShift: day.rawShift };
@@ -4792,14 +4857,14 @@ export async function importRosterWeek(departmentId, people, refLists, { dryRun 
     onProgress?.(personIndex + 1, people.length);
   }
 
-  for (const { staffId, date, onCallEntry, dutyType } of onCallClaims.values()) {
-    const onCallResult = { ...onCallEntry, ok: true, action: 'on call', dutyLabel: dutyType.label };
+  results.push(...onCallResults);
+  for (const { slot, staffId, result } of onCallWinners) {
     if (dryRun) {
-      results.push(onCallResult);
+      results.push(result);
       continue;
     }
-    const { error } = await updateDutyAssignment(departmentId, date, dutyType.key, staffId);
-    results.push({ ...onCallResult, ok: !error, error: error?.message });
+    const { error } = await updateDutyAssignment(departmentId, slot.date, slot.dutyType.key, staffId);
+    results.push({ ...result, ok: !error, error: error?.message });
   }
 
   if (addUnnamedAsUnfilled) {

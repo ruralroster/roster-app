@@ -105,6 +105,13 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
   // the first allocation for the whole day; off → split AM/PM as before.
   // See applyPrimaryAllocation.
   const [usePrimaryAllocation, setUsePrimaryAllocation] = useState(true);
+  // Who the officer picked for each on-call clash in the dry run —
+  // { clashKey: staff_id, or '' for nobody }. Kept across re-runs of the
+  // same week (e.g. after a Map… fix), cleared for a new file or week.
+  // Write to Roster stays disabled until every clash has a pick. See
+  // importRosterWeek.
+  const [onCallChoices, setOnCallChoices] = useState({});
+  useEffect(() => { setOnCallChoices({}); }, [workbook, sheetName, weekIndex, format]);
 
   // Saved fixes for import errors (roster_import_mappings) — applied to
   // every dry run / write, and editable from the results list's Map…
@@ -334,7 +341,7 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
       const { data, error: importError, deletionSummary: nextDeletionSummary } = await importRosterWeek(
         departmentId, people,
         { staffList: [...staffList, ...extraStaff], locations, activities, leaveTypes, dutyTypes, nameMappings },
-        { dryRun, addUnnamedAsUnfilled, onProgress: (current, total) => setImportProgress({ current, total }) }
+        { dryRun, addUnnamedAsUnfilled, onCallChoices, onProgress: (current, total) => setImportProgress({ current, total }) }
       );
       if (importError) throw importError;
       setResults(data);
@@ -483,9 +490,12 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
     ? activities.filter(a => draftLocation.allowed_activity_ids.includes(a.activity_id))
     : activities;
 
-  const okCount = results?.filter(r => r.ok && !r.action?.startsWith('unfilled')).length ?? 0;
+  const isClash = (r) => r.action === 'on call clash';
+  const unchosenClashCount = results?.filter(r => isClash(r) && !(r.clashKey in onCallChoices)).length ?? 0;
+  const okCount = results?.filter(r => !isClash(r) && r.ok && !r.action?.startsWith('unfilled')).length ?? 0;
   const unfilledCount = results?.filter(r => r.ok && r.action?.startsWith('unfilled')).length ?? 0;
-  const errorCount = results?.filter(r => !r.ok).length ?? 0;
+  const errorCount = results?.filter(r => !isClash(r) && !r.ok).length ?? 0;
+  const clashCount = results?.filter(isClash).length ?? 0;
 
   return (
     <div>
@@ -677,8 +687,8 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
             </button>
             <button
               onClick={() => runImport(false)}
-              disabled={loading || !results}
-              title={!results ? 'Run a dry run first' : undefined}
+              disabled={loading || !results || unchosenClashCount > 0}
+              title={!results ? 'Run a dry run first' : unchosenClashCount > 0 ? 'Choose who\'s on call for each clash below first' : undefined}
               className="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white font-medium rounded-lg transition text-sm"
             >
               Write to Roster
@@ -717,15 +727,40 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
         <div>
           <div className="flex items-center justify-between mb-2">
             <p className="text-sm font-semibold text-gray-900">
-              {wasDryRun ? 'Dry run result' : 'Import result'} — {okCount} would {wasDryRun ? '' : 'did '}succeed, {unfilledCount > 0 ? `${unfilledCount} unfilled, ` : ''}{errorCount} error{errorCount === 1 ? '' : 's'}
+              {wasDryRun ? 'Dry run result' : 'Import result'} — {okCount} would {wasDryRun ? '' : 'did '}succeed, {unfilledCount > 0 ? `${unfilledCount} unfilled, ` : ''}{clashCount > 0 ? `${clashCount} on-call clash${clashCount === 1 ? '' : 'es'}, ` : ''}{errorCount} error{errorCount === 1 ? '' : 's'}
             </p>
           </div>
+          {wasDryRun && unchosenClashCount > 0 && (
+            <div className="mb-2 p-3 rounded-lg border bg-amber-50 border-amber-300 flex gap-2 items-start">
+              <AlertCircle size={16} className="flex-shrink-0 mt-0.5 text-amber-600" />
+              <p className="text-xs text-gray-700">
+                <strong>{unchosenClashCount}</strong> on-call slot{unchosenClashCount === 1 ? ' has' : 's have'} more than one person down for {unchosenClashCount === 1 ? 'it' : 'them'} on the sheet. Choose who's on call for each one below before writing — the person on the EDL + OC shift is suggested.
+              </p>
+            </div>
+          )}
           <div className="max-h-96 overflow-y-auto border border-gray-200 rounded-lg divide-y divide-gray-100">
             {results.map((r, i) => (
-              <div key={i} className={`p-2 text-xs ${!r.ok ? 'bg-red-50' : r.action?.startsWith('unfilled') ? 'bg-amber-50' : 'bg-white'}`}>
-                <span className="font-semibold text-gray-900">{r.staffName || r.rawLabel}</span>
+              <div key={i} className={`p-2 text-xs ${isClash(r) ? (r.clashKey in onCallChoices ? 'bg-white' : 'bg-amber-50') : !r.ok ? 'bg-red-50' : r.action?.startsWith('unfilled') ? 'bg-amber-50' : 'bg-white'}`}>
+                <span className="font-semibold text-gray-900">{isClash(r) ? r.dutyLabel : (r.staffName || r.rawLabel)}</span>
                 {r.date && <span className="text-gray-500"> · {r.date}</span>}
-                {r.action === 'unfilled' ? (
+                {isClash(r) ? (
+                  <span className="text-amber-800">
+                    {' — '}{r.candidates.length} people down for it. On call:
+                    {[...r.candidates.map(c => ({ value: c.staffId, label: c.onEdl && c.staffId === r.suggestedStaffId ? `${c.staffName} (EDL + OC, suggested)` : c.staffName })), { value: '', label: 'Nobody' }].map(option => {
+                      const picked = onCallChoices[r.clashKey] === option.value;
+                      return (
+                        <button
+                          key={option.value || 'nobody'}
+                          onClick={() => wasDryRun && setOnCallChoices(prev => ({ ...prev, [r.clashKey]: option.value }))}
+                          disabled={!wasDryRun}
+                          className={`ml-2 px-2 py-0.5 font-medium rounded transition ${picked ? 'bg-blue-600 text-white' : 'bg-white border border-amber-300 text-amber-900 hover:bg-amber-100'}`}
+                        >
+                          {option.label}
+                        </button>
+                      );
+                    })}
+                  </span>
+                ) : r.action === 'unfilled' ? (
                   <span className="text-amber-800">
                     {' — '}Added as unfilled ({r.gradeLabel}): {r.location} / {r.activity} {r.start}–{r.end}
                   </span>
