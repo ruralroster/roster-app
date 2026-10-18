@@ -2875,15 +2875,14 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
         return (a.name || '').localeCompare(b.name || '');
       };
 
-      // Fixed day-column width — a constant, not sized off whatever's
-      // actually on screen (dynamic sizing off the current fortnight kept
-      // moving/stretching as the officer paged between weeks). Sized to fit
-      // a real worst-case entry — someone covering two overlapping on-call
-      // duties. The pills are 10px text but `ch` here is the grid's own
-      // (16px) font, hence the 10/16, plus a few ch for the pill padding
-      // and its × button. Anything longer truncates (full text on hover).
-      const FORTNIGHT_WORST_CASE_ENTRY = 'Thomas (ED On-call) (AN On-call)';
-      const FORTNIGHT_DAY_COLUMN_WIDTH = `${Math.ceil(FORTNIGHT_WORST_CASE_ENTRY.length * 10 / 16) + 6}ch`;
+      // Day columns never size off their content (that kept moving and
+      // stretching as the officer paged between fortnights), so both weeks'
+      // Tuesdays always line up. On desktop the 7 columns share the screen
+      // width equally, so the whole fortnight fits without a sideways
+      // scroll; below that (phones) each column is a fixed 11rem and the
+      // grid scrolls sideways. A pill too long for its column truncates,
+      // full text on hover.
+      const FORTNIGHT_GRID_COLUMNS_CLASS = 'grid-cols-[repeat(7,11rem)] lg:grid-cols-[repeat(7,minmax(0,1fr))]';
       const fortnightWeeks = [days.slice(0, 7), days.slice(7, 14)];
 
       const selectedStaff = refData.staff.find(s => s.staff_id === fortnightSelectedStaffId);
@@ -2976,8 +2975,8 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
 
           {/* Fortnight grid — sits outside the max-w-3xl wrapper above so it
               can use the full page width. Rendered as two independent
-              7-column grids (one per week, each fixed to
-              FORTNIGHT_DAY_COLUMN_WIDTH) rather than one 14-cell grid, so a
+              7-column grids (one per week, both using
+              FORTNIGHT_GRID_COLUMNS_CLASS) rather than one 14-cell grid, so a
               week's row doesn't grow/shrink as the officer pages between
               fortnights. */}
           <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
@@ -3028,7 +3027,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
               ) : (
                 <div className="overflow-x-auto space-y-3">
                 {fortnightWeeks.map((weekDays, weekIdx) => (
-                <div key={weekIdx} className="grid gap-2" style={{ gridTemplateColumns: `repeat(7, ${FORTNIGHT_DAY_COLUMN_WIDTH})` }}>
+                <div key={weekIdx} className={`grid gap-2 ${FORTNIGHT_GRID_COLUMNS_CLASS}`}>
                   {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(day => (
                     <div key={day} className="text-center text-xs font-bold text-gray-600 py-1">{day}</div>
                   ))}
