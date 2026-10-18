@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { AlertCircle } from 'lucide-react';
 import { getJobTypesAndPlaces, createJobType, updateJobType, deleteJobType } from './supabaseClient';
 import JobPlacesModal from './JobPlacesModal';
+import JobConversionModal from './JobConversionModal';
 
 // ============================================================
 // JOBS — Settings → Locations & Activities → Jobs (Planner)
@@ -74,6 +75,7 @@ export default function PlannerJobsSettings({ departmentId, locations, activitie
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [placesJobId, setPlacesJobId] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [showConvert, setShowConvert] = useState(false);
 
   useEffect(() => {
     if (!departmentId) return;
@@ -163,6 +165,12 @@ export default function PlannerJobsSettings({ departmentId, locations, activitie
       <p className="text-sm text-gray-600 mb-3">
         Your regular jobs for the Planner: where, what, and the hours the service runs, plus the places each one needs filled. People's own hours on a job still come from their shift.
       </p>
+      <div className="mb-3 p-3 bg-teal-50 border border-teal-200 rounded-lg flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs text-teal-900">Turn the activities already on the roster (and in week templates) into jobs, so nothing shows as "not a job".</p>
+        <button onClick={() => setShowConvert(true)} className="px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white font-medium rounded-lg text-xs">
+          Convert existing activities…
+        </button>
+      </div>
 
       {error && (
         <div className="mb-4 p-3 bg-red-50 border border-red-300 rounded-lg flex gap-2 items-start">
@@ -227,6 +235,17 @@ export default function PlannerJobsSettings({ departmentId, locations, activitie
           );
         })}
       </div>
+
+      {showConvert && (
+        <JobConversionModal
+          departmentId={departmentId}
+          jobTypes={jobTypes}
+          locations={locations}
+          activities={activities}
+          onJobsChange={setJobTypes}
+          onClose={() => setShowConvert(false)}
+        />
+      )}
 
       {placesJob && (
         <JobPlacesModal

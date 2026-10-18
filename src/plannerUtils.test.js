@@ -1,4 +1,4 @@
-import { jobForCard, placeMismatch, layOutCard, dayConflict, daysWorked, intervalOn, intervalsOverlap } from './plannerUtils';
+import { jobForCard, placeMismatch, layOutCard, dayConflict, daysWorked, intervalOn, intervalsOverlap, groupUnconverted, bestJobForNewCard } from './plannerUtils';
 
 const ranks = [
   { rank: 'SMO', requires_supervision: false },
@@ -106,5 +106,50 @@ describe('helpers', () => {
     const a = [{ staff_id: 's', date: '2026-10-20' }, { staff_id: 's', date: '2026-10-20' }, { staff_id: 's', date: '2026-10-19' }];
     const d = [{ staff_id: 's', date: '2026-10-21' }];
     expect(daysWorked('s', '2026-10-20', '2026-10-26', a, d)).toBe(2);
+  });
+});
+
+describe('groupUnconverted', () => {
+  const locations = [{ location_id: 'ed', name: 'Emergency' }, { location_id: 'th', name: 'Theatre' }, { location_id: 'w1', name: 'Ward 1' }, { location_id: 'w2', name: 'Ward 2' }];
+  const activities = [{ activity_id: 'edcover', name: 'ED Cover' }, { activity_id: 'ward', name: 'Ward Care Cover', abbreviation: 'Ward' }, { activity_id: 'endo', name: 'Endoscopy' }];
+
+  it('groups by location, activity and exact hours; points exact matches at their job', () => {
+    const cards = [
+      { theatre_activity_id: 'c1', date: '2026-10-20', location_id: 'ed', activity_id: 'edcover', start_time: '08:00:00', end_time: '18:00:00' },
+      { theatre_activity_id: 'c2', date: '2026-10-21', location_id: 'ed', activity_id: 'edcover', start_time: '08:00', end_time: '18:00' },
+      { theatre_activity_id: 'c3', date: '2026-10-20', location_id: 'ed', activity_id: 'edcover', start_time: '22:00', end_time: '08:00' },
+      { theatre_activity_id: 'c4', date: '2026-10-20', location_id: 'w1', activity_id: 'ward', start_time: '08:00', end_time: '18:00' },
+      { theatre_activity_id: 'c5', date: '2026-10-20', location_id: 'w2', activity_id: 'ward', start_time: '08:00', end_time: '18:00' },
+      { theatre_activity_id: 'done', date: '2026-10-20', location_id: 'th', activity_id: 'endo', start_time: '08:00', end_time: '12:00', job_type_id: 'endo' },
+    ];
+    const entries = [{ week_template_entry_id: 'e1', location_id: 'ed', activity_id: 'edcover', start_time: '08:00', end_time: '18:00' }];
+    const groups = groupUnconverted(cards, entries, [{ ...edNight, name: 'ED Night' }], locations, activities);
+    expect(groups).toHaveLength(4);
+    expect(groups[0]).toMatchObject({ cardIds: ['c1', 'c2'], entryIds: ['e1'], firstDate: '2026-10-20', lastDate: '2026-10-21', suggestedName: 'ED Cover Day', matchJobId: null });
+    expect(groups.find(g => g.cardIds.includes('c3')).matchJobId).toBe('ednight');
+    // Same activity at two wards → the location goes in the name.
+    expect(groups.find(g => g.cardIds.includes('c4')).suggestedName).toBe('Ward 1 Ward Day');
+  });
+
+  it('never suggests a name that is already taken', () => {
+    const cards = [{ theatre_activity_id: 'c1', date: '2026-10-20', location_id: 'ed', activity_id: 'edcover', start_time: '08:00', end_time: '18:00' }];
+    const [g] = groupUnconverted(cards, [], [{ ...edNight, name: 'ED Cover Day' }], locations, activities);
+    expect(g.suggestedName).toBe('ED Cover Day 08:00–18:00');
+  });
+});
+
+describe('bestJobForNewCard', () => {
+  const card = (start, end, loc = 'ed', act = 'edcover') => ({ location_id: loc, activity_id: act, start_time: start, end_time: end });
+
+  it('prefers exact hours, else the most overlap at the same location and activity', () => {
+    expect(bestJobForNewCard(card('22:00', '08:00'), jobs)).toBe(edNight);
+    expect(bestJobForNewCard(card('07:00', '17:00'), jobs)).toBe(edDay); // ED early
+    expect(bestJobForNewCard(card('20:00', '06:00'), jobs)).toBe(edNight);
+    expect(bestJobForNewCard(card('04:00', '09:00'), jobs)).toBe(edNight); // tail of last night's job
+  });
+
+  it('never crosses to another location or activity, and ignores no-overlap', () => {
+    expect(bestJobForNewCard(card('08:00', '12:00', 'w1'), jobs)).toBeNull();
+    expect(bestJobForNewCard(card('13:00', '17:00', 'th', 'endo'), jobs)).toBeNull();
   });
 });

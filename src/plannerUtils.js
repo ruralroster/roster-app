@@ -47,6 +47,31 @@ export function jobForCard(card, jobTypes) {
     && hhmm(j.end_time) === hhmm(card.end_time)) || null;
 }
 
+// The job a newly made card belongs to: an exact match (jobForCard), or
+// else the job at the same location and activity whose hours overlap the
+// card's the most — so a card made for one person's own hours (an ED
+// early 07:00–17:00) still lands in its job (ED Day 08:00–18:00). null
+// when nothing at that location and activity overlaps at all.
+export function bestJobForNewCard(card, jobTypes) {
+  const exact = jobForCard({ ...card, job_type_id: null }, jobTypes);
+  if (exact) return exact;
+  const day = '2000-01-03';
+  const want = intervalOn(day, card.start_time, card.end_time);
+  let best = null;
+  let bestOverlap = 0;
+  for (const j of jobTypes) {
+    if (j.active === false || j.location_id !== card.location_id || j.activity_id !== card.activity_id) continue;
+    const have = intervalOn(day, j.start_time, j.end_time);
+    // A night job started the evening before can cover an early card too.
+    const overlap = Math.max(
+      Math.min(want.end, have.end) - Math.max(want.start, have.start),
+      Math.min(want.end, have.end - 1440) - Math.max(want.start, have.start - 1440),
+    );
+    if (overlap > bestOverlap) { best = j; bestOverlap = overlap; }
+  }
+  return best;
+}
+
 // rankRows: rank_supervision_rules. An unknown rank counts as junior —
 // same safe default as the rest of the app.
 export function isSenior(staff, rankRows) {
@@ -149,4 +174,76 @@ export function daysWorked(staffId, fromStr, toStr, assignments, duties) {
   for (const a of assignments) if (a.staff_id === staffId && a.date >= fromStr && a.date <= toStr) dates.add(a.date);
   for (const d of duties) if (d.staff_id === staffId && d.date >= fromStr && d.date <= toStr) dates.add(d.date);
   return dates.size;
+}
+
+// ------------------------------------------------------------
+// Converting older cards to jobs (Settings → Jobs → Convert)
+// ------------------------------------------------------------
+
+// Rough part of the day, for a suggested job name.
+export function periodFor(startTime, endTime) {
+  const s = toMinutes(startTime);
+  const e = toMinutes(endTime);
+  if (e <= s || s >= 17 * 60) return 'Night';
+  if (e <= 13 * 60) return 'AM';
+  if (s >= 12 * 60) return 'PM';
+  return 'Day';
+}
+
+// Every card and template entry with no job stored on it, grouped by
+// location + activity + exact hours — one group per job-to-be. A group
+// whose hours already match an existing job is pointed at that job, so
+// stamping it changes nothing on screen but makes the link explicit.
+//
+// Returns [{ key, location_id, activity_id, start_time, end_time,
+// cardIds, entryIds, firstDate, lastDate, matchJobId, suggestedName }],
+// biggest first.
+export function groupUnconverted(cards, entries, jobTypes, locations, activities) {
+  const groups = new Map();
+  const add = (row, kind) => {
+    if (row.job_type_id || !row.location_id || !row.activity_id || !row.start_time || !row.end_time) return;
+    const key = [row.location_id, row.activity_id, hhmm(row.start_time), hhmm(row.end_time)].join('|');
+    if (!groups.has(key)) {
+      groups.set(key, {
+        key, location_id: row.location_id, activity_id: row.activity_id,
+        start_time: hhmm(row.start_time), end_time: hhmm(row.end_time),
+        cardIds: [], entryIds: [], firstDate: null, lastDate: null,
+      });
+    }
+    const g = groups.get(key);
+    if (kind === 'card') {
+      g.cardIds.push(row.theatre_activity_id);
+      if (!g.firstDate || row.date < g.firstDate) g.firstDate = row.date;
+      if (!g.lastDate || row.date > g.lastDate) g.lastDate = row.date;
+    } else {
+      g.entryIds.push(row.week_template_entry_id);
+    }
+  };
+  cards.forEach(c => add(c, 'card'));
+  entries.forEach(e => add(e, 'entry'));
+
+  const list = [...groups.values()];
+  const locName = (id) => locations.find(l => l.location_id === id)?.name || 'Unknown';
+  const act = (id) => activities.find(a => a.activity_id === id);
+  // Name by activity; add the location when the same activity runs at
+  // more than one place.
+  const locationsPerActivity = new Map();
+  list.forEach(g => locationsPerActivity.set(g.activity_id, new Set([...(locationsPerActivity.get(g.activity_id) || []), g.location_id])));
+
+  const taken = new Set(jobTypes.map(j => j.name.toLowerCase()));
+  list.sort((a, b) => (b.cardIds.length + b.entryIds.length) - (a.cardIds.length + a.entryIds.length));
+  for (const g of list) {
+    const match = jobForCard(g, jobTypes);
+    g.matchJobId = match?.job_type_id || null;
+    const a = act(g.activity_id);
+    const actLabel = a?.abbreviation || a?.name || 'Activity';
+    const base = `${locationsPerActivity.get(g.activity_id).size > 1 ? `${locName(g.location_id)} ` : ''}${actLabel} ${periodFor(g.start_time, g.end_time)}`;
+    let name = base;
+    if (taken.has(name.toLowerCase())) name = `${base} ${g.start_time}–${g.end_time}`;
+    let n = 2;
+    while (taken.has(name.toLowerCase())) name = `${base} ${g.start_time}–${g.end_time} (${n++})`;
+    if (!g.matchJobId) taken.add(name.toLowerCase());
+    g.suggestedName = name;
+  }
+  return list;
 }

@@ -6,6 +6,7 @@ import { getMondayOfWeek } from './payrollExport';
 import { matchStaffName, suggestStaffMatches, staffLabelKey, onCallKindsForDay, dutyTypeForOnCallKind, ON_CALL_KIND_LABEL } from './rosterExcelImport';
 import { gradeForSection, gradeForRank, gradeCanCover, GRADE_LABEL } from './staffGrade';
 import { findActiveOnCalls, findOvertimeShifts } from './callbackUtils';
+import { bestJobForNewCard } from './plannerUtils';
 
 console.log('=== supabaseClient.js LOADING ===');
 console.log('Checking environment variables...');
@@ -979,7 +980,7 @@ export async function copyDayActivities(departmentId, fromDate, toDate) {
     const [{ data: sourceCards, error: sourceError }, { data: existingCards, error: existingError }] = await Promise.all([
       supabase
         .from('theatre_activities')
-        .select('location_id, activity_id, shift_id, start_time, end_time, required_grade')
+        .select('location_id, activity_id, shift_id, start_time, end_time, required_grade, job_type_id')
         .eq('department_id', departmentId)
         .eq('date', fromDateStr),
       supabase
@@ -994,9 +995,11 @@ export async function copyDayActivities(departmentId, fromDate, toDate) {
     const cardKey = (c) => `${c.location_id}|${c.activity_id}|${c.start_time}|${c.end_time}`;
     const existingKeys = new Set((existingCards || []).map(cardKey));
 
+    const match = await jobTypeIdMatcher(departmentId);
     const toInsert = (sourceCards || [])
       .filter(c => !existingKeys.has(cardKey(c)))
       .map(c => ({
+        ...(c.job_type_id ? { job_type_id: c.job_type_id } : jobField(match, c)),
         department_id: departmentId,
         date: toDateStr,
         location_id: c.location_id,
@@ -1603,6 +1606,7 @@ export async function createTheatreActivity(departmentId, date, locationId, shif
 
   try {
     const dateStr = toLocalDateStr(date);
+    const match = await jobTypeIdMatcher(departmentId);
     const { data, error } = await supabase
       .from('theatre_activities')
       .insert([{
@@ -1613,6 +1617,7 @@ export async function createTheatreActivity(departmentId, date, locationId, shif
         activity_id: activityId,
         start_time: startTime,
         end_time: endTime,
+        ...jobField(match, { location_id: locationId, activity_id: activityId, start_time: startTime, end_time: endTime }),
       }])
       .select();
 
@@ -2771,6 +2776,7 @@ export async function applyWeekTemplate(departmentId, weekStartDate, weekTemplat
     if (shiftsError) throw shiftsError;
 
     const activeShifts = (shifts || []).filter(s => s.active !== false);
+    const match = await jobTypeIdMatcher(departmentId);
 
     for (const entry of entries || []) {
       const date = new Date(weekStartDate);
@@ -2809,7 +2815,7 @@ export async function applyWeekTemplate(departmentId, weekStartDate, weekTemplat
           activity_id: entry.activity_id,
           start_time: entry.start_time,
           end_time: entry.end_time,
-          ...(entry.job_type_id ? { job_type_id: entry.job_type_id } : {}),
+          ...(entry.job_type_id ? { job_type_id: entry.job_type_id } : jobField(match, entry)),
         }]);
       if (insertError) throw insertError;
     }
@@ -3984,6 +3990,44 @@ export function isMissingTableError(error) {
   return error?.code === 'PGRST205' || error?.code === '42P01';
 }
 
+// Which job a new card is, so cards made outside the Planner (Fortnight,
+// Day view Add Activity, copy day/week, Excel import, older templates)
+// carry their job too and never show as "not a job". Same location and
+// activity, exact hours first, else the most-overlapping hours — a card
+// made for one person's own shift still lands in its job
+// (bestJobForNewCard in plannerUtils.js). Loaded once and kept briefly so an import adding
+// hundreds of cards doesn't re-read the list each time; cleared whenever a
+// job is added, changed or removed. A department that hasn't run the jobs
+// migration gets no match, never an error.
+const JOB_MATCHER_TTL_MS = 30 * 1000;
+const jobMatcherCache = new Map(); // departmentId -> { at, jobTypes }
+
+function clearJobMatcherCache() {
+  jobMatcherCache.clear();
+}
+
+async function jobTypeIdMatcher(departmentId) {
+  const cached = jobMatcherCache.get(departmentId);
+  let jobTypes = cached && Date.now() - cached.at < JOB_MATCHER_TTL_MS ? cached.jobTypes : null;
+  if (!jobTypes) {
+    const { data, error } = await supabase
+      .from('job_types')
+      .select('job_type_id, location_id, activity_id, start_time, end_time, active')
+      .eq('department_id', departmentId);
+    if (error && !isMissingTableError(error)) throw error;
+    jobTypes = data || [];
+    jobMatcherCache.set(departmentId, { at: Date.now(), jobTypes });
+  }
+  return (row) => bestJobForNewCard(row, jobTypes)?.job_type_id || null;
+}
+
+// { job_type_id } to spread into a theatre_activities insert, or {} when
+// no job matches — so the insert never names the column for nothing.
+function jobField(match, row) {
+  const id = match(row);
+  return id ? { job_type_id: id } : {};
+}
+
 // Both lists in one go; `missing` means the migration hasn't been run in
 // this database yet.
 export async function getJobTypesAndPlaces(departmentId) {
@@ -4007,6 +4051,7 @@ const pickFields = (fields, allowed) => Object.fromEntries(allowed.filter(k => f
 
 export async function createJobType(departmentId, fields) {
   try {
+    clearJobMatcherCache();
     const { data, error } = await supabase
       .from('job_types')
       .insert([{ department_id: departmentId, ...pickFields(fields, JOB_TYPE_FIELDS) }])
@@ -4021,6 +4066,7 @@ export async function createJobType(departmentId, fields) {
 
 export async function updateJobType(jobTypeId, fields) {
   try {
+    clearJobMatcherCache();
     const { data, error } = await supabase
       .from('job_types')
       .update(pickFields(fields, JOB_TYPE_FIELDS))
@@ -4038,6 +4084,7 @@ export async function updateJobType(jobTypeId, fields) {
 // existing — their job_type_id is just cleared (ON DELETE SET NULL).
 export async function deleteJobType(jobTypeId) {
   try {
+    clearJobMatcherCache();
     const { error } = await supabase
       .from('job_types')
       .delete()
@@ -4293,6 +4340,66 @@ export async function saveWeekAsTemplate(departmentId, name, weekStartDate, card
   } catch (err) {
     console.error('saveWeekAsTemplate error:', err);
     return { data: null, error: err };
+  }
+}
+
+// ------------------------------------------------------------
+// Converting older cards to jobs
+// ------------------------------------------------------------
+
+// Supabase returns at most 1000 rows per request; this pages through.
+async function fetchAllRows(makeQuery, pageSize = 1000) {
+  const rows = [];
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await makeQuery().range(from, from + pageSize - 1);
+    if (error) throw error;
+    rows.push(...(data || []));
+    if (!data || data.length < pageSize) return rows;
+  }
+}
+
+// Every card, ever, and every week template entry with no job stored —
+// what the Convert to jobs tool groups up.
+export async function getCardsWithoutJob(departmentId) {
+  try {
+    const [cards, entries] = await Promise.all([
+      fetchAllRows(() => supabase
+        .from('theatre_activities')
+        .select('theatre_activity_id, date, location_id, activity_id, start_time, end_time, job_type_id')
+        .eq('department_id', departmentId)
+        .is('job_type_id', null)
+        .order('theatre_activity_id')),
+      fetchAllRows(() => supabase
+        .from('week_template_entries')
+        .select('week_template_entry_id, location_id, activity_id, start_time, end_time, job_type_id, week_templates!inner(department_id)')
+        .eq('week_templates.department_id', departmentId)
+        .is('job_type_id', null)
+        .order('week_template_entry_id')),
+    ]);
+    return { data: { cards, entries }, error: null };
+  } catch (err) {
+    console.error('getCardsWithoutJob error:', err);
+    return { data: null, error: err };
+  }
+}
+
+// Stamps jobTypeId onto these cards and template entries. Only ever sets
+// job_type_id — nobody's booking, hours or anything else changes.
+export async function stampJobOnCards(jobTypeId, cardIds, entryIds) {
+  const CHUNK = 200;
+  try {
+    for (let i = 0; i < cardIds.length; i += CHUNK) {
+      const { error } = await supabase.from('theatre_activities').update({ job_type_id: jobTypeId }).in('theatre_activity_id', cardIds.slice(i, i + CHUNK));
+      if (error) throw error;
+    }
+    for (let i = 0; i < entryIds.length; i += CHUNK) {
+      const { error } = await supabase.from('week_template_entries').update({ job_type_id: jobTypeId }).in('week_template_entry_id', entryIds.slice(i, i + CHUNK));
+      if (error) throw error;
+    }
+    return { error: null };
+  } catch (err) {
+    console.error('stampJobOnCards error:', err);
+    return { error: err };
   }
 }
 
@@ -4700,6 +4807,7 @@ export async function assignStaffFortnight(departmentId, date, staffId, shiftId,
     }
     let alreadyOnCard = false;
     if (!theatreActivityId) {
+      const match = await jobTypeIdMatcher(departmentId);
       const { data: newTa, error: createError } = await supabase
         .from('theatre_activities')
         .insert([{
@@ -4710,6 +4818,7 @@ export async function assignStaffFortnight(departmentId, date, staffId, shiftId,
           activity_id: activityId,
           start_time: shift.start_time,
           end_time: shift.end_time,
+          ...jobField(match, { location_id: locationId, activity_id: activityId, start_time: shift.start_time, end_time: shift.end_time }),
         }])
         .select('theatre_activity_id')
         .single();
@@ -5307,6 +5416,7 @@ async function importUnnamedAsUnfilled(departmentId, unnamedPeople, findLocation
           results.push({ ...entry, ok: false, reason: `Failed to resolve shift: ${shiftError.message}` });
           continue;
         }
+        const match = await jobTypeIdMatcher(departmentId);
         const { error: insertError } = await supabase
           .from('theatre_activities')
           .insert([{
@@ -5318,6 +5428,7 @@ async function importUnnamedAsUnfilled(departmentId, unnamedPeople, findLocation
             start_time: segment.start,
             end_time: segment.end,
             required_grade: grade,
+            ...jobField(match, { location_id: location.location_id, activity_id: activity.activity_id, start_time: segment.start, end_time: segment.end }),
           }]);
         results.push(insertError ? { ...entry, ok: false, reason: `Failed to add unfilled card: ${insertError.message}` } : unfilled);
       }
