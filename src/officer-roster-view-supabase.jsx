@@ -18,7 +18,7 @@ import TwoFactorSettings from './TwoFactorSettings';
 import PlannerJobsSettings from './PlannerJobsSettings';
 import PlannerTab from './PlannerTab';
 import { toLocalDateStr } from './dateUtils';
-import { jobCategoryFor, jobCardStyle, jobBoxStyle, holdsOnCallDuty } from './jobColours';
+import { jobCategoryFor, jobCardStyle, jobBoxStyle, holdsOnCallDuty, shortOnCallLabel } from './jobColours';
 import { edLateOnCallFor } from './edLateOnCall';
 import { ChevronLeft, ChevronRight, X, AlertCircle, Loader, Hand, Settings } from 'lucide-react';
 import { createTheatreActivity,
@@ -2798,11 +2798,16 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
           const groupKey = `duty:${d.duty_type}`;
           const dutyType = dutyTypeByKey.get(d.duty_type);
           const dutyHasTimes = dutyType?.start_time && dutyType?.end_time;
+          // On-call duties show as just "AN On-call" — no session, which
+          // only repeated the "(night)" already in the full label.
+          const dutyLabel = dutyType?.label || d.duty_type;
+          const shortLabel = shortOnCallLabel(dutyLabel);
+          const isOnCallLabel = shortLabel !== dutyLabel;
           noteStartTime(person, dutyType?.start_time, dutyHasTimes ? getSessionGroups(dutyType, sessionBoundaries)[0] : null);
           if (!person.activityGroups.has(groupKey)) {
-            person.activityGroups.set(groupKey, { label: `${dutyType?.label || d.duty_type}${d.derived ? ', ED late' : ''}`, sessions: new Set() });
+            person.activityGroups.set(groupKey, { label: `${shortLabel}${d.derived ? ', ED late' : ''}`, sessions: new Set() });
           }
-          if (dutyHasTimes) {
+          if (dutyHasTimes && !isOnCallLabel) {
             const group = person.activityGroups.get(groupKey);
             sessionLabelsForTimes(dutyType).forEach(s => group.sessions.add(s));
           }
@@ -2822,6 +2827,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
       const formatPersonEntry = (person) => {
         const groups = Array.from(person.activityGroups.values()).map(group => {
           const sessions = Array.from(group.sessions).join('/');
+          if (!sessions) return group.label ? ` (${group.label})` : '';
           return ` (${group.label ? `${group.label} - ` : ''}${sessions})`;
         }).join('');
         return `${getFirstName(person.name)}${groups}`;
@@ -2873,10 +2879,11 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
       // actually on screen (dynamic sizing off the current fortnight kept
       // moving/stretching as the officer paged between weeks). Sized to fit
       // a real worst-case entry — someone covering two overlapping on-call
-      // duties — plus 10ch of headroom, then halved: the full-width
-      // version still read as too stretched out.
-      const FORTNIGHT_WORST_CASE_ENTRY = 'Thomas (ED on call (Night) - ) (Anaesthetics on-call (Night) - )';
-      const FORTNIGHT_DAY_COLUMN_WIDTH = `${Math.round((FORTNIGHT_WORST_CASE_ENTRY.length + 10) / 2)}ch`;
+      // duties. The pills are 10px text but `ch` here is the grid's own
+      // (16px) font, hence the 10/16, plus a few ch for the pill padding
+      // and its × button. Anything longer truncates (full text on hover).
+      const FORTNIGHT_WORST_CASE_ENTRY = 'Thomas (ED On-call) (AN On-call)';
+      const FORTNIGHT_DAY_COLUMN_WIDTH = `${Math.ceil(FORTNIGHT_WORST_CASE_ENTRY.length * 10 / 16) + 6}ch`;
       const fortnightWeeks = [days.slice(0, 7), days.slice(7, 14)];
 
       const selectedStaff = refData.staff.find(s => s.staff_id === fortnightSelectedStaffId);
@@ -3071,7 +3078,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                                 person.staffId === fortnightSelectedStaffId ? SELECTED_STAFF_RING_CLASS : ''
                               }`}
                             >
-                              <span>{formatPersonEntry(person)}</span>
+                              <span className="truncate min-w-0" title={formatPersonEntry(person)}>{formatPersonEntry(person)}</span>
                               <button
                                 onClick={(e) => { e.stopPropagation(); handleRemoveFortnightPersonDay(person, date); }}
                                 title={`Remove ${person.name}'s on-call allocation for this day`}
@@ -3089,7 +3096,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                                 person.staffId === fortnightSelectedStaffId ? SELECTED_STAFF_RING_CLASS : ''
                               }`}
                             >
-                              <span>{formatPersonEntry(person)}</span>
+                              <span className="truncate min-w-0" title={formatPersonEntry(person)}>{formatPersonEntry(person)}</span>
                               <button
                                 onClick={(e) => { e.stopPropagation(); handleRemoveFortnightPersonDay(person, date); }}
                                 title={`Remove ${person.name}'s allocations for this day`}

@@ -85,3 +85,16 @@ export function holdsOnCallDuty(dutyKeys, dutyTypes) {
     return !!dutyType && dutyType.counts_as_on_call !== false;
   });
 }
+
+// Short "AN On-call" form of an on-call duty type's label for the officer
+// Fortnight grid's day cells — the full "Anaesthetics On-call (night)" plus
+// its session read as noise there. The code is the label's first word:
+// kept as-is if it's already short (ED), else its first two letters
+// (Anaesthetics → AN, Obstetrics → OB). Labels that aren't on-call come
+// back unchanged.
+export function shortOnCallLabel(label) {
+  if (!label || !/on.?call/i.test(label)) return label;
+  const firstWord = label.trim().split(/[\s-]+/)[0];
+  const code = firstWord.length <= 3 ? firstWord : firstWord.slice(0, 2);
+  return `${code.toUpperCase()} On-call`;
+}

@@ -1,4 +1,4 @@
-import { jobCategoryFor, jobBoxStyle, holdsOnCallDuty, ON_CALL_BORDER, JOB_COLOURS } from './jobColours';
+import { jobCategoryFor, jobBoxStyle, holdsOnCallDuty, shortOnCallLabel, ON_CALL_BORDER, JOB_COLOURS } from './jobColours';
 
 describe('jobCategoryFor', () => {
   test.each([
@@ -36,5 +36,18 @@ describe('holdsOnCallDuty', () => {
     expect(holdsOnCallDuty(['pm_coordinator'], dutyTypes)).toBe(true);
     expect(holdsOnCallDuty(['am_coordinator'], dutyTypes)).toBe(false);
     expect(holdsOnCallDuty([], dutyTypes)).toBe(false);
+  });
+});
+
+describe('shortOnCallLabel', () => {
+  test.each([
+    ['Anaesthetics On-call (night)', 'AN On-call'],
+    ['ED On-call (Night)', 'ED On-call'],
+    ['ED on call', 'ED On-call'],
+    ['Obstetrics On Call', 'OB On-call'],
+    ['PM Coordinator', 'PM Coordinator'],
+    [undefined, undefined],
+  ])('%s -> %s', (label, expected) => {
+    expect(shortOnCallLabel(label)).toBe(expected);
   });
 });
