@@ -2777,16 +2777,24 @@ export async function applyWeekTemplate(departmentId, weekStartDate, weekTemplat
       date.setDate(date.getDate() + entry.day_of_week);
       const dateStr = toLocalDateStr(date);
 
-      const { data: existing, error: findError } = await supabase
+      // An entry saved from the Planner carries its job: only that job
+      // (or a card with the same place, activity and hours) counts as
+      // already there — ED Day and ED Night share a location and activity,
+      // so the older location+activity check would skip ED Night.
+      const existingQuery = supabase
         .from('theatre_activities')
-        .select('theatre_activity_id')
+        .select('theatre_activity_id, job_type_id, start_time, end_time')
         .eq('department_id', departmentId)
         .eq('date', dateStr)
         .eq('location_id', entry.location_id)
-        .eq('activity_id', entry.activity_id)
-        .limit(1);
+        .eq('activity_id', entry.activity_id);
+      const { data: existing, error: findError } = await existingQuery;
       if (findError) throw findError;
-      if (existing && existing.length > 0) continue;
+      const alreadyThere = entry.job_type_id
+        ? (existing || []).some(c => c.job_type_id === entry.job_type_id
+          || (!c.job_type_id && c.start_time?.slice(0, 5) === entry.start_time?.slice(0, 5) && c.end_time?.slice(0, 5) === entry.end_time?.slice(0, 5)))
+        : (existing || []).length > 0;
+      if (alreadyThere) continue;
 
       const matchedShift = activeShifts.find(s => s.session === entry.session) || activeShifts[0];
       if (!matchedShift) continue; // no shifts configured at all — nothing to satisfy shift_id with
@@ -2801,6 +2809,7 @@ export async function applyWeekTemplate(departmentId, weekStartDate, weekTemplat
           activity_id: entry.activity_id,
           start_time: entry.start_time,
           end_time: entry.end_time,
+          ...(entry.job_type_id ? { job_type_id: entry.job_type_id } : {}),
         }]);
       if (insertError) throw insertError;
     }
@@ -3938,6 +3947,17 @@ export async function deleteAdvancedSkill(advancedSkillId, departmentId) {
         .eq('duty_type_id', d.duty_type_id);
       if (error) throw error;
     }
+    // Planner places (2026-10-18_planner_jobs.sql) — skipped, not
+    // failed, in a department that hasn't run that migration yet.
+    const placesRes = await supabase.from('job_places').select('place_id, required_advanced_skills').eq('department_id', departmentId).contains('required_advanced_skills', [advancedSkillId]);
+    if (placesRes.error && !isMissingTableError(placesRes.error)) throw placesRes.error;
+    for (const p of placesRes.data || []) {
+      const { error } = await supabase
+        .from('job_places')
+        .update({ required_advanced_skills: (p.required_advanced_skills || []).filter(id => id !== advancedSkillId) })
+        .eq('place_id', p.place_id);
+      if (error) throw error;
+    }
 
     const { error } = await supabase
       .from('advanced_skills')
@@ -3948,6 +3968,331 @@ export async function deleteAdvancedSkill(advancedSkillId, departmentId) {
   } catch (err) {
     console.error('deleteAdvancedSkill error:', err);
     return { error: err };
+  }
+}
+
+// ============================================================
+// PLANNER JOBS AND PLACES
+// ============================================================
+//
+// The department's jobs (ED Day, Endoscopy...) and the places each one
+// needs filling — see migrations/2026-10-18_planner_jobs.sql.
+
+// A table that doesn't exist yet: PostgREST reports PGRST205 (schema
+// cache miss), Postgres itself 42P01.
+export function isMissingTableError(error) {
+  return error?.code === 'PGRST205' || error?.code === '42P01';
+}
+
+// Both lists in one go; `missing` means the migration hasn't been run in
+// this database yet.
+export async function getJobTypesAndPlaces(departmentId) {
+  try {
+    const [jobsRes, placesRes] = await Promise.all([
+      supabase.from('job_types').select('*').eq('department_id', departmentId).order('sort_order').order('name'),
+      supabase.from('job_places').select('*').eq('department_id', departmentId).order('sort_order').order('created_at'),
+    ]);
+    const error = jobsRes.error || placesRes.error;
+    if (error) return { jobTypes: [], places: [], missing: isMissingTableError(error), error: isMissingTableError(error) ? null : error };
+    return { jobTypes: jobsRes.data || [], places: placesRes.data || [], missing: false, error: null };
+  } catch (err) {
+    console.error('getJobTypesAndPlaces error:', err);
+    return { jobTypes: [], places: [], missing: false, error: err };
+  }
+}
+
+const JOB_TYPE_FIELDS = ['name', 'location_id', 'activity_id', 'start_time', 'end_time', 'sort_order', 'active'];
+const JOB_PLACE_FIELDS = ['role', 'kind', 'grade', 'required_advanced_skills', 'min_count', 'sort_order'];
+const pickFields = (fields, allowed) => Object.fromEntries(allowed.filter(k => fields[k] !== undefined).map(k => [k, fields[k]]));
+
+export async function createJobType(departmentId, fields) {
+  try {
+    const { data, error } = await supabase
+      .from('job_types')
+      .insert([{ department_id: departmentId, ...pickFields(fields, JOB_TYPE_FIELDS) }])
+      .select()
+      .single();
+    return { data, error };
+  } catch (err) {
+    console.error('createJobType error:', err);
+    return { data: null, error: err };
+  }
+}
+
+export async function updateJobType(jobTypeId, fields) {
+  try {
+    const { data, error } = await supabase
+      .from('job_types')
+      .update(pickFields(fields, JOB_TYPE_FIELDS))
+      .eq('job_type_id', jobTypeId)
+      .select()
+      .single();
+    return { data, error };
+  } catch (err) {
+    console.error('updateJobType error:', err);
+    return { data: null, error: err };
+  }
+}
+
+// Its places go with it. Cards and template entries made from it keep
+// existing — their job_type_id is just cleared (ON DELETE SET NULL).
+export async function deleteJobType(jobTypeId) {
+  try {
+    const { error } = await supabase
+      .from('job_types')
+      .delete()
+      .eq('job_type_id', jobTypeId);
+    return { error };
+  } catch (err) {
+    console.error('deleteJobType error:', err);
+    return { error: err };
+  }
+}
+
+export async function createJobPlace(departmentId, jobTypeId, fields) {
+  try {
+    const { data, error } = await supabase
+      .from('job_places')
+      .insert([{ department_id: departmentId, job_type_id: jobTypeId, ...pickFields(fields, JOB_PLACE_FIELDS) }])
+      .select()
+      .single();
+    return { data, error };
+  } catch (err) {
+    console.error('createJobPlace error:', err);
+    return { data: null, error: err };
+  }
+}
+
+export async function updateJobPlace(placeId, fields) {
+  try {
+    const { data, error } = await supabase
+      .from('job_places')
+      .update(pickFields(fields, JOB_PLACE_FIELDS))
+      .eq('place_id', placeId)
+      .select()
+      .single();
+    return { data, error };
+  } catch (err) {
+    console.error('updateJobPlace error:', err);
+    return { data: null, error: err };
+  }
+}
+
+// Bookings that filled this place keep their booking — their place_id is
+// just cleared (ON DELETE SET NULL), so they read as extras on that job.
+export async function deleteJobPlace(placeId) {
+  try {
+    const { error } = await supabase
+      .from('job_places')
+      .delete()
+      .eq('place_id', placeId);
+    return { error };
+  } catch (err) {
+    console.error('deleteJobPlace error:', err);
+    return { error: err };
+  }
+}
+
+// ------------------------------------------------------------
+// Planner tab reads/writes
+// ------------------------------------------------------------
+
+// Everything the Planner grid shows for [rangeStartDate, +numDays): the
+// cards, who's booked on them (with their own shift hours), the on-call
+// slots, visiting doctors' names, and who's marked unavailable. Starts a
+// day early so a night shift from the day before still counts when
+// checking whether someone's hours clash.
+export async function getPlannerRange(departmentId, rangeStartDate, numDays) {
+  const from = new Date(rangeStartDate);
+  from.setDate(from.getDate() - 1);
+  const to = new Date(rangeStartDate);
+  to.setDate(to.getDate() + numDays - 1);
+  const fromStr = toLocalDateStr(from);
+  const toStr = toLocalDateStr(to);
+
+  try {
+    const [cardsRes, assignRes, dutyRes, availRes] = await Promise.all([
+      supabase
+        .from('theatre_activities')
+        .select('theatre_activity_id, date, location_id, activity_id, shift_id, start_time, end_time, job_type_id, locations(name)')
+        .eq('department_id', departmentId)
+        .gte('date', fromStr)
+        .lte('date', toStr),
+      supabase
+        .from('staff_assignments')
+        .select('assignment_id, date, staff_id, location_id, shift_id, role, on_call, theatre_activity_id, place_id, staff(name, rank), shifts(name, start_time, end_time)')
+        .eq('department_id', departmentId)
+        .gte('date', fromStr)
+        .lte('date', toStr),
+      supabase
+        .from('duty_assignments')
+        .select('date, duty_type, staff_id, staff(name)')
+        .eq('department_id', departmentId)
+        .gte('date', fromStr)
+        .lte('date', toStr),
+      supabase
+        .from('staff_availability')
+        .select('staff_id, date, available, staff!inner(department_id)')
+        .eq('staff.department_id', departmentId)
+        .eq('available', false)
+        .gte('date', fromStr)
+        .lte('date', toStr),
+    ]);
+    const error = cardsRes.error || assignRes.error || dutyRes.error || availRes.error;
+    if (error) throw error;
+
+    const cardIds = (cardsRes.data || []).map(c => c.theatre_activity_id);
+    let visitors = [];
+    if (cardIds.length) {
+      const visitorsRes = await supabase
+        .from('theatre_activity_visitors')
+        .select('*')
+        .in('theatre_activity_id', cardIds);
+      if (visitorsRes.error) throw visitorsRes.error;
+      visitors = visitorsRes.data || [];
+    }
+
+    return {
+      data: {
+        cards: cardsRes.data || [],
+        assignments: assignRes.data || [],
+        duties: dutyRes.data || [],
+        unavailable: availRes.data || [],
+        visitors,
+      },
+      error: null,
+    };
+  } catch (err) {
+    console.error('getPlannerRange error:', err);
+    return { data: null, error: err };
+  }
+}
+
+// The shift a Planner card or booking is recorded under: an active shift
+// with exactly these hours, or a new one named after the job. A person's
+// shift is what payroll reads, so it has to match their real hours.
+async function shiftForHours(departmentId, startTime, endTime, nameHint) {
+  const { data: existing, error: findError } = await supabase
+    .from('shifts')
+    .select('shift_id')
+    .eq('department_id', departmentId)
+    .eq('start_time', startTime)
+    .eq('end_time', endTime)
+    .eq('active', true)
+    .limit(1);
+  if (findError) throw findError;
+  if (existing && existing.length > 0) return existing[0].shift_id;
+
+  const label = `${(nameHint || 'Shift').trim()} ${startTime.slice(0, 5)}–${endTime.slice(0, 5)}`;
+  const { data: created, error: createError } = await createShift(departmentId, label, 'weekday', startTime, endTime, sessionForDutyTimes(startTime, endTime));
+  if (createError) throw createError;
+  return created.shift_id;
+}
+
+// A job dropped onto a day: an empty card for it with the job's hours.
+export async function createPlannerCard(departmentId, dateStr, job) {
+  try {
+    const shiftId = await shiftForHours(departmentId, job.start_time, job.end_time, job.name);
+    const { data, error } = await supabase
+      .from('theatre_activities')
+      .insert([{
+        department_id: departmentId,
+        date: dateStr,
+        location_id: job.location_id,
+        activity_id: job.activity_id,
+        shift_id: shiftId,
+        start_time: job.start_time,
+        end_time: job.end_time,
+        job_type_id: job.job_type_id,
+      }])
+      .select()
+      .single();
+    return { data, error };
+  } catch (err) {
+    console.error('createPlannerCard error:', err);
+    return { data: null, error: err };
+  }
+}
+
+// Books staffId onto a card — into placeId, or as an extra when placeId is
+// null — working the card's own hours.
+export async function bookPlannerPlace(departmentId, card, staffId, placeId, role, jobName) {
+  try {
+    const shiftId = await shiftForHours(departmentId, card.start_time, card.end_time, jobName);
+    const { data, error } = await supabase
+      .from('staff_assignments')
+      .insert([{
+        department_id: departmentId,
+        date: card.date,
+        location_id: card.location_id,
+        staff_id: staffId,
+        shift_id: shiftId,
+        role,
+        theatre_activity_id: card.theatre_activity_id,
+        place_id: placeId,
+        on_call: false,
+      }])
+      .select()
+      .single();
+    return { data, error };
+  } catch (err) {
+    console.error('bookPlannerPlace error:', err);
+    return { data: null, error: err };
+  }
+}
+
+export async function setPlannerVisitor(departmentId, theatreActivityId, placeId, slot, name) {
+  try {
+    const { data, error } = await supabase
+      .from('theatre_activity_visitors')
+      .upsert([{ department_id: departmentId, theatre_activity_id: theatreActivityId, place_id: placeId, slot, name: name.trim() }], { onConflict: 'theatre_activity_id,place_id,slot' })
+      .select()
+      .single();
+    return { data, error };
+  } catch (err) {
+    return { data: null, error: err };
+  }
+}
+
+export async function deletePlannerVisitor(visitorId) {
+  try {
+    const { error } = await supabase.from('theatre_activity_visitors').delete().eq('visitor_id', visitorId);
+    return { error };
+  } catch (err) {
+    return { error: err };
+  }
+}
+
+// Saves one Monday-start week's cards as a new week template — what
+// applyWeekTemplate later lays back down. cards: that week's
+// theatre_activities rows, each with a `jobTypeId` (matched or stored).
+export async function saveWeekAsTemplate(departmentId, name, weekStartDate, cards) {
+  try {
+    const { data: template, error: templateError } = await createWeekTemplate(departmentId, name);
+    if (templateError) throw templateError;
+    const monday = new Date(`${toLocalDateStr(weekStartDate)}T00:00:00`);
+    const rows = cards.map(c => {
+      const dayOfWeek = Math.round((new Date(`${c.date}T00:00:00`) - monday) / 86400000);
+      const row = {
+        week_template_id: template.week_template_id,
+        day_of_week: dayOfWeek,
+        location_id: c.location_id,
+        activity_id: c.activity_id,
+        start_time: c.start_time,
+        end_time: c.end_time,
+        session: sessionForDutyTimes(c.start_time, c.end_time),
+      };
+      if (c.jobTypeId) row.job_type_id = c.jobTypeId;
+      return row;
+    });
+    if (rows.length) {
+      const { error } = await supabase.from('week_template_entries').insert(rows);
+      if (error) throw error;
+    }
+    return { data: template, error: null };
+  } catch (err) {
+    console.error('saveWeekAsTemplate error:', err);
+    return { data: null, error: err };
   }
 }
 

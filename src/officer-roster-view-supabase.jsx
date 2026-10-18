@@ -15,6 +15,8 @@ import RosterExcelExportTab from './RosterExcelExportTab';
 import CollapsibleSection from './CollapsibleSection';
 import ChangePassword from './ChangePassword';
 import TwoFactorSettings from './TwoFactorSettings';
+import PlannerJobsSettings from './PlannerJobsSettings';
+import PlannerTab from './PlannerTab';
 import { toLocalDateStr } from './dateUtils';
 import { jobCategoryFor, jobCardStyle, jobBoxStyle, holdsOnCallDuty } from './jobColours';
 import { edLateOnCallFor } from './edLateOnCall';
@@ -2472,6 +2474,16 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   // ============================================================
 
   const renderContent = () => {
+    if (activeTab === 'planner') {
+      return (
+        <PlannerTab
+          departmentId={departmentId}
+          refData={refData}
+          onWeekTemplatesChange={(weekTemplates) => setRefData(prev => ({ ...prev, weekTemplates }))}
+        />
+      );
+    }
+
     if (activeTab === 'calendar') {
       const today = new Date();
       const weeks = [];
@@ -4473,6 +4485,18 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                 ))}
               </div>
             </CollapsibleSection>
+
+            {/* Jobs Section — the Planner tab's palette: location + activity
+                + hours, and the places each job needs. */}
+            <CollapsibleSection title="Jobs (Planner)">
+              <PlannerJobsSettings
+                departmentId={departmentId}
+                locations={refData.locations}
+                activities={refData.activities}
+                activitiesAllowedAtLocation={activitiesAllowedAtLocation}
+                advancedSkills={refData.advancedSkills}
+              />
+            </CollapsibleSection>
             </CollapsibleSection>
 
             {/* Shifts & Rules Group — Shifts, Shift Pattern Rules, Duty
@@ -5948,7 +5972,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
       })()}
 
       {/* BOTTOM TAB NAVIGATION */}
-      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-lg">
+      <div id="officer-bottom-nav" className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-lg">
         <div className="max-w-3xl mx-auto flex justify-around">
           <button
             onClick={() => setActiveTab('calendar')}
@@ -5965,6 +5989,14 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
             }`}
           >
             <div className="text-sm font-semibold">Fortnight</div>
+          </button>
+          <button
+            onClick={() => setActiveTab('planner')}
+            className={`flex-1 py-4 text-center transition ${
+              activeTab === 'planner' ? 'text-blue-600 border-t-2 border-blue-600' : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            <div className="text-sm font-semibold">Planner</div>
           </button>
           <button
             onClick={() => {
