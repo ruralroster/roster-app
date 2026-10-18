@@ -3360,12 +3360,16 @@ export async function getMyOpenCallback(staffId) {
 }
 
 // kind 'callback': { dutyDate, dutyType }; kind 'overtime': { dutyDate,
-// shiftId } — dutyDate is the date the on-call/shift started.
-export async function startCallback(departmentId, staffId, { kind, dutyDate, dutyType = null, shiftId = null }) {
+// shiftId } — dutyDate is the date the on-call/shift started. startedAt
+// defaults to now (the database default); overtime passes the shift end
+// instead, which can be up to 30 min in the future (see overtimeStartMode).
+export async function startCallback(departmentId, staffId, { kind, dutyDate, dutyType = null, shiftId = null, startedAt = null }) {
   try {
+    const row = { department_id: departmentId, staff_id: staffId, kind, duty_date: dutyDate, duty_type: dutyType, shift_id: shiftId };
+    if (startedAt) row.started_at = new Date(startedAt).toISOString();
     const { data, error } = await supabase
       .from('callbacks')
-      .insert([{ department_id: departmentId, staff_id: staffId, kind, duty_date: dutyDate, duty_type: dutyType, shift_id: shiftId }])
+      .insert([row])
       .select('*, shifts(name)')
       .single();
 

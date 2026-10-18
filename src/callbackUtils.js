@@ -77,6 +77,15 @@ export function findOvertimeShifts(assignments, onCallShiftIds, now = new Date()
   return result;
 }
 
+// How tapping Overtime at `now` starts the record, for a shift ending at
+// `end`: 'scheduled' — tapped in the 30 min before the end, so the record
+// starts at the shift end and the timer waits until then; 'ask' — tapped
+// after the end, so the person is asked whether they've been on overtime
+// since the shift ended (start = shift end) or are only starting now.
+export function overtimeStartMode(end, now = new Date()) {
+  return now < new Date(end) ? 'scheduled' : 'ask';
+}
+
 export const VARIATION_KIND_LABEL = { callback: 'Callback', overtime: 'Overtime' };
 
 // What a stored variation row was for: the on-call slot's label, or the

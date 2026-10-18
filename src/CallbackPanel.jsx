@@ -23,6 +23,7 @@ import {
   validateCallTimes,
   variationLabel,
   variationFor,
+  overtimeStartMode,
   VARIATION_KIND_LABEL,
 } from './callbackUtils';
 import { buildCsv, downloadTextFile } from './icsExport';
@@ -39,8 +40,10 @@ const VARIATION_CSV_COLUMNS = [
 // "Variations" card shown at the very top of the staff Variation tab: one
 // Callback button per on-call slot this person is inside right now, and an
 // Overtime button per rostered shift in its overtime window (30 min before
-// it ends to 4 h after). While one is running it becomes a timer with a
-// Stop button — shown even if the on-call/overtime window has since ended,
+// it ends to 4 h after). Overtime always runs from the shift end: tapped
+// before then, the timer waits and starts by itself at the shift end;
+// tapped after, it asks whether they've been on overtime since the shift
+// ended. While one is running it becomes a timer with a Stop button — shown even if the on-call/overtime window has since ended,
 // so it can always be stopped. Calls onRecorded after one is kept, so the
 // My Variations list below can refresh.
 export function CallbackBanner({ staffId, departmentId, staffName, dutyTypes, onRecorded }) {
@@ -59,6 +62,9 @@ export function CallbackBanner({ staffId, departmentId, staffName, dutyTypes, on
   const [surname, setSurname] = useState('');
   const [firstName, setFirstName] = useState('');
   const [fatigueUntil, setFatigueUntil] = useState(null);
+  // Overtime tapped after the shift ended: { start, end } until they say
+  // whether it began at the shift end or only now.
+  const [overtimeSince, setOvertimeSince] = useState(null);
 
   const refresh = useCallback(async () => {
     if (!staffId || !departmentId) return;
@@ -95,7 +101,17 @@ export function CallbackBanner({ staffId, departmentId, staffName, dutyTypes, on
     return () => clearTimeout(id);
   }, [fatigueUntil]);
 
+  const handleOvertime = (sh) => {
+    const start = { kind: 'overtime', dutyDate: sh.date, shiftId: sh.shift_id };
+    if (overtimeStartMode(sh.end) === 'scheduled') {
+      handleStart({ ...start, startedAt: sh.end });
+    } else {
+      setOvertimeSince({ start, end: sh.end });
+    }
+  };
+
   const handleStart = async (start) => {
+    setOvertimeSince(null);
     setBusy(true);
     const { data, error: err } = await startCallback(departmentId, staffId, start);
     setBusy(false);
@@ -107,6 +123,20 @@ export function CallbackBanner({ staffId, departmentId, staffName, dutyTypes, on
     setError(null);
     setNow(new Date());
     setOpenCall(data);
+  };
+
+  // Overtime tapped before the shift end that hasn't started yet — cancel
+  // it outright, nothing to record.
+  const handleCancelPending = async () => {
+    setBusy(true);
+    const { error: err } = await deleteCallback(openCall.callback_id);
+    setBusy(false);
+    if (err) {
+      setError(`Couldn't cancel the overtime: ${err.message}`);
+      return;
+    }
+    setError(null);
+    setOpenCall(null);
   };
 
   const handleCallComplete = async () => {
@@ -259,14 +289,64 @@ export function CallbackBanner({ staffId, departmentId, staffName, dutyTypes, on
     </div>
   );
 
+  const overtimeSinceModal = overtimeSince && (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+      <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+        <h2 className="text-xl font-bold text-gray-900 mb-2">Overtime since {formatClock(overtimeSince.end)}?</h2>
+        <p className="text-sm text-gray-700 mb-6">
+          Your shift ended at {formatClock(overtimeSince.end)}. Have you been on overtime since then?
+        </p>
+        <div className="flex flex-col gap-3">
+          <button
+            onClick={() => handleStart({ ...overtimeSince.start, startedAt: overtimeSince.end })}
+            disabled={busy}
+            className="py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition disabled:opacity-50"
+          >
+            Yes — since {formatClock(overtimeSince.end)}
+          </button>
+          <button
+            onClick={() => handleStart(overtimeSince.start)}
+            disabled={busy}
+            className="py-3 bg-gray-100 hover:bg-gray-200 text-gray-800 font-semibold rounded-lg transition disabled:opacity-50"
+          >
+            No — starting now
+          </button>
+          <button onClick={() => setOvertimeSince(null)} className="py-2 text-sm text-gray-500 hover:text-gray-700">
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
   const hasOptions = options.onCalls.length > 0 || options.shifts.length > 0;
   if (!loaded || (!hasOptions && !openCall)) {
-    return <>{completeModal}{fatigueNotice}</>;
+    return <>{completeModal}{overtimeSinceModal}{fatigueNotice}</>;
   }
+
+  // Overtime tapped before the shift end: recorded, but the timer only
+  // starts at started_at (the shift end).
+  const pending = openCall && new Date(openCall.started_at) > now;
 
   return (
     <>
-      {openCall ? (
+      {pending ? (
+        <div className="bg-blue-600 text-white rounded-lg shadow-sm p-6 mb-6">
+          <p className="text-xs font-semibold uppercase tracking-wide text-blue-100">Waiting · {variationLabel(openCall, dutyTypes)}</p>
+          <p className="text-2xl font-bold my-2">Overtime starts at {formatClock(openCall.started_at)}</p>
+          <p className="text-sm text-blue-100 mb-4">
+            When your shift ends — in {formatElapsed(new Date(openCall.started_at) - now)}. The timer starts by itself.
+          </p>
+          <button
+            onClick={handleCancelPending}
+            disabled={busy}
+            className="w-full py-3 bg-white text-blue-700 font-bold rounded-lg flex items-center justify-center gap-2 disabled:opacity-50"
+          >
+            {busy ? <Loader size={20} className="animate-spin" /> : <X size={20} />}
+            Cancel overtime
+          </button>
+        </div>
+      ) : openCall ? (
         <div className="bg-red-600 text-white rounded-lg shadow-sm p-6 mb-6">
           <p className="text-xs font-semibold uppercase tracking-wide text-red-100">In progress · {variationLabel(openCall, dutyTypes)}</p>
           <p className="text-4xl font-bold font-mono my-2">{formatElapsed(now - new Date(openCall.started_at))}</p>
@@ -302,7 +382,7 @@ export function CallbackBanner({ staffId, departmentId, staffName, dutyTypes, on
             {options.shifts.map(sh => (
               <button
                 key={`${sh.date}-${sh.shift_id}`}
-                onClick={() => handleStart({ kind: 'overtime', dutyDate: sh.date, shiftId: sh.shift_id })}
+                onClick={() => handleOvertime(sh)}
                 disabled={busy}
                 className="w-full py-4 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg flex items-center gap-3 disabled:opacity-50 text-left"
               >
@@ -323,6 +403,7 @@ export function CallbackBanner({ staffId, departmentId, staffName, dutyTypes, on
         </div>
       )}
       {completeModal}
+      {overtimeSinceModal}
       {fatigueNotice}
     </>
   );

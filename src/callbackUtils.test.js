@@ -1,4 +1,4 @@
-import { findActiveOnCalls, findOvertimeShifts, variationLabel, onCallWindow, fatigueReturnTime, formatElapsed, formatDuration, buildCallbackNoteText, validateCallTimes, toDateTimeLocalValue } from './callbackUtils';
+import { findActiveOnCalls, findOvertimeShifts, overtimeStartMode, variationLabel, onCallWindow, fatigueReturnTime, formatElapsed, formatDuration, buildCallbackNoteText, validateCallTimes, toDateTimeLocalValue } from './callbackUtils';
 
 const dutyTypes = [
   { key: 'anaes', label: 'Anaesthetics On-Call', counts_as_on_call: true, start_time: '21:00:00', end_time: '08:00:00' },
@@ -73,6 +73,16 @@ describe('findOvertimeShifts', () => {
   it('skips on-call rows — those get Callback instead', () => {
     expect(findOvertimeShifts(rows, ['s1'], at('2026-10-14T17:00:00'))).toEqual([]);
     expect(findOvertimeShifts([{ ...rows[0], on_call: true }], [], at('2026-10-14T17:00:00'))).toEqual([]);
+  });
+});
+
+describe('overtimeStartMode', () => {
+  const end = at('2026-10-14T17:00:00');
+
+  it('waits for the shift end when tapped before it, asks when tapped after', () => {
+    expect(overtimeStartMode(end, at('2026-10-14T16:40:00'))).toBe('scheduled');
+    expect(overtimeStartMode(end, at('2026-10-14T17:00:00'))).toBe('ask');
+    expect(overtimeStartMode(end, at('2026-10-14T18:15:00'))).toBe('ask');
   });
 });
 
