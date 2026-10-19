@@ -1,4 +1,4 @@
-import { jobForCard, placeMismatch, layOutCard, dayConflict, daysWorked, intervalOn, intervalsOverlap, groupUnconverted, bestJobForNewCard } from './plannerUtils';
+import { jobForCard, placeMismatch, layOutCard, dayConflict, isAdminJob, daysWorked, intervalOn, intervalsOverlap, groupUnconverted, bestJobForNewCard } from './plannerUtils';
 
 const ranks = [
   { rank: 'SMO', requires_supervision: false },
@@ -86,6 +86,15 @@ describe('layOutCard', () => {
   });
 });
 
+describe('isAdminJob', () => {
+  it('matches admin or non-clinical in any of the names', () => {
+    expect(isAdminJob('Admin', 'Clinic', 'Medical Clinic')).toBe(true);
+    expect(isAdminJob(null, 'Non-clinical', 'Teaching')).toBe(true);
+    expect(isAdminJob('Theatre AM', 'General Theatre', 'General Surgery')).toBe(false);
+    expect(isAdminJob('Administration desk')).toBe(false);
+  });
+});
+
 describe('dayConflict', () => {
   const base = { staffId: 'smo', dateStr: '2026-10-20', startTime: '08:00', endTime: '12:00', cardId: 'new', unavailable: [] };
 
@@ -93,6 +102,14 @@ describe('dayConflict', () => {
     expect(dayConflict({ ...base, assignments: [], unavailable: [{ staff_id: 'smo', date: '2026-10-20' }] })).toBe('Unavailable');
     expect(dayConflict({ ...base, assignments: [{ staff_id: 'smo', date: '2026-10-20', theatre_activity_id: 'new', shifts: { start_time: '08:00', end_time: '12:00' } }] })).toMatch(/Already/);
     expect(dayConflict({ ...base, assignments: [{ staff_id: 'smo', date: '2026-10-20', theatre_activity_id: 'x', shifts: { start_time: '10:00', end_time: '18:00' } }] })).toMatch(/Busy/);
+  });
+
+  it('lets Admin overlap other work, both ways, but not leave or a double booking', () => {
+    const theatre = { staff_id: 'smo', date: '2026-10-20', theatre_activity_id: 'x', shifts: { start_time: '08:00', end_time: '12:00' } };
+    expect(dayConflict({ ...base, assignments: [theatre], clashFree: true })).toBeNull();
+    expect(dayConflict({ ...base, assignments: [theatre], isClashFree: a => a.theatre_activity_id === 'x' })).toBeNull();
+    expect(dayConflict({ ...base, assignments: [], unavailable: [{ staff_id: 'smo', date: '2026-10-20' }], clashFree: true })).toBe('Unavailable');
+    expect(dayConflict({ ...base, assignments: [{ ...theatre, theatre_activity_id: 'new' }], clashFree: true })).toMatch(/Already/);
   });
 
   it('allows back-to-back jobs and an AM then PM day', () => {

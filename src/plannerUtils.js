@@ -151,18 +151,29 @@ export function layOutCard(card, job, allPlaces, cardAssignments, cardVisitors, 
   };
 }
 
+// Admin / non-clinical time — fitted around clinical work, so it never
+// clashes (see dayConflict). Same words jobColours.js leaves uncoloured.
+// Pass any of the job's name, location name and activity name.
+export function isAdminJob(...texts) {
+  return texts.some(t => t && /non.?clinical|\badmin\b/i.test(t));
+}
+
 // Why staffId can't take a booking for [startTime, endTime) on dateStr,
 // or null if they're free. On-call slots (duty_assignments) never clash —
-// someone can be on call while working a job.
+// someone can be on call while working a job — and neither does Admin:
+// clashFree (the card being booked is Admin) skips the hours check, and
+// isClashFree(assignment) leaves existing Admin bookings out of it.
 //
 // assignments: staff_assignments rows with shifts(start_time, end_time),
 // the day before included so last night's shift is seen.
-export function dayConflict({ staffId, dateStr, startTime, endTime, cardId, assignments, unavailable, cardLabel }) {
+export function dayConflict({ staffId, dateStr, startTime, endTime, cardId, assignments, unavailable, cardLabel, clashFree = false, isClashFree }) {
   if (unavailable.some(u => u.staff_id === staffId && u.date === dateStr)) return 'Unavailable';
   const mine = assignments.filter(a => a.staff_id === staffId && !a.on_call);
   if (cardId && mine.some(a => a.theatre_activity_id === cardId)) return 'Already on this job';
+  if (clashFree) return null;
   const want = intervalOn(dateStr, startTime, endTime);
   for (const a of mine) {
+    if (isClashFree?.(a)) continue;
     if (a.date !== dateStr && a.date !== addDays(dateStr, -1) && a.date !== addDays(dateStr, 1)) continue;
     const st = a.shifts?.start_time;
     const en = a.shifts?.end_time;

@@ -19,7 +19,7 @@ import { toLocalDateStr } from './dateUtils';
 import { DEFAULT_FTE } from './availabilityUtils';
 import { JOB_COLOURS, jobCategoryFor, jobCategoryRank, jobCardStyle, jobBoxStyle, holdsOnCallDuty } from './jobColours';
 import {
-  hhmm, addDays, firstName, jobForCard, isSenior, hasAnySkill, placeMismatch, layOutCard, dayConflict, daysWorked,
+  hhmm, addDays, firstName, jobForCard, isAdminJob, isSenior, hasAnySkill, placeMismatch, layOutCard, dayConflict, daysWorked,
 } from './plannerUtils';
 
 // ============================================================
@@ -213,9 +213,12 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
 
   // ---------- render helpers ----------
 
+  const isAdminCard = (card) => isAdminJob(jobForCard(card, jobTypes)?.name, card.locations?.name || locationName(card.location_id), activityName(card.activity_id));
   const conflictFor = (staffId, card) => dayConflict({
     staffId, dateStr: card.date, startTime: card.start_time, endTime: card.end_time,
     cardId: card.theatre_activity_id, assignments, unavailable, cardLabel: assignmentLabel,
+    clashFree: isAdminCard(card),
+    isClashFree: (a) => { const c = cardById.get(a.theatre_activity_id); return !!c && isAdminCard(c); },
   });
 
   const dutyKeysFor = (staffId, dateStr) => duties.filter(d => d.staff_id === staffId && d.date === dateStr).map(d => d.duty_type);
