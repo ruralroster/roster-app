@@ -36,6 +36,7 @@ import {
   starStaffMember,
   unstarStaffMember,
   getCoffeeOrderAdjustments,
+  getVisitorNamesForDate,
   removeCoffeeOrderStaff,
   restoreCoffeeOrderStaff,
   addCoffeeOrderExtra,
@@ -55,7 +56,7 @@ import {
 } from './availabilityUtils';
 import { buildAssignmentsIcs, getIcsExportFilename, downloadTextFile } from './icsExport';
 import { toLocalDateStr } from './dateUtils';
-import { NO_COFFEE, NO_MILK, COFFEE_TYPES, MILK_TYPES, milkIsFixedForCoffeeType, parseCoffeeOrder } from './coffeeUtils';
+import { NO_COFFEE, NO_MILK, COFFEE_TYPES, MILK_TYPES, milkIsFixedForCoffeeType, parseCoffeeOrder, composeCoffeeOrder, coffeeAttention } from './coffeeUtils';
 import { getMondayOfWeek } from './payrollExport';
 import { isIOS } from './installPrompt';
 import { GRADE_LABEL } from './staffGrade';
@@ -212,6 +213,11 @@ export default function StaffRosterView({ departmentId, staffId }) {
   const [coffeeModalError, setCoffeeModalError] = useState(null);
   const [coffeeModalStaff, setCoffeeModalStaff] = useState([]); // [{ staff_id, name, rank, coffee_order, sessionGroups }]
   const [coffeeCopied, setCoffeeCopied] = useState(false);
+  // Today's people and visitors still needing a coffee order — the red count
+  // on the Coffee button. coffeeAttentionPick holds the coffee chosen for
+  // each one in the popup before it's added (key -> composed order).
+  const [coffeeAttentionList, setCoffeeAttentionList] = useState([]);
+  const [coffeeAttentionPick, setCoffeeAttentionPick] = useState({});
   // Which shift groupings to include — all on by default ("everyone working
   // today"); unchecking a box drops that session's staff from the list
   // instead of trying to guess it from the viewer's local clock.
@@ -693,6 +699,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
       const { error: updateError } = await updateMyCoffeeOrder(staffId, coffeeOrder);
       if (updateError) throw updateError;
       setStaffMember(prev => prev && { ...prev, coffee_order: coffeeOrder });
+      loadCoffeeAttention();
       setError(null);
     } catch (err) {
       setError(`Failed to update coffee order: ${err.message}`);
@@ -852,6 +859,42 @@ export default function StaffRosterView({ departmentId, staffId }) {
     }
   };
 
+  // Read on load and again whenever the coffee list changes, so the red
+  // count is there before anyone opens Coffee.
+  const loadCoffeeAttention = async () => {
+    if (!departmentId) return;
+    try {
+      const [{ data: assignments, error: assignError }, { data: adjustments, error: adjError }, { data: visitorNames, error: visitorError }] = await Promise.all([
+        getStaffAssignmentsForDate(departmentId, new Date()),
+        getCoffeeOrderAdjustments(departmentId, new Date()),
+        getVisitorNamesForDate(departmentId, new Date()),
+      ]);
+      const error = assignError || adjError || visitorError;
+      if (error) throw error;
+
+      const rostered = [...new Map(assignments.filter(a => a.staff_id).map(a => [a.staff_id, {
+        staff_id: a.staff_id, name: a.staff?.name, rank: a.staff?.rank, coffee_order: a.staff?.coffee_order,
+      }])).values()];
+      setCoffeeAttentionList(coffeeAttention({
+        rostered,
+        visitorNames,
+        removedStaffIds: adjustments.removedStaffIds,
+        extras: adjustments.extras,
+      }));
+    } catch (err) {
+      console.error('loadCoffeeAttention error:', err);
+    }
+  };
+
+  useEffect(() => {
+    loadCoffeeAttention();
+  }, [departmentId]);
+
+  const closeCoffeeModal = () => {
+    setShowCoffeeModal(false);
+    loadCoffeeAttention();
+  };
+
   // Fetched fresh on open (rather than reusing Day-tab state) so the coffee
   // run works correctly no matter which tab the button is clicked from.
   const handleOpenCoffeeModal = async () => {
@@ -1003,6 +1046,32 @@ export default function StaffRosterView({ departmentId, staffId }) {
     setCoffeeExtras(prev => prev.filter(extra => extra.extra_id !== extraId));
     const { error } = await removeCoffeeOrderExtra(extraId);
     if (error) setCoffeeModalError(`Failed to remove coffee: ${error.message}`);
+  };
+
+  // Adds someone from "Needs a coffee order" as a one-off coffee for today.
+  // A saved profile order is only changed by its owner or an officer, so
+  // this never touches the person's own coffee_order.
+  const handleAddCoffeeAttention = async (item) => {
+    const order = coffeeAttentionPick[item.key] ?? composeCoffeeOrder('Flat White', MILK_TYPES[0], false);
+    const { coffeeType, milkType, extraShot } = parseCoffeeOrder(order);
+    if (coffeeType === NO_COFFEE) {
+      setCoffeeModalError(`Choose a coffee for ${item.name} first`);
+      return;
+    }
+    const { data, error } = await addCoffeeOrderExtra(departmentId, new Date(), {
+      coffeeType,
+      milkType,
+      extraShot,
+      quantity: 1,
+      label: item.name,
+      addedBy: staffId,
+    });
+    if (error) {
+      setCoffeeModalError(`Failed to add coffee: ${error.message}`);
+      return;
+    }
+    setCoffeeExtras(prev => [...prev, data]);
+    setCoffeeAttentionList(prev => prev.filter(x => x.key !== item.key));
   };
 
   const coffeeOrderMessage = [
@@ -2133,7 +2202,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
                 <p className="text-sm text-gray-600">{formatDate(new Date())}</p>
               </div>
               <div className="flex flex-col items-end gap-2">
-                <button onClick={() => setShowCoffeeModal(false)} className="p-1 hover:bg-gray-100 rounded-lg -mt-1 -mr-1">
+                <button onClick={closeCoffeeModal} className="p-1 hover:bg-gray-100 rounded-lg -mt-1 -mr-1">
                   <X size={20} />
                 </button>
                 <div className="flex gap-3">
@@ -2182,6 +2251,34 @@ export default function StaffRosterView({ departmentId, staffId }) {
                     ) : (
                       <p className="text-xs text-gray-500">An officer can set a Coffee Place number in Settings → Phone Book to text this order directly from here.</p>
                     )}
+                  </div>
+                )}
+
+                {coffeeAttentionList.length > 0 && (
+                  <div className="mb-4 p-3 rounded-lg border border-red-200 bg-red-50 flex-shrink-0">
+                    <p className="text-xs font-semibold text-red-800 uppercase mb-2">Needs a coffee order ({coffeeAttentionList.length})</p>
+                    <div className="space-y-3 max-h-48 overflow-y-auto">
+                      {coffeeAttentionList.map(item => (
+                        <div key={item.key} className="space-y-1">
+                          <div className="text-sm text-gray-900">
+                            <span className="font-medium">{item.name}</span>
+                            <span className="text-xs text-gray-600"> · {item.kind === 'visitor' ? 'Visitor, not on the roster' : 'No coffee order saved'}</span>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <CoffeePicker
+                              value={coffeeAttentionPick[item.key] ?? composeCoffeeOrder('Flat White', MILK_TYPES[0], false)}
+                              onSave={(order) => setCoffeeAttentionPick(prev => ({ ...prev, [item.key]: order }))}
+                            />
+                            <button
+                              onClick={() => handleAddCoffeeAttention(item)}
+                              className="px-3 py-1 bg-blue-600 text-white text-sm font-medium rounded hover:bg-blue-700 transition"
+                            >
+                              Add to coffee list
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
 
@@ -2662,10 +2759,15 @@ export default function StaffRosterView({ departmentId, staffId }) {
           </button>
           <button
             onClick={handleOpenCoffeeModal}
-            className="flex-1 py-4 text-center text-gray-600 hover:text-gray-900 transition"
-            title="Coffee orders for today"
+            className="relative flex-1 py-4 text-center text-gray-600 hover:text-gray-900 transition"
+            title={coffeeAttentionList.length > 0 ? `Coffee orders for today — ${coffeeAttentionList.length} need an order` : 'Coffee orders for today'}
           >
             <Coffee size={20} className="mx-auto" />
+            {coffeeAttentionList.length > 0 && (
+              <span className="absolute top-2 left-1/2 ml-2 min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[10px] font-bold leading-[18px] text-center">
+                {coffeeAttentionList.length}
+              </span>
+            )}
             <div className="text-[10px] font-semibold mt-0.5">Coffee</div>
           </button>
           <button
