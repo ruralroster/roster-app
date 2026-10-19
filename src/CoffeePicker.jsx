@@ -6,10 +6,13 @@ import { COFFEE_TYPES, MILK_TYPES, NO_COFFEE, NO_MILK, milkIsFixedForCoffeeType,
 // the same composed "<Coffee Type> - <Milk Type>" string as before (with an
 // optional " + Xtra Shot" suffix), via coffeeUtils.
 export default function CoffeePicker({ value, disabled, onSave }) {
+  // A blank order is "Not set" — not yet known — which is different from a
+  // saved "No Coffee". Only the saved "No Coffee" counts as known.
+  const notSet = !(value || '').trim();
   const { coffeeType, milkType, extraShot } = parseCoffeeOrder(value);
   const milkFixed = milkIsFixedForCoffeeType(coffeeType);
-  const milkDisabled = disabled || coffeeType === NO_COFFEE;
-  const extraShotDisabled = disabled || coffeeType === NO_COFFEE;
+  const milkDisabled = disabled || (!notSet && coffeeType === NO_COFFEE);
+  const extraShotDisabled = disabled || (!notSet && coffeeType === NO_COFFEE);
 
   const handleCoffeeTypeChange = (newType) => {
     let newMilk = milkType;
@@ -30,20 +33,21 @@ export default function CoffeePicker({ value, disabled, onSave }) {
   return (
     <div className="flex items-center gap-1">
       <select
-        value={coffeeType}
+        value={notSet ? '' : coffeeType}
         disabled={disabled}
         onChange={(e) => handleCoffeeTypeChange(e.target.value)}
         className="px-2 py-1 border border-gray-300 rounded text-sm disabled:opacity-50"
       >
+        {notSet && <option value="">Not set</option>}
         {COFFEE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
       </select>
       <select
-        value={coffeeType === NO_COFFEE ? '' : (milkFixed ? NO_MILK : milkType)}
+        value={notSet || coffeeType === NO_COFFEE ? '' : (milkFixed ? NO_MILK : milkType)}
         disabled={milkDisabled || milkFixed}
         onChange={(e) => handleMilkTypeChange(e.target.value)}
         className="px-2 py-1 border border-gray-300 rounded text-sm disabled:opacity-50"
       >
-        {coffeeType === NO_COFFEE ? (
+        {notSet || coffeeType === NO_COFFEE ? (
           <option value="">—</option>
         ) : milkFixed ? (
           <option value={NO_MILK}>{NO_MILK}</option>
