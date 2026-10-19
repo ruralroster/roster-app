@@ -544,6 +544,8 @@
           <span class="mark">An import replaces those dates</span>
           <p>Writing a week first deletes every existing assignment and activity card for the dates the file covers, then writes the file's roster. The re-issued spreadsheet is treated as the source of truth. On-call duty assignments and recorded leave are never touched. Both the dry run and the real run tell you how many existing entries will be (or were) removed.</p>
         </div>
+        <p><strong>Jobs and on-call.</strong> Each shift lands in the job that matches its location, activity and hours (e.g. ED Day, ED Evening, Endoscopy), so the week shows up in the Planner already filled in. A shift with no matching job at its location and activity gets a card of its own, as before. Interns go into the jobs with "Intern" in their name first, so an intern's ED shift lands in ED Intern Day or ED Intern Late rather than ED Day.</p>
+        <p>On-call comes from the <strong>CALL OBLIGATION</strong> row for consultants and the notes row under a registrar's name (Oncall, Anaes or Obs). Each one fills that day's on-call slot. If two people are down for the same slot, the dry run asks you to choose who's on call before anything is written.</p>
         <p>Each department has one fixed spreadsheet layout, matching whichever roster it was originally built from — a super-admin sets this once for the department; other officers just see the import tab ready to go, with no format to pick.</p>
       </article>
 
@@ -651,6 +653,12 @@
           <li><strong>Add someone not on the roster</strong> (under the list) adds a coffee for a locum or visitor. It appears as a normal row in the list.</li>
           <li>Both changes are shared: anyone else who opens Coffee today sees the same adjusted list. It resets the next day.</li>
         </ul>
+        <p><strong>The red count.</strong> The Coffee button shows a red number when someone still needs a coffee order today. Coffee is ordered at 10:30, so it only counts people and visitors working the <strong>morning</strong>:</p>
+        <ul>
+          <li>Rostered people with <strong>no coffee order saved</strong>. A saved <strong>No Coffee</strong> counts as known, so they aren't flagged. A blank order shows as <strong>Not set</strong> in Coffee Preferences.</li>
+          <li>Visiting surgeons and dentists named on today's Planner cards.</li>
+        </ul>
+        <p>Tap <strong>Coffee</strong> to see <strong>Needs a coffee order</strong> at the top. Choose a coffee for each person and tap <strong>Add to coffee list</strong>. That adds a one-off coffee for today only; it doesn't change their saved order. Anyone you've unticked, or who's already on the list, isn't flagged.</p>
       </article>
 
       <article class="topic" id="staff-export">
