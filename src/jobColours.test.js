@@ -1,4 +1,4 @@
-import { jobCategoryFor, jobBoxStyle, holdsOnCallDuty, shortOnCallLabel, ON_CALL_BORDER, JOB_COLOURS } from './jobColours';
+import { jobCategoryFor, jobBoxStyle, holdsOnCallDuty, shortOnCallLabel, jobCategoryRank, ON_CALL_BORDER, JOB_COLOURS } from './jobColours';
 
 describe('jobCategoryFor', () => {
   test.each([
@@ -49,5 +49,12 @@ describe('shortOnCallLabel', () => {
     [undefined, undefined],
   ])('%s -> %s', (label, expected) => {
     expect(shortOnCallLabel(label)).toBe(expected);
+  });
+});
+
+describe('jobCategoryRank', () => {
+  test('follows JOB_COLOURS order, uncoloured last', () => {
+    const sorted = [null, 'maternity', 'theatre', 'emergency', 'ward'].sort((a, b) => jobCategoryRank(a) - jobCategoryRank(b));
+    expect(sorted).toEqual(['emergency', 'ward', 'theatre', 'maternity', null]);
   });
 });

@@ -33,6 +33,14 @@ export const JOB_COLOURS = {
   maternity: { label: 'Maternity', card: '#FFEFEF', border: '#E04848', box: '#FFA6A6' },
 };
 
+// Order job types are grouped in (the Planner's job palette and day
+// columns) — JOB_COLOURS order, with uncoloured jobs last.
+const CATEGORY_ORDER = Object.keys(JOB_COLOURS);
+export function jobCategoryRank(category) {
+  const i = CATEGORY_ORDER.indexOf(category);
+  return i === -1 ? CATEGORY_ORDER.length : i;
+}
+
 export const ON_CALL_BORDER = '#FF00FF';
 
 const NEUTRAL_CARD = { card: '#FFFFFF', border: '#D1D5DB', box: '#F3F4F6' };

@@ -17,7 +17,7 @@ import {
 import { getMondayOfWeek } from './payrollExport';
 import { toLocalDateStr } from './dateUtils';
 import { DEFAULT_FTE } from './availabilityUtils';
-import { jobCategoryFor, jobCardStyle, jobBoxStyle, holdsOnCallDuty } from './jobColours';
+import { JOB_COLOURS, jobCategoryFor, jobCategoryRank, jobCardStyle, jobBoxStyle, holdsOnCallDuty } from './jobColours';
 import {
   hhmm, addDays, firstName, jobForCard, isSenior, hasAnySkill, placeMismatch, layOutCard, dayConflict, daysWorked,
 } from './plannerUtils';
@@ -299,9 +299,12 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
     return <span key={key} className={`${base} border-gray-400 text-gray-500`} title="Pick a person below first">{place.role}</span>;
   };
 
+  const cardCategory = (card) => jobCategoryFor(card.locations?.name || locationName(card.location_id), activityName(card.activity_id));
+  const jobCategory = (job) => jobCategoryFor(locationName(job.location_id), activityName(job.activity_id));
+
   const renderCard = (card) => {
     const job = jobForCard(card, jobTypes);
-    const category = jobCategoryFor(card.locations?.name || locationName(card.location_id), activityName(card.activity_id));
+    const category = cardCategory(card);
     const cardAssignments = assignments.filter(a => a.theatre_activity_id === card.theatre_activity_id);
     const layout = layOutCard(card, job, places, cardAssignments, visitors.filter(v => v.theatre_activity_id === card.theatre_activity_id), staffById, rankRows);
     const short = layout.needed > 0 && layout.filled < layout.needed;
@@ -482,23 +485,31 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
           ) : (
             <>
               <p className="text-xs text-gray-600 mb-2">Pick a job, then tap <span className="font-semibold">+</span> on each day it runs.</p>
-              <div className="flex flex-wrap gap-1.5">
-                {activeJobs.map(job => {
-                  const on = job.job_type_id === selectedJobId;
-                  const category = jobCategoryFor(locationName(job.location_id), activityName(job.activity_id));
-                  return (
-                    <button
-                      key={job.job_type_id}
-                      onClick={() => setSelectedJobId(on ? null : job.job_type_id)}
-                      aria-pressed={on}
-                      className={`px-3 py-1.5 rounded-lg border text-sm transition ${on ? 'ring-2 ring-blue-600 font-semibold' : ''}`}
-                      style={jobCardStyle(category)}
-                    >
-                      {job.name}
-                      <span className="ml-1 text-xs text-gray-600">{hhmm(job.start_time)}–{hhmm(job.end_time)}</span>
-                    </button>
-                  );
-                })}
+              {/* One row per colour (Emergency, Ward, Theatre, Maternity,
+                  then uncoloured), same order as the day columns below. */}
+              <div className="space-y-1.5">
+                {[...new Set(activeJobs.map(jobCategory))]
+                  .sort((a, b) => jobCategoryRank(a) - jobCategoryRank(b))
+                  .map(category => (
+                  <div key={category || 'other'} className="flex flex-wrap items-center gap-1.5">
+                    <span className="w-20 text-[11px] font-semibold text-gray-500 uppercase">{JOB_COLOURS[category]?.label || 'Other'}</span>
+                    {activeJobs.filter(job => jobCategory(job) === category).map(job => {
+                      const on = job.job_type_id === selectedJobId;
+                      return (
+                        <button
+                          key={job.job_type_id}
+                          onClick={() => setSelectedJobId(on ? null : job.job_type_id)}
+                          aria-pressed={on}
+                          className={`px-3 py-1.5 rounded-lg border text-sm transition ${on ? 'ring-2 ring-blue-600 font-semibold' : ''}`}
+                          style={jobCardStyle(category)}
+                        >
+                          {job.name}
+                          <span className="ml-1 text-xs text-gray-600">{hhmm(job.start_time)}–{hhmm(job.end_time)}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ))}
               </div>
             </>
           )}
@@ -548,7 +559,10 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
                 {weekDays.map((dateStr, i) => {
                   const dayCards = cards
                     .filter(c => c.date === dateStr)
-                    .sort((a, b) => hhmm(a.start_time).localeCompare(hhmm(b.start_time)) || cardTitle(a, jobForCard(a, jobTypes)).localeCompare(cardTitle(b, jobForCard(b, jobTypes))));
+                    // Grouped by colour, then by start time within each colour.
+                    .sort((a, b) => jobCategoryRank(cardCategory(a)) - jobCategoryRank(cardCategory(b))
+                      || hhmm(a.start_time).localeCompare(hhmm(b.start_time))
+                      || cardTitle(a, jobForCard(a, jobTypes)).localeCompare(cardTitle(b, jobForCard(b, jobTypes))));
                   const isToday = dateStr === toLocalDateStr(new Date());
                   const offToday = selectedStaff && unavailable.some(u => u.staff_id === selectedStaff.staff_id && u.date === dateStr);
                   return (
