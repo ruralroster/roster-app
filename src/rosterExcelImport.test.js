@@ -1,4 +1,4 @@
-import { applyPrimaryAllocation, applyCodeMappings, resolveShiftCode } from './rosterExcelImport';
+import { applyPrimaryAllocation, applyCodeMappings, resolveShiftCode, extractRmoWeek, onCallKindsForDay } from './rosterExcelImport';
 
 const person = (rawShift) => ({ rawLabel: 'X', days: [{ date: 46307, rawShift, resolvedShift: resolveShiftCode(rawShift) }] });
 
@@ -46,5 +46,31 @@ describe('suggestStaffMatches', () => {
     expect(ids('Tom Newman')).toEqual([]);
     expect(ids('Daniel Charles Anaesthetics')).toEqual([]);
     expect(ids('Newman')).toEqual([]);
+  });
+});
+
+describe('extractRmoWeek on-call notes', () => {
+  // Week block with its label column at 0 and Monday at column 1.
+  const row = (label, ...cells) => [label, ...cells, ...Array(7 - cells.length).fill('')];
+  const rows = [
+    row('Week 1'),
+    row('', '19/10/2026', '20/10/2026', '21/10/2026', '22/10/2026', '23/10/2026', '24/10/2026', '25/10/2026'),
+    row('Anusheh Mubeen', 'Day 0800 - 1800 Maternity', 'Evening 1300-2300', '', '', 'ANC/Obs'),
+    row('', 'Obs', '', '', '', 'Obs'),
+    row('', 'Alex Parfitt MOB: 0400 000 000'),
+    row('Alex Parfitt', 'Night 2230 - 0830'),
+  ];
+
+  it("reads the unlabelled notes row under a registrar as their on-call", () => {
+    const [anusheh, alex] = extractRmoWeek(rows, 0, 1);
+    expect(anusheh.days.map(onCallKindsForDay)).toEqual([['obs'], [], [], [], ['obs'], [], []]);
+    expect(alex.rawLabel).toBe('Alex Parfitt');
+    expect(alex.days.every(d => !d.rawOnCall)).toBe(true);
+  });
+
+  it("never takes the next person's contact line for notes", () => {
+    const withContactBelow = [...rows.slice(0, 3), ...rows.slice(4)];
+    const [anusheh] = extractRmoWeek(withContactBelow, 0, 1);
+    expect(anusheh.days.every(d => !d.rawOnCall)).toBe(true);
   });
 });

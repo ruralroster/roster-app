@@ -200,7 +200,7 @@ export function parseOnCallNote(rawNote) {
   const lower = note.toLowerCase();
   return {
     raw: note,
-    ed: lower.includes('oncall'),
+    ed: /on ?call/.test(lower),
     anaes: lower.includes('anaes'),
     obs: lower.includes('obs'),
   };
@@ -208,8 +208,8 @@ export function parseOnCallNote(rawNote) {
 
 // The on-call kinds ('ed' | 'anaes' | 'obs') one parsed day puts this
 // person on: its CALL OBLIGATION note, plus "EDL + OC" — the EDL shift
-// is the ED on-call shift. Days from sections with no notes row
-// (Registrar/RMO, Intern, the ED format) give none.
+// is the ED on-call shift. Days with no notes row (most registrars,
+// interns, the ED format) give none.
 export function onCallKindsForDay(day) {
   const kinds = new Set();
   if (day.onCall?.ed) kinds.add('ed');
@@ -585,6 +585,21 @@ export function resolveRmoShiftCode(rawCode) {
   return { unmapped: code };
 }
 
+// A registrar can carry on-call too — confirmed against the INNH Oct 2026
+// DRAFT (2026-10-19): Anusheh Mubeen's row has an unlabelled row directly
+// under it with "Obs" on the days she's Obstetrics on call, same notes as
+// the consultants' CALL OBLIGATION row. Read only when that row has no
+// name of its own and every filled cell this week is an on-call note
+// (Oncall / Anaes / Obs, "+"-joined), so the next person's contact line
+// ("Alex Parfitt MOB: 04...") is never taken for one.
+const ON_CALL_NOTE_RE = /^(on ?call|anaes|obs)(\s*\+\s*(on ?call|anaes|obs))*$/i;
+
+function rmoOnCallNotesRow(row, mondayCol) {
+  if (!row || weekLabel(row, mondayCol)) return null;
+  const cells = DAY_LABELS.map((_, i) => (row[mondayCol + i] || '').toString().replace(/\s+/g, ' ').trim()).filter(Boolean);
+  return cells.length > 0 && cells.every(c => ON_CALL_NOTE_RE.test(c)) ? row : null;
+}
+
 // Walks down from the section's date row collecting name rows — any row
 // with a non-blank column A that isn't itself the next section's "Week
 // N" header — until that next header is hit.
@@ -599,14 +614,17 @@ export function extractRmoWeek(rows, sectionStartRow, mondayCol) {
     if (weekLabel(rows[r], mondayCol) && !isPersonLabel(weekLabel(rows[r], mondayCol))) continue;
 
     const contactRow = rows[r - 1] || [];
+    const notesRow = rmoOnCallNotesRow(rows[r + 1], mondayCol);
     const days = DAY_LABELS.map((dayLabel, i) => {
       const col = mondayCol + i;
       const rawShift = (rows[r][col] || '').toString().trim();
+      const rawOnCall = notesRow ? (notesRow[col] || '').toString().trim() : '';
       return {
         label: dayLabel,
         date: dates[i],
         rawShift,
         resolvedShift: rawShift ? resolveRmoShiftCode(rawShift) : null,
+        ...(rawOnCall ? { rawOnCall, onCall: parseOnCallNote(rawOnCall) } : {}),
       };
     });
 
