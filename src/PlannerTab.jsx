@@ -308,7 +308,11 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
     const cardAssignments = assignments.filter(a => a.theatre_activity_id === card.theatre_activity_id);
     const layout = layOutCard(card, job, places, cardAssignments, visitors.filter(v => v.theatre_activity_id === card.theatre_activity_id), staffById, rankRows);
     const short = layout.needed > 0 && layout.filled < layout.needed;
-    const canAddExtra = mode === 'fill' && selectedStaff && !conflictFor(selectedStaff.staff_id, card);
+    // Why the picked person can't go on this card at all (busy, away,
+    // already on it) — shown in place of "+ extra" so it never just
+    // silently disappears.
+    const extraBlockedReason = mode === 'fill' && selectedStaff ? conflictFor(selectedStaff.staff_id, card) : null;
+    const canAddExtra = mode === 'fill' && selectedStaff && !extraBlockedReason;
 
     return (
       <div key={card.theatre_activity_id} className="rounded-lg border p-1.5 space-y-1" style={jobCardStyle(category)}>
@@ -363,6 +367,9 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
           >
             + extra
           </button>
+        )}
+        {extraBlockedReason && (
+          <p className="text-[10px] text-gray-500 italic truncate" title={extraBlockedReason}>{extraBlockedReason}</p>
         )}
       </div>
     );

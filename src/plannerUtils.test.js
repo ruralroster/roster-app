@@ -34,7 +34,10 @@ describe('placeMismatch', () => {
     expect(placeMismatch(places[1], reg, ranks)).toMatch(/senior/);
     expect(placeMismatch(places[0], smoNoSkill, ranks)).toMatch(/skill/);
     expect(placeMismatch(places[0], smo, ranks)).toBeNull();
-    expect(placeMismatch({ kind: 'staff', grade: 'junior' }, smo, ranks)).toMatch(/Junior/);
+    // Anyone can fill a junior place — e.g. an advanced trainee (no
+    // supervision needed) in the RMO place.
+    expect(placeMismatch({ kind: 'staff', grade: 'junior' }, smo, ranks)).toBeNull();
+    expect(placeMismatch({ kind: 'staff', grade: 'junior' }, reg, ranks)).toBeNull();
   });
 
   it('treats an unknown rank as junior', () => {
@@ -63,6 +66,17 @@ describe('layOutCard', () => {
     expect(out.places[0].slots[0].visitor.name).toBe('Dr Visit');
     expect(out.places[1].slots[0].assignment.assignment_id).toBe('a1');
     expect(out.filled).toBe(2);
+  });
+
+  it('fits a senior into a senior place before a junior one, but lets them take a junior place', () => {
+    const rmoFirst = [
+      { place_id: 'p-rmo', job_type_id: 'endo', role: 'RMO', kind: 'staff', grade: 'junior', required_advanced_skills: [], min_count: 1, sort_order: 0 },
+      places[1],
+    ];
+    const out = layOutCard(card, endo, rmoFirst, [{ assignment_id: 'a1', staff_id: 'smo' }, { assignment_id: 'a2', staff_id: 'smo2' }], [], staffById, ranks);
+    expect(out.places[1].slots[0].assignment.assignment_id).toBe('a1');
+    expect(out.places[0].slots[0].assignment.assignment_id).toBe('a2');
+    expect(out.extras).toHaveLength(0);
   });
 
   it('a card with no job has no places — everyone is an extra', () => {

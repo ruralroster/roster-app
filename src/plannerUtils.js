@@ -87,10 +87,13 @@ export function hasAnySkill(staff, requiredSkillIds) {
 
 // Why `staff` can't fill `place` on grade/skill grounds, or null if they
 // can. Says nothing about their day (leave, clashes) — see dayConflict.
+// A junior place is open to anyone (e.g. an advanced trainee, whose rank
+// needs no supervision, filling the RMO place) — same "at or above the
+// level" rule as advertised shifts (staffGrade.js); only a senior place
+// is restricted.
 export function placeMismatch(place, staff, rankRows) {
   if (place.kind === 'visitor') return 'Visitors only';
   if (place.grade === 'senior' && !isSenior(staff, rankRows)) return 'Needs a senior';
-  if (place.grade === 'junior' && isSenior(staff, rankRows)) return 'Junior place';
   if (!hasAnySkill(staff, place.required_advanced_skills)) return 'Missing the skill';
   return null;
 }
@@ -130,7 +133,11 @@ export function layOutCard(card, job, allPlaces, cardAssignments, cardVisitors, 
   }
   for (const a of unplaced) {
     const staff = staffById.get(a.staff_id);
-    const p = places.find(x => emptySlot(x) && !placeMismatch(x.place, staff, rankRows));
+    const fits = (x) => emptySlot(x) && !placeMismatch(x.place, staff, rankRows);
+    // A senior goes into a senior/any place first, a junior place only if
+    // nothing else is left.
+    const p = (isSenior(staff, rankRows) && places.find(x => fits(x) && x.place.grade !== 'junior'))
+      || places.find(fits);
     if (p) emptySlot(p).assignment = a;
     else extras.push(a);
   }
