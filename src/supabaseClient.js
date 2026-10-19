@@ -4240,7 +4240,8 @@ async function shiftForHours(departmentId, startTime, endTime, nameHint) {
 }
 
 // A job dropped onto a day: an empty card for it with the job's hours.
-export async function createPlannerCard(departmentId, dateStr, job) {
+// extra: more theatre_activities fields, e.g. the import's required_grade.
+export async function createPlannerCard(departmentId, dateStr, job, extra = {}) {
   try {
     const shiftId = await shiftForHours(departmentId, job.start_time, job.end_time, job.name);
     const { data, error } = await supabase
@@ -4254,6 +4255,7 @@ export async function createPlannerCard(departmentId, dateStr, job) {
         start_time: job.start_time,
         end_time: job.end_time,
         job_type_id: job.job_type_id,
+        ...extra,
       }])
       .select()
       .single();
@@ -5370,7 +5372,7 @@ export async function importRosterWeek(departmentId, people, refLists, { dryRun 
   if (addUnnamedAsUnfilled) {
     const unnamed = people.filter(p => p.unnamed);
     if (unnamed.length > 0) {
-      const unfilledResults = await importUnnamedAsUnfilled(departmentId, unnamed, findLocation, findActivity, dryRun);
+      const unfilledResults = await importUnnamedAsUnfilled(departmentId, unnamed, findLocation, findActivity, dryRun, jobTypes, jobCards);
       results.push(...unfilledResults);
     }
   }
@@ -5378,13 +5380,15 @@ export async function importRosterWeek(departmentId, people, refLists, { dryRun 
   return { data: results, error: null, deletionSummary };
 }
 
-// Each shift on an unnamed row → its own new, empty theatre_activities
-// card carrying the row's grade (from its sheet section). Always a fresh
-// insert, never a reused card: two unnamed rows with the same shift on
-// the same day are two vacancies. Leave codes are skipped (leave with no
+// Each shift on an unnamed row → an empty theatre_activities card carrying
+// the row's grade (from its sheet section). A shift with a job (an intern
+// row tries the intern jobs first, as named interns do) is that job's one
+// card for the day — jobCards, shared with the named import — whose empty
+// places show the vacancy. A shift with no job is always a fresh card of
+// its own, so two of them on the same day are two vacancies. Leave codes are skipped (leave with no
 // person means nothing). An on-call duty activity isn't a card at all —
 // it's reported, and the duty roster is left as it is.
-async function importUnnamedAsUnfilled(departmentId, unnamedPeople, findLocation, findActivity, dryRun) {
+async function importUnnamedAsUnfilled(departmentId, unnamedPeople, findLocation, findActivity, dryRun, jobTypes, jobCards) {
   const results = [];
 
   const { data: dutyTypes, error: dutyError } = await supabase
@@ -5439,7 +5443,8 @@ async function importUnnamedAsUnfilled(departmentId, unnamedPeople, findLocation
           continue;
         }
 
-        const unfilled = { ...entry, ok: true, action: 'unfilled', gradeLabel, location: location.name, activity: activity.name, start: segment.start, end: segment.end };
+        const job = jobForImportedShift({ location_id: location.location_id, activity_id: activity.activity_id, start_time: segment.start, end_time: segment.end }, jobTypes, person.section === 'intern');
+        const unfilled = { ...entry, ok: true, action: 'unfilled', gradeLabel, location: location.name, activity: activity.name, start: segment.start, end: segment.end, job: job?.name || null };
         if (dutyActivityIds.has(activity.activity_id)) {
           results.push({ ...unfilled, action: 'unfilled duty' });
           continue;
@@ -5449,12 +5454,31 @@ async function importUnnamedAsUnfilled(departmentId, unnamedPeople, findLocation
           continue;
         }
 
+        // A shift with a job is that job's card for the day, empty and
+        // graded — or, when someone named is already in that job (their
+        // card made above), an open place on it rather than a second card.
+        if (job) {
+          const dateStr = toLocalDateStr(date);
+          const key = `${dateStr}|${job.job_type_id}`;
+          if (jobCards.has(key)) {
+            results.push({ ...unfilled, sharedJobCard: true });
+            continue;
+          }
+          const { data: card, error: cardError } = await createPlannerCard(departmentId, dateStr, job, { required_grade: grade });
+          if (cardError) {
+            results.push({ ...entry, ok: false, reason: `Failed to add the ${job.name} card: ${cardError.message}` });
+            continue;
+          }
+          jobCards.set(key, card.theatre_activity_id);
+          results.push(unfilled);
+          continue;
+        }
+
         const { data: shiftId, error: shiftError } = await findOrCreateShift(departmentId, segment.start, segment.end);
         if (shiftError) {
           results.push({ ...entry, ok: false, reason: `Failed to resolve shift: ${shiftError.message}` });
           continue;
         }
-        const match = await jobTypeIdMatcher(departmentId);
         const { error: insertError } = await supabase
           .from('theatre_activities')
           .insert([{
@@ -5466,7 +5490,6 @@ async function importUnnamedAsUnfilled(departmentId, unnamedPeople, findLocation
             start_time: segment.start,
             end_time: segment.end,
             required_grade: grade,
-            ...jobField(match, { location_id: location.location_id, activity_id: activity.activity_id, start_time: segment.start, end_time: segment.end }),
           }]);
         results.push(insertError ? { ...entry, ok: false, reason: `Failed to add unfilled card: ${insertError.message}` } : unfilled);
       }

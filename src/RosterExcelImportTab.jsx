@@ -796,7 +796,7 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
                   </span>
                 ) : r.action === 'unfilled' ? (
                   <span className="text-amber-800">
-                    {' — '}Added as unfilled ({r.gradeLabel}): {r.location} / {r.activity} {r.start}–{r.end}
+                    {' — '}Added as unfilled ({r.gradeLabel}): {r.job ? `${r.job}${r.sharedJobCard ? ' (an open place on its card)' : ''}: ` : ''}{r.location} / {r.activity} {r.start}–{r.end}
                   </span>
                 ) : r.action === 'unfilled duty' ? (
                   <span className="text-amber-800">
