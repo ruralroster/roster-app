@@ -589,15 +589,17 @@ export function resolveRmoShiftCode(rawCode) {
 // DRAFT (2026-10-19): Anusheh Mubeen's row has an unlabelled row directly
 // under it with "Obs" on the days she's Obstetrics on call, same notes as
 // the consultants' CALL OBLIGATION row. Read only when that row has no
-// name of its own and every filled cell this week is an on-call note
-// (Oncall / Anaes / Obs, "+"-joined), so the next person's contact line
-// ("Alex Parfitt MOB: 04...") is never taken for one.
+// name of its own and at least one cell is an on-call note (Oncall / Anaes
+// / Obs, "+"-joined). A remark on the same row ("Overtime") is ignored, and
+// a row with a phone number in it is never read, so the next person's
+// contact line ("Alex Parfitt MOB: 04...") is never taken for one.
 const ON_CALL_NOTE_RE = /^(on ?call|anaes|obs)(\s*\+\s*(on ?call|anaes|obs))*$/i;
 
 function rmoOnCallNotesRow(row, mondayCol) {
   if (!row || weekLabel(row, mondayCol)) return null;
-  const cells = DAY_LABELS.map((_, i) => (row[mondayCol + i] || '').toString().replace(/\s+/g, ' ').trim()).filter(Boolean);
-  return cells.length > 0 && cells.every(c => ON_CALL_NOTE_RE.test(c)) ? row : null;
+  const cells = DAY_LABELS.map((_, i) => (row[mondayCol + i] || '').toString().replace(/\s+/g, ' ').trim());
+  if (cells.some(c => /\d|:/.test(c))) return null;
+  return cells.some(c => ON_CALL_NOTE_RE.test(c)) ? row : null;
 }
 
 // Walks down from the section's date row collecting name rows — any row
@@ -618,7 +620,8 @@ export function extractRmoWeek(rows, sectionStartRow, mondayCol) {
     const days = DAY_LABELS.map((dayLabel, i) => {
       const col = mondayCol + i;
       const rawShift = (rows[r][col] || '').toString().trim();
-      const rawOnCall = notesRow ? (notesRow[col] || '').toString().trim() : '';
+      const cellNote = notesRow ? (notesRow[col] || '').toString().replace(/\s+/g, ' ').trim() : '';
+      const rawOnCall = ON_CALL_NOTE_RE.test(cellNote) ? cellNote : '';
       return {
         label: dayLabel,
         date: dates[i],

@@ -68,6 +68,12 @@ describe('extractRmoWeek on-call notes', () => {
     expect(alex.days.every(d => !d.rawOnCall)).toBe(true);
   });
 
+  it('ignores a remark on the notes row, like Overtime, and keeps the Obs days', () => {
+    const withRemark = [rows[0], rows[1], rows[2], row('', 'Obs', '', 'Overtime', '', 'Obs'), ...rows.slice(4)];
+    const [anusheh] = extractRmoWeek(withRemark, 0, 1);
+    expect(anusheh.days.map(onCallKindsForDay)).toEqual([['obs'], [], [], [], ['obs'], [], []]);
+  });
+
   it("never takes the next person's contact line for notes", () => {
     const withContactBelow = [...rows.slice(0, 3), ...rows.slice(4)];
     const [anusheh] = extractRmoWeek(withContactBelow, 0, 1);
