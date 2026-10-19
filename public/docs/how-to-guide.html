@@ -309,6 +309,7 @@
         <li><a href="#officer-sick-calls">Sick calls</a></li>
         <li><a href="#officer-copy-week">Reusing a week</a></li>
         <li><a href="#officer-fortnight">Fortnight view</a></li>
+        <li><a href="#officer-planner">Planner</a></li>
         <li><a href="#officer-settings">Settings</a></li>
         <li><a href="#officer-accounts">Staff Accounts &amp; passwords</a></li>
         <li><a href="#officer-skills">Advanced Skills</a></li>
@@ -456,6 +457,63 @@
           <li>If nothing's on that session yet, but someone's on call, you'll be offered a fallback: pick the on-call consultant, then choose a location and activity to build a fresh card. That card gets both the junior and the on-call consultant (ticked on-call) automatically.</li>
         </ul>
         <p>If this department has at least one location with <strong>Requires senior supervision</strong> unchecked (see below), that fallback step is skipped and you go straight to picking a location — a junior can be placed on an unsupervised location with nobody on call at all.</p>
+      </article>
+
+      <article class="topic" id="officer-planner">
+        <span class="eyebrow">Planner tab</span>
+        <h3>Laying out the week's jobs, then filling them</h3>
+        <p>The Planner builds a week from <strong>jobs</strong> — the regular pieces of work a department runs, such as ED Day, ED Evening, ED Night or Endoscopy — each with its own hours and the <strong>places</strong> it needs filled. Jobs are set up once in Settings (see below). Each job shows its places, so you can see at a glance what's still short.</p>
+        <p>The tab works in two steps, one week at a time. Use the <strong>+</strong> and <strong>−</strong> beside the week to show up to four weeks at once.</p>
+
+        <h4>1 · Lay out jobs</h4>
+        <ol>
+          <li>Pick a job from the palette at the top. Jobs are grouped by colour (Emergency, Ward, Theatre, Maternity, then the rest).</li>
+          <li>Tap <strong>+</strong> on each day it runs. A card for that job appears on the day, at the job's hours.</li>
+          <li>To remove a card, tap it and confirm. If people are already booked on it, the confirmation says how many will be taken off.</li>
+        </ol>
+        <p>A saved week can be reused. <strong>Save week as template</strong> stores the week's jobs under a name you choose. Later, pick the template from the <strong>Template…</strong> list beside a week and tap <strong>Apply</strong> to lay the same jobs down.</p>
+
+        <h4>2 · Fill places</h4>
+        <ol>
+          <li>Pick a person in the bar at the bottom. Use the <strong>Show</strong> filter (Everyone, Seniors, Juniors or a single rank) to narrow the list. Each name shows how many days they've worked this period against their target.</li>
+          <li>The places they can fill light up <span class="mark">green</span>. Tap one to book them there.</li>
+          <li>To add someone on top of a job's places, tap <strong>+ extra</strong> on that card. It's shown separately from the places, so the places still read as covered or short.</li>
+          <li>For a visiting surgeon or dentist, tap an amber place and type their name. Visitors are never counted against staffing and never appear on the roster.</li>
+          <li>With nobody picked, tap a name on the grid to take it off that card, or tap a visitor's name to change or clear it.</li>
+        </ol>
+        <p>A person is not offered a place they can't do. Each place can say what it needs:</p>
+        <ul>
+          <li><strong>Grade</strong>: a senior place takes only someone whose rank doesn't need supervision. A junior place is open to anyone, so a senior can fill it too.</li>
+          <li><strong>Skills</strong>: if the place needs an advanced skill, the person must hold one of the skills listed.</li>
+          <li><strong>Leave and clashes</strong>: someone marked unavailable for the day, or already working hours that overlap the job, is shown with the reason (e.g. <em>Busy</em> or <em>Unavailable</em>) and can't be booked. Someone can't fill two places on the same job.</li>
+        </ul>
+        <div class="callout">
+          <span class="mark">Admin never clashes</span>
+          <p>Admin and other non-clinical time is fitted around clinical work, so it never blocks someone from a job, and it doesn't count as a clash for anyone else.</p>
+        </div>
+        <p><strong>On-call</strong> slots (for example First On Call, Obs On Call) appear under each day in the same way. Pick a name for a slot, and if someone is already there you're asked to confirm the swap. On-call never clashes with a job, so someone can be on call while working one.</p>
+
+        <h4>Setting up the jobs</h4>
+        <p>Go to <strong>Settings → Locations &amp; Activities → Jobs (Planner)</strong>. Each job has:</p>
+        <ul>
+          <li>a <strong>name</strong>, e.g. "ED Day";</li>
+          <li>a <strong>location</strong> and an <strong>activity</strong>, the same ones used for cards everywhere else;</li>
+          <li>the <strong>hours</strong> the service runs.</li>
+        </ul>
+        <p>Then tap <strong>Places</strong> on the job and add what it needs. For each place give:</p>
+        <ul>
+          <li>a <strong>role</strong>, e.g. "Anaesthetist" or "Endoscopist";</li>
+          <li>who can fill it: <strong>Staff</strong>, <strong>Visitor only</strong> or <strong>Staff or visitor</strong>;</li>
+          <li>the <strong>grade</strong>: Any grade, Senior or Junior;</li>
+          <li>any <strong>advanced skills</strong> the person must hold (any one of the ticked skills is enough; leave it empty for no restriction);</li>
+          <li>the <strong>minimum number</strong> needed. This is a minimum, not a cap: more juniors or extra seniors can still go on top.</li>
+        </ul>
+        <p>A job with no places is never shown as short. Changing a job's hours doesn't change the hours of anyone already booked on it.</p>
+        <div class="callout">
+          <span class="mark">Already have cards? Convert them</span>
+          <p>On the same Jobs page, <strong>Convert existing activities to jobs</strong> groups the cards and week template entries you already have by location, activity and hours. Each group becomes a job, or joins a job that already matches. Converting only links the cards to their jobs; nobody's booking or hours change.</p>
+        </div>
+        <p>Imported rosters go into the jobs automatically. Each shift lands in the job that matches its location, activity and hours, and the week shows up in the Planner already filled in. See <a href="#officer-import">Excel roster import</a>.</p>
       </article>
 
       <article class="topic" id="officer-settings">
