@@ -1957,21 +1957,27 @@ export async function getCoffeeOrderAdjustments(departmentId, date) {
   }
 }
 
-// Names of the visitors (visiting surgeons, dentists) on the Planner's cards
-// for one day — the Coffee flag counts them as people who need a coffee.
-export async function getVisitorNamesForDate(departmentId, date) {
+// Visitors (visiting surgeons, dentists) on the Planner's cards for one day,
+// with their card's hours — the Coffee flag counts the ones working a session
+// that needs coffee.
+export async function getVisitorsForDate(departmentId, date) {
   const dateStr = toLocalDateStr(date);
 
   try {
     const { data, error } = await supabase
       .from('theatre_activity_visitors')
-      .select('name, theatre_activities!inner(date)')
+      .select('name, theatre_activities!inner(date, start_time, end_time)')
       .eq('department_id', departmentId)
       .eq('theatre_activities.date', dateStr);
     if (error) throw error;
-    return { data: (data || []).map(v => v.name), error: null };
+    const visitors = (data || []).map(v => ({
+      name: v.name,
+      start_time: v.theatre_activities?.start_time,
+      end_time: v.theatre_activities?.end_time,
+    }));
+    return { data: visitors, error: null };
   } catch (err) {
-    console.error('getVisitorNamesForDate error:', err);
+    console.error('getVisitorsForDate error:', err);
     return { data: [], error: err };
   }
 }

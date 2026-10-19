@@ -36,7 +36,7 @@ import {
   starStaffMember,
   unstarStaffMember,
   getCoffeeOrderAdjustments,
-  getVisitorNamesForDate,
+  getVisitorsForDate,
   removeCoffeeOrderStaff,
   restoreCoffeeOrderStaff,
   addCoffeeOrderExtra,
@@ -860,21 +860,26 @@ export default function StaffRosterView({ departmentId, staffId }) {
   };
 
   // Read on load and again whenever the coffee list changes, so the red
-  // count is there before anyone opens Coffee.
+  // count is there before anyone opens Coffee. Coffee is ordered at 10:30,
+  // so only people and visitors working the morning session need one.
   const loadCoffeeAttention = async () => {
     if (!departmentId) return;
     try {
-      const [{ data: assignments, error: assignError }, { data: adjustments, error: adjError }, { data: visitorNames, error: visitorError }] = await Promise.all([
+      const [{ data: assignments, error: assignError }, { data: adjustments, error: adjError }, { data: visitors, error: visitorError }] = await Promise.all([
         getStaffAssignmentsForDate(departmentId, new Date()),
         getCoffeeOrderAdjustments(departmentId, new Date()),
-        getVisitorNamesForDate(departmentId, new Date()),
+        getVisitorsForDate(departmentId, new Date()),
       ]);
       const error = assignError || adjError || visitorError;
       if (error) throw error;
 
-      const rostered = [...new Map(assignments.filter(a => a.staff_id).map(a => [a.staff_id, {
-        staff_id: a.staff_id, name: a.staff?.name, rank: a.staff?.rank, coffee_order: a.staff?.coffee_order,
-      }])).values()];
+      const morning = (shift) => getSessionGroups(shift, sessionBoundaries).includes('morning');
+      const rostered = [...new Map(assignments
+        .filter(a => a.staff_id && morning(a.shifts))
+        .map(a => [a.staff_id, {
+          staff_id: a.staff_id, name: a.staff?.name, rank: a.staff?.rank, coffee_order: a.staff?.coffee_order,
+        }])).values()];
+      const visitorNames = visitors.filter(v => morning({ start_time: v.start_time, end_time: v.end_time })).map(v => v.name);
       setCoffeeAttentionList(coffeeAttention({
         rostered,
         visitorNames,
@@ -886,9 +891,11 @@ export default function StaffRosterView({ departmentId, staffId }) {
     }
   };
 
+  // Also re-read once the department's session times have loaded, since the
+  // morning check depends on them.
   useEffect(() => {
     loadCoffeeAttention();
-  }, [departmentId]);
+  }, [departmentId, department]);
 
   const closeCoffeeModal = () => {
     setShowCoffeeModal(false);
