@@ -50,8 +50,11 @@ export function jobForCard(card, jobTypes) {
 // The job a newly made card belongs to: an exact match (jobForCard), or
 // else the job at the same location and activity whose hours overlap the
 // card's the most — so a card made for one person's own hours (an ED
-// early 07:00–17:00) still lands in its job (ED Day 08:00–18:00). null
-// when nothing at that location and activity overlaps at all.
+// early 07:00–17:00) still lands in its job (ED Day 08:00–18:00). A tie
+// goes to the job whose start and end are closest to the card's, so an
+// afternoon half 12:30–18:00 is ED Day (08:00–18:00), not EDL
+// (10:30–21:00). null when nothing at that location and activity overlaps
+// at all.
 export function bestJobForNewCard(card, jobTypes) {
   const exact = jobForCard({ ...card, job_type_id: null }, jobTypes);
   if (exact) return exact;
@@ -59,17 +62,38 @@ export function bestJobForNewCard(card, jobTypes) {
   const want = intervalOn(day, card.start_time, card.end_time);
   let best = null;
   let bestOverlap = 0;
+  let bestDistance = Infinity;
   for (const j of jobTypes) {
     if (j.active === false || j.location_id !== card.location_id || j.activity_id !== card.activity_id) continue;
     const have = intervalOn(day, j.start_time, j.end_time);
     // A night job started the evening before can cover an early card too.
-    const overlap = Math.max(
-      Math.min(want.end, have.end) - Math.max(want.start, have.start),
-      Math.min(want.end, have.end - 1440) - Math.max(want.start, have.start - 1440),
-    );
-    if (overlap > bestOverlap) { best = j; bestOverlap = overlap; }
+    const sameDay = Math.min(want.end, have.end) - Math.max(want.start, have.start);
+    const dayBefore = Math.min(want.end, have.end - 1440) - Math.max(want.start, have.start - 1440);
+    const overlap = Math.max(sameDay, dayBefore);
+    const shift = sameDay >= dayBefore ? 0 : 1440;
+    const distance = Math.abs(want.start - (have.start - shift)) + Math.abs(want.end - (have.end - shift));
+    if (overlap > bestOverlap || (overlap > 0 && overlap === bestOverlap && distance < bestDistance)) {
+      best = j;
+      bestOverlap = overlap;
+      bestDistance = distance;
+    }
   }
   return best;
+}
+
+// Jobs kept for interns — named so, e.g. "ED Intern Day" (08:00–18:00, the
+// same hours as ED Day) and "ED Intern Late" (10:30–20:30).
+export const isInternJob = (job) => /\bintern\b/i.test(job?.name || '');
+
+// The job an imported shift goes into. Hours alone can't tell ED Intern
+// Day from ED Day, so who's working it decides: an intern tries the
+// intern jobs first, then the rest; anyone else never lands in an intern
+// job.
+export function jobForImportedShift(card, jobTypes, isIntern) {
+  const internJobs = jobTypes.filter(isInternJob);
+  const otherJobs = jobTypes.filter(j => !isInternJob(j));
+  if (isIntern) return bestJobForNewCard(card, internJobs) || bestJobForNewCard(card, otherJobs);
+  return bestJobForNewCard(card, otherJobs);
 }
 
 // rankRows: rank_supervision_rules. An unknown rank counts as junior —

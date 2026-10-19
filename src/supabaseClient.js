@@ -6,7 +6,7 @@ import { getMondayOfWeek } from './payrollExport';
 import { matchStaffName, suggestStaffMatches, staffLabelKey, onCallKindsForDay, dutyTypeForOnCallKind, ON_CALL_KIND_LABEL } from './rosterExcelImport';
 import { gradeForSection, gradeForRank, gradeCanCover, GRADE_LABEL } from './staffGrade';
 import { findActiveOnCalls, findOvertimeShifts } from './callbackUtils';
-import { bestJobForNewCard } from './plannerUtils';
+import { bestJobForNewCard, jobForImportedShift } from './plannerUtils';
 
 console.log('=== supabaseClient.js LOADING ===');
 console.log('Checking environment variables...');
@@ -4006,18 +4006,21 @@ function clearJobMatcherCache() {
   jobMatcherCache.clear();
 }
 
-async function jobTypeIdMatcher(departmentId) {
+async function jobTypesForMatching(departmentId) {
   const cached = jobMatcherCache.get(departmentId);
-  let jobTypes = cached && Date.now() - cached.at < JOB_MATCHER_TTL_MS ? cached.jobTypes : null;
-  if (!jobTypes) {
-    const { data, error } = await supabase
-      .from('job_types')
-      .select('job_type_id, location_id, activity_id, start_time, end_time, active')
-      .eq('department_id', departmentId);
-    if (error && !isMissingTableError(error)) throw error;
-    jobTypes = data || [];
-    jobMatcherCache.set(departmentId, { at: Date.now(), jobTypes });
-  }
+  if (cached && Date.now() - cached.at < JOB_MATCHER_TTL_MS) return cached.jobTypes;
+  const { data, error } = await supabase
+    .from('job_types')
+    .select('job_type_id, name, location_id, activity_id, start_time, end_time, active')
+    .eq('department_id', departmentId);
+  if (error && !isMissingTableError(error)) throw error;
+  const jobTypes = data || [];
+  jobMatcherCache.set(departmentId, { at: Date.now(), jobTypes });
+  return jobTypes;
+}
+
+async function jobTypeIdMatcher(departmentId) {
+  const jobTypes = await jobTypesForMatching(departmentId);
   return (row) => bestJobForNewCard(row, jobTypes)?.job_type_id || null;
 }
 
@@ -5221,12 +5224,32 @@ export async function importRosterWeek(departmentId, people, refLists, { dryRun 
 
   const dateStrs = rosterDateStrsFromPeople(people);
   let deletionSummary;
+  let jobTypes;
   try {
+    jobTypes = await jobTypesForMatching(departmentId);
     const { existingAssignmentCount, existingCardCount, existingDutyCount } = await replaceExistingRosterForDates(departmentId, dateStrs, dryRun, managedDutyKeys);
     deletionSummary = { dateStrs, existingAssignmentCount, existingCardCount, existingDutyCount, applied: !dryRun && dateStrs.length > 0 };
   } catch (err) {
     return { data: [], error: err, deletionSummary: null };
   }
+
+  // Each shift goes into its job (ED Day, ED Evening...) by its hours —
+  // exact, else the job it overlaps most, interns into the intern jobs
+  // (jobForImportedShift) — and
+  // everyone in the same job that day shares that job's one card, at the
+  // job's hours, each booked on their own shift. The file's dates were
+  // cleared above, so every card is made here. A shift with no job at its
+  // location and activity falls back to a card of its own, as before.
+  const jobCards = new Map(); // "dateStr|job_type_id" -> theatre_activity_id
+  const jobCardFor = async (dateStr, job) => {
+    const key = `${dateStr}|${job.job_type_id}`;
+    if (!jobCards.has(key)) {
+      const { data, error } = await createPlannerCard(departmentId, dateStr, job);
+      if (error) throw error;
+      jobCards.set(key, data.theatre_activity_id);
+    }
+    return jobCards.get(key);
+  };
 
   for (let personIndex = 0; personIndex < people.length; personIndex++) {
     const person = people[personIndex];
@@ -5300,8 +5323,14 @@ export async function importRosterWeek(departmentId, people, refLists, { dryRun 
           continue;
         }
 
+        // The sheet's Intern section, or an intern by rank (the ED format
+        // has no Intern section) — see jobForImportedShift.
+        const isIntern = person.section === 'intern' || /intern/i.test(staff.rank || '');
+        const job = jobForImportedShift({ location_id: location.location_id, activity_id: activity.activity_id, start_time: segment.start, end_time: segment.end }, jobTypes, isIntern);
+        const assigned = { ...entry, action: 'assign', location: location.name, activity: activity.name, start: segment.start, end: segment.end, job: job?.name || null };
+
         if (dryRun) {
-          results.push({ ...entry, ok: true, action: 'assign', location: location.name, activity: activity.name, start: segment.start, end: segment.end });
+          results.push({ ...assigned, ok: true });
           continue;
         }
 
@@ -5311,8 +5340,17 @@ export async function importRosterWeek(departmentId, people, refLists, { dryRun 
           continue;
         }
 
-        const { error: assignError } = await assignStaffFortnight(departmentId, date, staff.staff_id, shiftId, location.location_id, activity.activity_id);
-        results.push({ ...entry, ok: !assignError, action: 'assign', location: location.name, activity: activity.name, start: segment.start, end: segment.end, error: assignError?.message });
+        let cardId = null;
+        if (job) {
+          try {
+            cardId = await jobCardFor(toLocalDateStr(date), job);
+          } catch (err) {
+            results.push({ ...entry, ok: false, reason: `Failed to add the ${job.name} card: ${err.message}` });
+            continue;
+          }
+        }
+        const { error: assignError } = await assignStaffFortnight(departmentId, date, staff.staff_id, shiftId, location.location_id, activity.activity_id, false, cardId);
+        results.push({ ...assigned, ok: !assignError, error: assignError?.message });
       }
     }
 

@@ -809,7 +809,7 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
                       ? `Leave (${r.leaveCode})`
                       : r.action === 'on call'
                         ? `On call: ${r.dutyLabel}`
-                        : `${r.location} / ${r.activity} ${r.start}–${r.end}`}
+                        : `${r.job ? `${r.job}: ` : ''}${r.location} / ${r.activity} ${r.start}–${r.end}`}
                   </span>
                 ) : (
                   <span className="text-red-700"> — {r.reason || r.error}</span>

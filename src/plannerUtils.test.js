@@ -1,4 +1,4 @@
-import { jobForCard, placeMismatch, layOutCard, dayConflict, isAdminJob, daysWorked, intervalOn, intervalsOverlap, groupUnconverted, bestJobForNewCard } from './plannerUtils';
+import { jobForCard, placeMismatch, layOutCard, dayConflict, isAdminJob, daysWorked, intervalOn, intervalsOverlap, groupUnconverted, bestJobForNewCard, jobForImportedShift } from './plannerUtils';
 
 const ranks = [
   { rank: 'SMO', requires_supervision: false },
@@ -177,6 +177,37 @@ describe('bestJobForNewCard', () => {
     expect(bestJobForNewCard(card('07:00', '17:00'), jobs)).toBe(edDay); // ED early
     expect(bestJobForNewCard(card('20:00', '06:00'), jobs)).toBe(edNight);
     expect(bestJobForNewCard(card('04:00', '09:00'), jobs)).toBe(edNight); // tail of last night's job
+  });
+
+  it('sends every ED time on the Innisfail sheet to its own job', () => {
+    const job = (id, start, end) => ({ job_type_id: id, location_id: 'ed', activity_id: 'edcover', start_time: `${start}:00`, end_time: `${end}:00` });
+    const day = job('day', '08:00', '18:00');
+    const edl = job('edl', '10:30', '21:00');
+    const evening = job('evening', '13:00', '23:00');
+    const night = job('night', '22:30', '08:30');
+    const edJobs = [edl, evening, night, day]; // order mustn't matter
+    expect(bestJobForNewCard(card('08:00', '18:00'), edJobs)).toBe(day); // "ED", "Day 0800 -1800 ED"
+    expect(bestJobForNewCard(card('10:30', '21:00'), edJobs)).toBe(edl); // "EDL + OC", "Afternoon 1030-2100"
+    expect(bestJobForNewCard(card('10:30', '20:30'), edJobs)).toBe(edl); // intern "ED 1030-2030"
+    expect(bestJobForNewCard(card('13:00', '23:00'), edJobs)).toBe(evening); // "Evening 1300-2300"
+    expect(bestJobForNewCard(card('22:30', '08:30'), edJobs)).toBe(night); // "Night 2230 - 0830"
+    expect(bestJobForNewCard(card('12:30', '18:00'), edJobs)).toBe(day); // PM half of "Ward 2/ED" — ties EDL on overlap
+    expect(bestJobForNewCard(card('09:00', '12:00'), edJobs)).toBe(day); // AM half of "ED/ObsC"
+  });
+
+  it('puts interns in the intern jobs and keeps everyone else out of them', () => {
+    const job = (id, name, start, end) => ({ job_type_id: id, name, location_id: 'ed', activity_id: 'edcover', start_time: `${start}:00`, end_time: `${end}:00` });
+    const internDay = job('iday', 'ED Intern Day', '08:00', '18:00');
+    const internLate = job('ilate', 'ED Intern Late', '10:30', '20:30');
+    const day = job('day', 'ED Day', '08:00', '18:00');
+    const edl = job('edl', 'EDL', '10:30', '21:00');
+    const night = job('night', 'ED Night', '22:30', '08:30');
+    const edJobs = [internDay, internLate, day, edl, night];
+    expect(jobForImportedShift(card('08:00', '18:00'), edJobs, true)).toBe(internDay);
+    expect(jobForImportedShift(card('10:30', '20:30'), edJobs, true)).toBe(internLate);
+    expect(jobForImportedShift(card('22:30', '08:30'), edJobs, true)).toBe(night); // no intern job — the usual one
+    expect(jobForImportedShift(card('08:00', '18:00'), edJobs, false)).toBe(day);
+    expect(jobForImportedShift(card('10:30', '20:30'), edJobs, false)).toBe(edl);
   });
 
   it('never crosses to another location or activity, and ignores no-overlap', () => {
