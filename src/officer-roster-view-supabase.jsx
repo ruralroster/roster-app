@@ -20,6 +20,7 @@ import PlannerTab from './PlannerTab';
 import { toLocalDateStr } from './dateUtils';
 import { jobCategoryFor, jobCardStyle, jobBoxStyle, holdsOnCallDuty, shortOnCallLabel } from './jobColours';
 import { edLateOnCallFor } from './edLateOnCall';
+import { missingRolesForCard, VOLUNTEER_ROLES } from './volunteerUtils';
 import { ChevronLeft, ChevronRight, X, AlertCircle, Loader, Hand, Settings } from 'lucide-react';
 import { createTheatreActivity,
   initializeDepartment,
@@ -68,6 +69,8 @@ import { createTheatreActivity,
   createVolunteerOffer,
   getVolunteerOffersForActivities,
   clearVolunteerOfferForRole,
+  removeVolunteerOffer,
+  getVolunteeringOverview,
   createLeaveType,
   updateLeaveType,
   deleteLeaveType,
@@ -115,7 +118,11 @@ const ALLOCATION_STATUS_STYLES = {
   green: { classes: 'bg-green-500 border-green-600 text-white hover:bg-green-600', swatch: 'bg-green-500 border-green-600', label: 'Fully covered' },
   orange: { classes: 'bg-orange-400 border-orange-500 text-white hover:bg-orange-500', swatch: 'bg-orange-400 border-orange-500', label: 'On-call short' },
   red: { classes: 'bg-red-500 border-red-600 text-white hover:bg-red-600', swatch: 'bg-red-500 border-red-600', label: 'Coverage gap' },
+  offered: { classes: 'bg-sky-500 border-sky-600 text-white hover:bg-sky-600', swatch: 'bg-sky-500 border-sky-600', label: 'Offered for volunteering' },
+  volunteer: { classes: 'bg-purple-600 border-purple-700 text-white hover:bg-purple-700', swatch: 'bg-purple-600 border-purple-700', label: 'Volunteer waiting' },
 };
+
+const VOLUNTEER_ROLE_LABEL = { consultant: 'Consultant', registrar: 'Registrar' };
 
 // eslint-disable-next-line no-unused-vars -- staffId (the signed-in officer's own staff_id, now known via App.js) is threaded through for upcoming self-service/audit features; not consumed internally yet.
 export default function OfficerRosterView({ departmentId: departmentIdProp, staffId, topBarActionsRef, isSuperAdmin = false } = {}) {
@@ -234,6 +241,10 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   const [sortedStaffByActivity, setSortedStaffByActivity] = useState({});
   const [volunteerRequests, setVolunteerRequests] = useState([]); // pending volunteer_requests for the visible theatreActivities
   const [volunteerOffers, setVolunteerOffers] = useState([]); // volunteer_offers already opened for the visible theatreActivities
+  // Department-wide, from today on — the Calendar tab's Volunteering panel
+  // and the volunteer count on the Calendar nav button. See
+  // getVolunteeringOverview.
+  const [volunteeringOverview, setVolunteeringOverview] = useState({ offers: [], unoffered: [] });
   const [loadingDate, setLoadingDate] = useState(false);
   const [showAddActivity, setShowAddActivity] = useState(false);
   const [newActivityLocation, setNewActivityLocation] = useState('');
@@ -539,6 +550,26 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [theatreActivities]);
 
+  const refreshVolunteeringOverview = async () => {
+    if (!departmentId) return;
+    try {
+      const { data, error } = await getVolunteeringOverview(departmentId);
+      if (error) throw error;
+      setVolunteeringOverview(data);
+    } catch (err) {
+      console.error('Failed to load volunteering overview:', err);
+    }
+  };
+
+  // Reloaded on every tab change, so a volunteer who's come in since shows
+  // up as soon as an officer moves around the app, not just on first load.
+  useEffect(() => {
+    refreshVolunteeringOverview();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [departmentId, activeTab]);
+
+  const waitingVolunteerCount = volunteeringOverview.offers.reduce((sum, o) => sum + o.volunteers.length, 0);
+
   // Pending "Notify Sick" reports — the Day view's approval banner.
   // Department-wide, not scoped to selectedDate, so an officer catches up
   // on any still-undecided report whenever they're on the Day tab.
@@ -661,11 +692,32 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     try {
       const { error } = await createVolunteerOffer(departmentId, theatreActivityId, role);
       if (error) throw error;
-      await refreshVolunteerOffers();
+      await Promise.all([refreshVolunteerOffers(), refreshVolunteeringOverview()]);
+      setCalendarRefreshKey(k => k + 1);
       setError(null);
     } catch (err) {
       setError(`Failed to offer this shift for volunteering: ${err.message}`);
     }
+  };
+
+  const handleRemoveVolunteerOffer = async (theatreActivityId, role, volunteerCount) => {
+    if (volunteerCount > 0 && !window.confirm(`${volunteerCount} ${volunteerCount === 1 ? 'person has' : 'people have'} volunteered for this. Take it off the volunteering list and drop ${volunteerCount === 1 ? 'their request' : 'their requests'}?`)) {
+      return;
+    }
+    try {
+      const { error } = await removeVolunteerOffer(theatreActivityId, role);
+      if (error) throw error;
+      await Promise.all([refreshVolunteerOffers(), refreshVolunteerRequests(), refreshVolunteeringOverview()]);
+      setCalendarRefreshKey(k => k + 1);
+      setError(null);
+    } catch (err) {
+      setError(`Failed to take this shift off the volunteering list: ${err.message}`);
+    }
+  };
+
+  const openDay = (dateStr) => {
+    setSelectedDate(new Date(`${dateStr}T00:00:00`));
+    setActiveTab('day');
   };
 
   // Activity restrictions are a staff preference, not a hard rule — an
@@ -2357,8 +2409,21 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
         await clearVolunteerRequestsForRole(ta.theatre_activity_id, role);
         await clearVolunteerOfferForRole(ta.theatre_activity_id, role);
       }
+      // An empty ordinary card may have been offered as both roles; once
+      // either fills it, the other offer isn't needed any more.
+      const stillMissing = missingRolesForCard({
+        requiresBoth: refData.locations.find(l => l.location_id === ta.location_id)?.requires_both_senior_and_junior === true,
+        requiredGrade: ta.required_grade,
+        filledRoles,
+      });
+      for (const role of VOLUNTEER_ROLES) {
+        if (filledRoles.has(role) || stillMissing.includes(role)) continue;
+        if (!isRoleOfferedForVolunteering(ta.theatre_activity_id, role)) continue;
+        await removeVolunteerOffer(ta.theatre_activity_id, role);
+      }
       await refreshVolunteerRequests();
       await refreshVolunteerOffers();
+      await refreshVolunteeringOverview();
       setError(null);
     } catch (err) {
       setError(`Failed to complete allocation: ${err.message}`);
@@ -2473,6 +2538,129 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   // RENDER CONTENT
   // ============================================================
 
+  // Calendar tab's Volunteering panel — the officer's flag that someone's
+  // volunteered, and the one place to see (and add to or take off) every
+  // shift offered for volunteering. Accepting a volunteer still happens on
+  // the day's card, so their row links straight there.
+  const renderVolunteeringPanel = () => {
+    const { offers, unoffered } = volunteeringOverview;
+    const withVolunteers = offers.filter(o => o.volunteers.length > 0);
+    const waitingOnly = offers.filter(o => o.volunteers.length === 0);
+    if (offers.length === 0 && unoffered.length === 0) return null;
+
+    const roleLabelFor = (row, role) => (
+      row.required_grade && roleForGrade(row.required_grade) === role ? GRADE_LABEL[row.required_grade] : VOLUNTEER_ROLE_LABEL[role]
+    );
+    const rowSummary = (row) => (
+      <div className="min-w-0">
+        <p className="text-sm font-semibold text-gray-900">
+          {new Date(`${row.date}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })}
+          {' · '}{row.location}
+          {row.activity && <span className="font-normal text-gray-600"> — {row.activity}</span>}
+        </p>
+        {row.shift && (
+          <p className="text-xs text-gray-500">{row.shift} ({row.shift_start?.slice(0, 5)}–{row.shift_end?.slice(0, 5)})</p>
+        )}
+      </div>
+    );
+    const offerRow = (row) => (
+      <div key={`${row.theatre_activity_id}-${row.role}`} className="flex items-start justify-between gap-3 py-2">
+        <div className="min-w-0">
+          {rowSummary(row)}
+          <p className="text-xs text-gray-600 mt-0.5">
+            {roleLabelFor(row, row.role)} needed
+            {row.volunteers.length > 0 && (
+              <span className="text-purple-700 font-semibold">
+                {' · '}<Hand size={11} className="inline -mt-0.5" /> {row.volunteers.map(v => v.name).join(', ')}
+              </span>
+            )}
+          </p>
+        </div>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <button
+            onClick={() => openDay(row.date)}
+            className={`text-xs px-2 py-1 font-medium rounded transition ${
+              row.volunteers.length > 0 ? 'bg-purple-600 hover:bg-purple-700 text-white' : 'bg-gray-100 hover:bg-gray-200 text-gray-800'
+            }`}
+          >
+            {row.volunteers.length > 0 ? 'Review' : 'Open day'}
+          </button>
+          <button
+            onClick={() => handleRemoveVolunteerOffer(row.theatre_activity_id, row.role, row.volunteers.length)}
+            className="text-xs px-2 py-1 text-gray-500 hover:text-red-600 font-medium"
+          >
+            Remove
+          </button>
+        </div>
+      </div>
+    );
+
+    return (
+      <div className={`bg-white rounded-lg shadow-sm p-4 mb-4 border-l-4 ${withVolunteers.length > 0 ? 'border-purple-600' : 'border-sky-500'}`}>
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-base font-bold text-gray-900 flex items-center gap-2">
+            <Hand size={18} className={withVolunteers.length > 0 ? 'text-purple-600' : 'text-sky-600'} />
+            Volunteering
+          </h2>
+          <p className="text-xs text-gray-500 text-right">
+            {offers.length} offered · {unoffered.length} not offered (next 30 days)
+          </p>
+        </div>
+
+        {withVolunteers.length > 0 && (
+          <div className="mt-3 p-3 bg-purple-50 border border-purple-200 rounded-lg">
+            <p className="text-sm font-semibold text-purple-900 mb-1">
+              {waitingVolunteerCount} volunteer{waitingVolunteerCount === 1 ? '' : 's'} waiting — open the day and pick them on the card, then Complete Allocation.
+            </p>
+            <div className="divide-y divide-purple-100">{withVolunteers.map(offerRow)}</div>
+          </div>
+        )}
+
+        {waitingOnly.length > 0 && (
+          <details className="mt-3">
+            <summary className="text-sm font-semibold text-gray-700 cursor-pointer select-none">
+              Offered, nobody yet ({waitingOnly.length})
+            </summary>
+            <div className="divide-y divide-gray-100 mt-1">{waitingOnly.map(offerRow)}</div>
+          </details>
+        )}
+
+        {unoffered.length > 0 && (
+          <details className="mt-3">
+            <summary className="text-sm font-semibold text-gray-700 cursor-pointer select-none">
+              Unfilled, not offered yet ({unoffered.length})
+            </summary>
+            <div className="divide-y divide-gray-100 mt-1">
+              {unoffered.map(row => (
+                <div key={row.theatre_activity_id} className="flex items-start justify-between gap-3 py-2">
+                  {rowSummary(row)}
+                  <div className="flex items-center gap-2 flex-wrap justify-end flex-shrink-0">
+                    {row.roles.map(role => (
+                      <button
+                        key={role}
+                        onClick={() => handleOfferForVolunteering(row.theatre_activity_id, role)}
+                        title={role === 'consultant' ? 'Senior staff only' : 'Open to anyone at or above this level'}
+                        className="text-xs px-2 py-1 bg-sky-100 hover:bg-sky-200 text-sky-900 font-medium rounded transition"
+                      >
+                        Offer {roleLabelFor(row, role)}
+                      </button>
+                    ))}
+                    <button
+                      onClick={() => openDay(row.date)}
+                      className="text-xs px-2 py-1 bg-gray-100 hover:bg-gray-200 text-gray-800 font-medium rounded transition"
+                    >
+                      Open day
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </details>
+        )}
+      </div>
+    );
+  };
+
   const renderContent = () => {
     if (activeTab === 'planner') {
       return (
@@ -2502,6 +2690,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
       return (
         <div className="p-4">
           <div className="max-w-2xl mx-auto">
+            {renderVolunteeringPanel()}
             <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
               <div className="flex items-center justify-between mb-6">
                 <button
@@ -2574,8 +2763,9 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                         const isToday = isSameDate(date, today);
                         const isFirstOfMonth = date.getDate() === 1;
                         const dateStr = toLocalDateStr(date);
-                        const dayStatus = calendarAllocationStatus[dateStr] || { status: 'none', missingOnCallAbbrevs: [] };
+                        const dayStatus = calendarAllocationStatus[dateStr] || { status: 'none', missingOnCallAbbrevs: [], volunteerCount: 0 };
                         const statusStyle = ALLOCATION_STATUS_STYLES[dayStatus.status];
+                        const volunteerCount = dayStatus.volunteerCount || 0;
                         return (
                           <button
                             key={idx}
@@ -2583,8 +2773,12 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                               setSelectedDate(date);
                               setActiveTab('day');
                             }}
-                            title={[statusStyle.label, dayStatus.missingOnCallAbbrevs.length > 0 ? `On call short: ${dayStatus.missingOnCallAbbrevs.join(', ')}` : null].filter(Boolean).join(' — ')}
-                            className={`aspect-square p-2 rounded-lg font-semibold text-sm transition flex flex-col items-center justify-center gap-0.5 border-2 cursor-pointer ${statusStyle.classes} ${
+                            title={[
+                              statusStyle.label,
+                              dayStatus.missingOnCallAbbrevs.length > 0 ? `On call short: ${dayStatus.missingOnCallAbbrevs.join(', ')}` : null,
+                              volunteerCount > 0 ? `${volunteerCount} volunteer${volunteerCount === 1 ? '' : 's'} waiting` : null,
+                            ].filter(Boolean).join(' — ')}
+                            className={`relative aspect-square p-2 rounded-lg font-semibold text-sm transition flex flex-col items-center justify-center gap-0.5 border-2 cursor-pointer ${statusStyle.classes} ${
                               isToday ? 'ring-2 ring-blue-600 ring-offset-1' : ''
                             }`}
                           >
@@ -2597,6 +2791,11 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                             {dayStatus.missingOnCallAbbrevs.length > 0 && (
                               <span className="text-[9px] font-bold leading-none opacity-90">
                                 {dayStatus.missingOnCallAbbrevs.join('/')}
+                              </span>
+                            )}
+                            {volunteerCount > 0 && (
+                              <span className="absolute -top-1.5 -right-1.5 flex items-center gap-0.5 px-1 py-0.5 bg-white text-purple-700 border border-purple-300 rounded-full text-[9px] font-bold leading-none shadow-sm">
+                                <Hand size={9} />{volunteerCount}
                               </span>
                             )}
                           </button>
@@ -2614,6 +2813,12 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                     <span className="text-xs text-gray-600">{style.label}</span>
                   </div>
                 ))}
+                <div className="flex items-center gap-1.5">
+                  <span className="flex items-center gap-0.5 px-1 py-0.5 bg-white text-purple-700 border border-purple-300 rounded-full text-[9px] font-bold leading-none">
+                    <Hand size={9} />2
+                  </span>
+                  <span className="text-xs text-gray-600">Volunteers waiting that day</span>
+                </div>
               </div>
 
               <div className="flex items-center gap-2 mt-6 pt-4 border-t border-gray-200">
@@ -3689,30 +3894,42 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
 
                 const hasNobodyAssigned = entries.length === 0;
 
-                // Missing-role indicator — only for a location an officer
-                // has flagged "requires both a senior and a junior" (see
-                // Settings → Locations). hasNobodyAssigned already gets its
-                // own red treatment below regardless of this flag; this is
-                // for the narrower case where the card is only PARTIALLY
-                // staffed (e.g. a consultant's there but no registrar).
+                // Which roles can be offered for volunteering — see
+                // missingRolesForCard: any role missing at a location
+                // flagged "requires both a senior and a junior" (Settings →
+                // Locations), a graded card's role (an unnamed Excel row
+                // imported as unfilled — see migrations/2026-10-13_
+                // theatre_activity_required_grade.sql; who sees the offer
+                // is then limited by the grade in
+                // getAvailableShiftsForStaff), or either role on a card
+                // with nobody on it at all.
                 const locationRequiresBoth = refData.locations.find(l => l.location_id === ta.location_id)?.requires_both_senior_and_junior === true;
-                // A graded card (an unnamed Excel row imported as unfilled
-                // — see migrations/2026-10-13_theatre_activity_required_
-                // grade.sql) needs its grade's role filled too, so it gets
-                // the same offer-for-volunteering button. Who can see the
-                // offer is then limited by the grade in
-                // getAvailableShiftsForStaff.
                 const gradeRole = ta.required_grade ? roleForGrade(ta.required_grade) : null;
                 const gradeLabel = ta.required_grade ? GRADE_LABEL[ta.required_grade] : null;
-                const missingConsultant = (locationRequiresBoth || gradeRole === 'consultant') && consultantEntries.length === 0;
-                const missingRegistrar = (locationRequiresBoth || gradeRole === 'registrar') && registrarEntries.length === 0;
+                const missingRoles = missingRolesForCard({
+                  requiresBoth: locationRequiresBoth,
+                  requiredGrade: ta.required_grade,
+                  filledRoles: new Set(entries.map(e => e.role)),
+                });
+                const missingConsultant = missingRoles.includes('consultant');
+                const missingRegistrar = missingRoles.includes('registrar');
                 const offerButtonText = (role) => {
-                  if (gradeRole !== role) return `This location needs a ${role} — offer this shift for volunteering`;
-                  if (ta.required_grade === 'smo') return 'Unfilled SMO shift — offer for volunteering (SMOs only)';
-                  if (ta.required_grade === 'registrar') return 'Unfilled Registrar shift — offer for volunteering (registrars and SMOs, not interns)';
-                  return 'Unfilled Intern shift — offer for volunteering';
+                  if (gradeRole === role) {
+                    if (ta.required_grade === 'smo') return 'Unfilled SMO shift — offer for volunteering (SMOs only)';
+                    if (ta.required_grade === 'registrar') return 'Unfilled Registrar shift — offer for volunteering (registrars and SMOs, not interns)';
+                    return 'Unfilled Intern shift — offer for volunteering';
+                  }
+                  if (locationRequiresBoth) return `This location needs a ${role} — offer this shift for volunteering`;
+                  return role === 'consultant'
+                    ? 'Nobody on this shift — offer it to senior staff for volunteering'
+                    : 'Nobody on this shift — offer it to anyone for volunteering';
                 };
-                const hasMissingRequiredRole = missingConsultant || missingRegistrar;
+                // Amber is for a PARTIALLY staffed card; an empty one gets
+                // its own red treatment below.
+                const hasMissingRequiredRole = !hasNobodyAssigned && missingRoles.length > 0;
+                // Matches the Calendar: an empty card that's been offered
+                // turns from red to sky blue.
+                const isOfferedForVolunteering = missingRoles.some(role => isRoleOfferedForVolunteering(ta.theatre_activity_id, role));
 
                 // Job-type colours matching the Excel roster — see
                 // jobColours.js. The unstaffed/missing-role warnings above
@@ -3732,7 +3949,9 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                   key={`${ta.theatre_activity_id}-${groupKey}`}
                   style={hasNobodyAssigned || hasMissingRequiredRole ? undefined : jobCardStyle(jobCategory)}
                   className={`rounded-lg shadow-sm p-6 border-l-4 ${
-                    hasNobodyAssigned ? 'bg-red-50 border-red-300' : hasMissingRequiredRole ? 'bg-amber-50 border-amber-400' : ''
+                    hasNobodyAssigned
+                      ? (isOfferedForVolunteering ? 'bg-sky-50 border-sky-400' : 'bg-red-50 border-red-300')
+                      : hasMissingRequiredRole ? 'bg-amber-50 border-amber-400' : ''
                   }`}
                 >
                   <div className="flex items-start justify-between gap-3 mb-4">
@@ -3803,9 +4022,17 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                     )}
                     {missingConsultant && (
                       isRoleOfferedForVolunteering(ta.theatre_activity_id, 'consultant') ? (
-                        <p className="text-xs text-amber-700 font-medium mb-2 flex items-center gap-1">
-                          <Hand size={13} /> Offered for volunteering — waiting for someone to pick it up.
-                        </p>
+                        <div className="flex items-center justify-between gap-2 mb-2">
+                          <p className="text-xs text-sky-700 font-medium flex items-center gap-1">
+                            <Hand size={13} /> Offered for volunteering — waiting for someone to pick it up.
+                          </p>
+                          <button
+                            onClick={() => handleRemoveVolunteerOffer(ta.theatre_activity_id, 'consultant', getVolunteersForActivity(ta.theatre_activity_id, 'consultant').length)}
+                            className="text-xs text-gray-500 hover:text-red-600 font-medium flex-shrink-0"
+                          >
+                            Remove offer
+                          </button>
+                        </div>
                       ) : (
                         <button
                           onClick={() => handleOfferForVolunteering(ta.theatre_activity_id, 'consultant')}
@@ -3933,9 +4160,17 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                     )}
                     {missingRegistrar && (
                       isRoleOfferedForVolunteering(ta.theatre_activity_id, 'registrar') ? (
-                        <p className="text-xs text-amber-700 font-medium mb-2 flex items-center gap-1">
-                          <Hand size={13} /> Offered for volunteering — waiting for someone to pick it up.
-                        </p>
+                        <div className="flex items-center justify-between gap-2 mb-2">
+                          <p className="text-xs text-sky-700 font-medium flex items-center gap-1">
+                            <Hand size={13} /> Offered for volunteering — waiting for someone to pick it up.
+                          </p>
+                          <button
+                            onClick={() => handleRemoveVolunteerOffer(ta.theatre_activity_id, 'registrar', getVolunteersForActivity(ta.theatre_activity_id, 'registrar').length)}
+                            className="text-xs text-gray-500 hover:text-red-600 font-medium flex-shrink-0"
+                          >
+                            Remove offer
+                          </button>
+                        </div>
                       ) : (
                         <button
                           onClick={() => handleOfferForVolunteering(ta.theatre_activity_id, 'registrar')}
@@ -5986,7 +6221,17 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
               activeTab === 'calendar' ? 'text-blue-600 border-t-2 border-blue-600' : 'text-gray-600 hover:text-gray-900'
             }`}
           >
-            <div className="text-sm font-semibold">Calendar</div>
+            <div className="text-sm font-semibold inline-flex items-center gap-1">
+              Calendar
+              {waitingVolunteerCount > 0 && (
+                <span
+                  title={`${waitingVolunteerCount} volunteer${waitingVolunteerCount === 1 ? '' : 's'} waiting for approval`}
+                  className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-purple-600 text-white rounded-full text-[10px] font-bold leading-none"
+                >
+                  <Hand size={10} />{waitingVolunteerCount}
+                </span>
+              )}
+            </div>
           </button>
           <button
             onClick={() => setActiveTab('fortnight')}

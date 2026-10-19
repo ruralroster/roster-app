@@ -251,6 +251,8 @@
   .dot.green { background: #2f9e58; }
   .dot.orange { background: #d97f1c; }
   .dot.red { background: #d33a3a; }
+  .dot.sky { background: #0ea5e9; }
+  .dot.purple { background: #9333ea; }
   .dot.none { background: var(--line); border: 1px solid var(--muted); }
 
   .skill-chip {
@@ -352,9 +354,12 @@
         <div class="status-row">
           <span class="status-chip"><span class="dot green"></span>Green — fully covered</span>
           <span class="status-chip"><span class="dot orange"></span>Orange — on-call short</span>
-          <span class="status-chip"><span class="dot red"></span>Red — a required activity has nobody on it</span>
+          <span class="status-chip"><span class="dot red"></span>Red — a required activity has nobody on it and hasn't been offered</span>
+          <span class="status-chip"><span class="dot sky"></span>Blue — offered for volunteering, nobody's picked it up yet</span>
+          <span class="status-chip"><span class="dot purple"></span>Purple — someone's volunteered and is waiting for you</span>
           <span class="status-chip"><span class="dot none"></span>Grey — nothing required that day</span>
         </div>
+        <p>Red wins over the others: if one gap that day hasn't been offered, the day stays red until you offer or fill it. A <span aria-hidden="true">🤚</span> number in the corner of a day counts the volunteers waiting there, whatever its colour. See <a href="#officer-day-volunteers">Offering a shift</a> for the full red → blue → purple → green flow.</p>
         <p>A day can carry small letters on it (e.g. <strong>A/O</strong>) — that's the abbreviation of whichever on-call slot(s) are unfilled (Anaesthetics, Obstetrics, and so on). It shows whenever on-call is short, even on a red day, so you always know at a glance which on-call slot needs chasing regardless of what else is going on that day.</p>
         <p>Tap any day to jump straight into <strong>Day view</strong> for it.</p>
       </article>
@@ -405,10 +410,24 @@
         <h3>Offering a shift for volunteering</h3>
         <p>Staff only ever see a shift in their Variation tab if <em>you've</em> offered it. An empty slot isn't offered on its own, so you decide what goes out.</p>
         <ol>
-          <li>Under <strong>Settings → Locations &amp; Activities → Locations</strong>, tick <strong>Requires both a senior and a junior doctor</strong> on any location that should always have a consultant <em>and</em> a registrar. It's off by default.</li>
-          <li>In Day view, a card at that location with only one of the two filled gets an <strong>amber</strong> border. A card with nobody on it stays red as before.</li>
-          <li>Under the empty slot, tap <strong>This location needs a consultant/registrar — offer this shift for volunteering</strong>. It changes to <em>"Offered for volunteering — waiting for someone to pick it up."</em></li>
+          <li>On the <strong>Calendar</strong>, tap a <strong>red</strong> day to open it.</li>
+          <li>Find the empty card (red). Under its Consultant or Registrar section, tap <strong>Nobody on this shift — offer it to senior staff / to anyone for volunteering</strong>. The card and the Calendar day turn <strong>blue</strong>, and the button changes to <em>"Offered for volunteering — waiting for someone to pick it up."</em></li>
+          <li>When someone volunteers, the day turns <strong>purple</strong> and the Calendar button at the bottom shows a <span aria-hidden="true">🤚</span> count.</li>
+          <li>Open the day, pick the volunteer in the dropdown (they're listed first) and tap <strong>Complete Allocation</strong>. The offer and any other requests for that shift are cleared, and the day goes <strong>green</strong> once nothing else is missing.</li>
         </ol>
+        <p>To take a shift back off the list, tap <strong>Remove offer</strong> beside it. Anyone who'd already volunteered for it has their request dropped (you're asked first).</p>
+        <p>Cards that only need <em>part</em> of their staff can be offered too:</p>
+        <ul>
+          <li>A location ticked <strong>Requires both a senior and a junior doctor</strong> (Settings → Locations &amp; Activities → Locations) gets an <strong>amber</strong> border when only one of the two is filled, with a button to offer the missing slot.</li>
+          <li>An unfilled shift imported from Excel shows <strong>Needs SMO/Registrar/Intern</strong> and offers that grade's slot.</li>
+        </ul>
+        <h4>The Volunteering panel</h4>
+        <p>At the top of the Calendar tab, whenever anything's offered or unfilled:</p>
+        <ul>
+          <li><strong>Volunteers waiting</strong> lists every shift with someone waiting, with their names. <strong>Review</strong> opens that day.</li>
+          <li><strong>Offered, nobody yet</strong> lists every open offer from today on, each with <strong>Remove</strong>.</li>
+          <li><strong>Unfilled, not offered yet</strong> lists empty slots over the next 30 days, with an <strong>Offer</strong> button for each, so you can put several out without opening each day.</li>
+        </ul>
         <p>Who can see an offer:</p>
         <ul>
           <li>A <strong>registrar</strong> slot is open to every rank, so a consultant can cover it too.</li>

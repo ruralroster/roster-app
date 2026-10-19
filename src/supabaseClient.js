@@ -7,6 +7,7 @@ import { matchStaffName, suggestStaffMatches, staffLabelKey, onCallKindsForDay, 
 import { gradeForSection, gradeForRank, gradeCanCover, GRADE_LABEL } from './staffGrade';
 import { findActiveOnCalls, findOvertimeShifts } from './callbackUtils';
 import { bestJobForNewCard, jobForImportedShift } from './plannerUtils';
+import { missingRolesForCard, classifyDayStatus } from './volunteerUtils';
 
 console.log('=== supabaseClient.js LOADING ===');
 console.log('Checking environment variables...');
@@ -2890,12 +2891,14 @@ const CALENDAR_IGNORED_DUTY_ABBREVS = ['AD'];
 //     (a location/activity nobody's created a card for at all just isn't
 //     part of the requirement).
 //
-// The two combine into a single status per date:
-//   'none'   - nothing required at all (no template, no cards, no active
-//              duty types) — there's nothing to be green or red about
-//   'red'    - a required activity has nobody assigned
-//   'orange' - every required activity is covered, but on-call is short
-//   'green'  - everything required is covered
+// plus volunteering: a gap whose card has been offered for volunteering
+// (volunteer_offers) is no longer red, and a pending volunteer on an open
+// offer needs an officer to accept them. See classifyDayStatus in
+// volunteerUtils.js for the colours and their priority.
+//
+// A required activity with no card at all can't be offered, so it stays red.
+// volunteerCount is shown on the Calendar cell whatever the colour, so a
+// volunteer waiting on a red day isn't missed.
 //
 // missingOnCallAbbrevs is populated whenever on-call is short, even on a
 // red day — the abbreviation is about on-call specifically, independent of
@@ -2909,7 +2912,7 @@ export async function getAllocationStatusForRange(departmentId, startDate, endDa
     const startWeekStr = toLocalDateStr(getMondayOfWeek(startDate));
     const endWeekStr = toLocalDateStr(getMondayOfWeek(endDate));
 
-    const [theatreRes, assignRes, dutyTypesRes, dutyAssignRes, applicationsRes] = await Promise.all([
+    const [theatreRes, assignRes, dutyTypesRes, dutyAssignRes, applicationsRes, offersRes, requestsRes] = await Promise.all([
       supabase
         .from('theatre_activities')
         .select('theatre_activity_id, date, location_id, activity_id')
@@ -2918,7 +2921,7 @@ export async function getAllocationStatusForRange(departmentId, startDate, endDa
         .lte('date', endStr),
       supabase
         .from('staff_assignments')
-        .select('date, theatre_activity_id')
+        .select('date, theatre_activity_id, role')
         .eq('department_id', departmentId)
         .gte('date', startStr)
         .lte('date', endStr),
@@ -2939,6 +2942,14 @@ export async function getAllocationStatusForRange(departmentId, startDate, endDa
         .eq('department_id', departmentId)
         .gte('week_start_date', startWeekStr)
         .lte('week_start_date', endWeekStr),
+      supabase
+        .from('volunteer_offers')
+        .select('theatre_activity_id, role')
+        .eq('department_id', departmentId),
+      supabase
+        .from('volunteer_requests')
+        .select('theatre_activity_id, role')
+        .eq('department_id', departmentId),
     ]);
 
     if (theatreRes.error) throw theatreRes.error;
@@ -2946,6 +2957,8 @@ export async function getAllocationStatusForRange(departmentId, startDate, endDa
     if (dutyTypesRes.error) throw dutyTypesRes.error;
     if (dutyAssignRes.error) throw dutyAssignRes.error;
     if (applicationsRes.error) throw applicationsRes.error;
+    if (offersRes.error) throw offersRes.error;
+    if (requestsRes.error) throw requestsRes.error;
 
     const applicationByWeek = new Map(); // week_start_date -> week_template_id
     (applicationsRes.data || []).forEach(a => applicationByWeek.set(a.week_start_date, a.week_template_id));
@@ -2971,8 +2984,25 @@ export async function getAllocationStatusForRange(departmentId, startDate, endDa
     });
 
     const filledCardIds = new Set();
+    const filledRoleKeys = new Set(); // `${theatre_activity_id}|${role}`
     (assignRes.data || []).forEach(a => {
-      if (a.theatre_activity_id) filledCardIds.add(a.theatre_activity_id);
+      if (!a.theatre_activity_id) return;
+      filledCardIds.add(a.theatre_activity_id);
+      filledRoleKeys.add(`${a.theatre_activity_id}|${a.role}`);
+    });
+
+    // Only offers whose role is still empty count — an offer filled some
+    // other way (e.g. the Fortnight tab) is stale until it's cleared.
+    const openOfferKeys = new Set(
+      (offersRes.data || [])
+        .map(o => `${o.theatre_activity_id}|${o.role}`)
+        .filter(key => !filledRoleKeys.has(key))
+    );
+    const offeredCardIds = new Set([...openOfferKeys].map(key => key.split('|')[0]));
+    const volunteerCountByCard = new Map(); // theatre_activity_id -> pending volunteers on its open offers
+    (requestsRes.data || []).forEach(r => {
+      if (!openOfferKeys.has(`${r.theatre_activity_id}|${r.role}`)) return;
+      volunteerCountByCard.set(r.theatre_activity_id, (volunteerCountByCard.get(r.theatre_activity_id) || 0) + 1);
     });
 
     const dutyTypes = (dutyTypesRes.data || [])
@@ -2995,22 +3025,27 @@ export async function getAllocationStatusForRange(departmentId, startDate, endDa
 
       const appliedTemplateId = applicationByWeek.get(weekStart);
       let requiredCount = 0;
-      let unfilledCount = 0;
+      let unofferedGapCount = 0;
 
       if (appliedTemplateId) {
         const entries = (entriesByTemplate.get(appliedTemplateId) || []).filter(e => e.day_of_week === dayOfWeek);
         entries.forEach(entry => {
           requiredCount += 1;
           const matchingCard = (cardsByDate.get(date) || []).find(ta => ta.location_id === entry.location_id && ta.activity_id === entry.activity_id);
-          if (!matchingCard || !filledCardIds.has(matchingCard.theatre_activity_id)) unfilledCount += 1;
+          if (!matchingCard) unofferedGapCount += 1;
+          else if (!filledCardIds.has(matchingCard.theatre_activity_id) && !offeredCardIds.has(matchingCard.theatre_activity_id)) unofferedGapCount += 1;
         });
       } else {
         const cards = cardsByDate.get(date) || [];
         cards.forEach(ta => {
           requiredCount += 1;
-          if (!filledCardIds.has(ta.theatre_activity_id)) unfilledCount += 1;
+          if (!filledCardIds.has(ta.theatre_activity_id) && !offeredCardIds.has(ta.theatre_activity_id)) unofferedGapCount += 1;
         });
       }
+
+      const dayCards = cardsByDate.get(date) || [];
+      const openOfferCount = dayCards.filter(ta => offeredCardIds.has(ta.theatre_activity_id)).length;
+      const volunteerCount = dayCards.reduce((sum, ta) => sum + (volunteerCountByCard.get(ta.theatre_activity_id) || 0), 0);
 
       // "Nothing at all" means genuinely nothing has been touched for
       // THIS date — no cards and nobody rostered on call — not that the
@@ -3020,17 +3055,20 @@ export async function getAllocationStatusForRange(departmentId, startDate, endDa
       // every untouched date defaulted to orange instead of empty).
       const hasAnyOnCallSetThatDate = (filledDutyKeysByDate.get(date)?.size || 0) > 0;
 
-      let status;
-      if (requiredCount === 0 && !hasAnyOnCallSetThatDate) status = 'none';
-      else if (unfilledCount > 0) status = 'red';
-      else if (missingOnCallAbbrevs.length > 0) status = 'orange';
-      else status = 'green';
+      const status = classifyDayStatus({
+        requiredCount,
+        unofferedGapCount,
+        volunteerCount,
+        openOfferCount,
+        hasAnyOnCall: hasAnyOnCallSetThatDate,
+        missingOnCallCount: missingOnCallAbbrevs.length,
+      });
 
       // An empty day hasn't been touched at all, so every duty type reads
       // as "missing" by construction — that's not the same as a day where
       // on-call was actually attempted and fell short, so no abbreviations
       // show on an empty day.
-      statusByDate[date] = { status, missingOnCallAbbrevs: status === 'none' ? [] : missingOnCallAbbrevs };
+      statusByDate[date] = { status, missingOnCallAbbrevs: status === 'none' ? [] : missingOnCallAbbrevs, volunteerCount };
     }
 
     return { data: statusByDate, error: null };
@@ -3254,6 +3292,119 @@ export async function clearVolunteerOfferForRole(theatreActivityId, role) {
     return { error };
   } catch (err) {
     return { error: err };
+  }
+}
+
+// Officer-side: takes a role back off the volunteering list. Its pending
+// volunteers go too — the shift they asked for is no longer on offer, and
+// leaving their requests would keep it showing as "Request Sent".
+export async function removeVolunteerOffer(theatreActivityId, role) {
+  console.log('removeVolunteerOffer called', theatreActivityId, role);
+
+  const { error: requestsError } = await clearVolunteerRequestsForRole(theatreActivityId, role);
+  if (requestsError) return { error: requestsError };
+  return clearVolunteerOfferForRole(theatreActivityId, role);
+}
+
+// The officer's Volunteering panel on the Calendar tab, from today on:
+//   offers   - every open offer (role still empty), each with its pending
+//              volunteers, soonest first. Not limited to the staff
+//              lookahead — an officer can offer further out, and staff
+//              see it once it's within VOLUNTEER_LOOKAHEAD_DAYS.
+//   unoffered - cards in the next VOLUNTEER_LOOKAHEAD_DAYS with a role
+//              that needs someone (missingRolesForCard) and hasn't been
+//              offered, so an officer can offer it straight from the list.
+// Rows share one shape: theatre_activity_id, date, location, activity,
+// shift/start/end, required_grade, plus roles (unoffered) or role +
+// volunteers (offers).
+export async function getVolunteeringOverview(departmentId) {
+  console.log('getVolunteeringOverview called', departmentId);
+
+  try {
+    const today = toLocalDateStr(new Date());
+    const lookaheadEnd = new Date();
+    lookaheadEnd.setDate(lookaheadEnd.getDate() + VOLUNTEER_LOOKAHEAD_DAYS);
+    const lookaheadEndStr = toLocalDateStr(lookaheadEnd);
+    const cardColumns = 'theatre_activity_id, date, required_grade, locations(name, requires_both_senior_and_junior), shifts(name, start_time, end_time), activity_types(name)';
+
+    const [offersRes, requestsRes, cardsRes, assignRes] = await Promise.all([
+      supabase
+        .from('volunteer_offers')
+        .select(`theatre_activity_id, role, theatre_activities!inner(${cardColumns})`)
+        .eq('department_id', departmentId)
+        .gte('theatre_activities.date', today),
+      supabase
+        .from('volunteer_requests')
+        .select('theatre_activity_id, role, staff_id, created_at, staff(name, rank)')
+        .eq('department_id', departmentId)
+        .order('created_at'),
+      supabase
+        .from('theatre_activities')
+        .select(cardColumns)
+        .eq('department_id', departmentId)
+        .gte('date', today)
+        .lte('date', lookaheadEndStr),
+      supabase
+        .from('staff_assignments')
+        .select('theatre_activity_id, role')
+        .eq('department_id', departmentId)
+        .gte('date', today),
+    ]);
+
+    if (offersRes.error) throw offersRes.error;
+    if (requestsRes.error) throw requestsRes.error;
+    if (cardsRes.error) throw cardsRes.error;
+    if (assignRes.error) throw assignRes.error;
+
+    const filledRolesByCard = new Map(); // theatre_activity_id -> Set(role)
+    (assignRes.data || []).forEach(a => {
+      if (!a.theatre_activity_id) return;
+      if (!filledRolesByCard.has(a.theatre_activity_id)) filledRolesByCard.set(a.theatre_activity_id, new Set());
+      filledRolesByCard.get(a.theatre_activity_id).add(a.role);
+    });
+    const filledRolesFor = (id) => filledRolesByCard.get(id) || new Set();
+
+    const cardInfo = (ta) => ({
+      theatre_activity_id: ta.theatre_activity_id,
+      date: ta.date,
+      location: ta.locations?.name || 'Unknown location',
+      activity: ta.activity_types?.name || null,
+      shift: ta.shifts?.name || null,
+      shift_start: ta.shifts?.start_time || null,
+      shift_end: ta.shifts?.end_time || null,
+      required_grade: ta.required_grade || null,
+    });
+    const byDateThenLocation = (a, b) => a.date.localeCompare(b.date) || a.location.localeCompare(b.location);
+
+    const openOffers = (offersRes.data || []).filter(o => !filledRolesFor(o.theatre_activity_id).has(o.role));
+    const offeredKeys = new Set((offersRes.data || []).map(o => `${o.theatre_activity_id}|${o.role}`));
+
+    const offers = openOffers
+      .map(o => ({
+        ...cardInfo(o.theatre_activities),
+        role: o.role,
+        volunteers: (requestsRes.data || [])
+          .filter(r => r.theatre_activity_id === o.theatre_activity_id && r.role === o.role && r.staff)
+          .map(r => ({ staff_id: r.staff_id, name: r.staff.name, rank: r.staff.rank })),
+      }))
+      .sort(byDateThenLocation);
+
+    const unoffered = (cardsRes.data || [])
+      .map(ta => ({
+        ...cardInfo(ta),
+        roles: missingRolesForCard({
+          requiresBoth: ta.locations?.requires_both_senior_and_junior === true,
+          requiredGrade: ta.required_grade,
+          filledRoles: filledRolesFor(ta.theatre_activity_id),
+        }).filter(role => !offeredKeys.has(`${ta.theatre_activity_id}|${role}`)),
+      }))
+      .filter(row => row.roles.length > 0)
+      .sort(byDateThenLocation);
+
+    return { data: { offers, unoffered }, error: null };
+  } catch (err) {
+    console.error('getVolunteeringOverview error:', err);
+    return { data: { offers: [], unoffered: [] }, error: err };
   }
 }
 
