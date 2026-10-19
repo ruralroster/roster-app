@@ -51,6 +51,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
   const [selectedJobId, setSelectedJobId] = useState(null);
   const [selectedStaffId, setSelectedStaffId] = useState(null);
   const [staffFilter, setStaffFilter] = useState('all'); // 'all' | 'senior' | 'junior' | rank name
+  const [staffOnly, setStaffOnly] = useState(true); // hide people with 0 FTE (locums, casuals)
   const [templateIdForWeek, setTemplateIdForWeek] = useState({});
   // Height of the officer view's bottom tab bar, so the people picker can
   // sit just above it.
@@ -427,6 +428,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
 
   const activeStaff = refData.staff.filter(s => s.active !== false);
   const filteredStaff = activeStaff.filter(s => {
+    if (staffOnly && !((s.fte ?? DEFAULT_FTE) > 0)) return false;
     if (staffFilter === 'all') return true;
     if (staffFilter === 'senior') return isSenior(s, rankRows);
     if (staffFilter === 'junior') return !isSenior(s, rankRows);
@@ -612,6 +614,10 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
               <option value="junior">Juniors</option>
               {rankRows.map(r => <option key={r.rule_id} value={r.rank}>{r.rank}</option>)}
             </select>
+            <label className="flex items-center gap-1 text-xs text-gray-700 whitespace-nowrap cursor-pointer">
+              <input type="checkbox" checked={staffOnly} onChange={(e) => setStaffOnly(e.target.checked)} className="w-3.5 h-3.5 accent-blue-600" />
+              Staff only
+            </label>
             <p className="text-xs text-gray-600">
               {selectedStaff
                 ? <>Booking <span className="font-semibold text-gray-900">{selectedStaff.name}</span> — green places are theirs to take. Tap their name again to stop.</>
