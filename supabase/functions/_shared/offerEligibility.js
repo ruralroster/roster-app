@@ -54,7 +54,7 @@ export function offerGradeForRank(rankRow) {
 //   offerRole      - the offer's role, 'consultant' or 'registrar'
 //   rankRow        - the staff member's rank row (null if not configured)
 //   requiredGrade  - theatre_activities.required_grade, or null
-//   roleFilled     - someone already holds the offer's role on the card
+//   roleFilled     - the offer's been taken up (offerIsFilled)
 //   isAvailable    - they've marked themselves available that date
 //                    (an unset day doesn't count)
 //   activityName   - the card's activity name, or null
@@ -84,4 +84,14 @@ export function isEligibleForOffer({
   if (activityName && restrictions.includes(activityName)) return false;
   if (requiredSkills.length > 0 && !requiredSkills.some(id => skills.includes(id))) return false;
   return true;
+}
+
+// Whether an offer has been taken up. The offer remembers how many people
+// held its role on the card when it was made (filled_baseline: 0 for the
+// Day view's offers, which are only made for an empty role; possibly more
+// from the Planner, where a job can need two seniors and one is already
+// booked). It's filled once there are more than that — someone new has
+// gone on. roleCount: staff_assignments on the card with the offer's role.
+export function offerIsFilled(offer, roleCount) {
+  return roleCount > (offer?.filled_baseline || 0);
 }

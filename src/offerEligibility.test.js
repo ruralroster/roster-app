@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { isEligibleForOffer, canCoverSenior, offerGradeForRank } from './offerEligibility';
+import { isEligibleForOffer, canCoverSenior, offerGradeForRank, offerIsFilled } from './offerEligibility';
 
 const SMO = { rank: 'Consultant', requires_supervision: false };
 const REG = { rank: 'Registrar', requires_supervision: true };
@@ -72,5 +72,18 @@ describe('isEligibleForOffer', () => {
     expect(isEligibleForOffer({ ...base, isAvailable: false })).toBe(false);
     expect(isEligibleForOffer({ ...base, restrictions: ['Emergency'] })).toBe(false);
     expect(isEligibleForOffer({ ...base, roleFilled: true })).toBe(false);
+  });
+});
+
+describe('offerIsFilled', () => {
+  it('is filled once anyone holds an empty role offered from the Day view', () => {
+    expect(offerIsFilled({ filled_baseline: 0 }, 0)).toBe(false);
+    expect(offerIsFilled({ filled_baseline: 0 }, 1)).toBe(true);
+    expect(offerIsFilled({}, 1)).toBe(true);
+  });
+
+  it('stays open for a second senior when one was already booked', () => {
+    expect(offerIsFilled({ filled_baseline: 1 }, 1)).toBe(false);
+    expect(offerIsFilled({ filled_baseline: 1 }, 2)).toBe(true);
   });
 });

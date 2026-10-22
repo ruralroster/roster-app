@@ -13,7 +13,11 @@ import {
   applyWeekTemplate,
   saveWeekAsTemplate,
   getWeekTemplates,
+  getVolunteerOffersForActivities,
+  createVolunteerOffer,
+  removeVolunteerOffer,
 } from './supabaseClient';
+import { offerIsFilled } from './offerEligibility';
 import { getMondayOfWeek } from './payrollExport';
 import { toLocalDateStr } from './dateUtils';
 import { DEFAULT_FTE } from './availabilityUtils';
@@ -33,9 +37,15 @@ import {
 //      (grade, skills, not on leave, hours don't clash); tap to book.
 // Writes the same theatre_activities / staff_assignments / duty_assignments
 // rows the Day and Fortnight views use, so everything else keeps working.
+// A short job from today on can be offered for volunteering straight from
+// its card (Offer senior / Offer any grade) — the same volunteer_offers
+// the Calendar's Volunteering panel shows.
 // See migrations/2026-10-18_planner_jobs.sql.
 
 const MAX_WEEKS = 4;
+// A senior place is offered as a consultant shift; a junior or any-grade
+// place as a registrar one, which seniors can take too.
+const OFFER_LABEL = { consultant: 'senior', registrar: 'any grade' };
 const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 export default function PlannerTab({ departmentId, refData, onWeekTemplatesChange }) {
@@ -44,6 +54,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
   const [mode, setMode] = useState('layout'); // 'layout' | 'fill'
   const [jobsData, setJobsData] = useState({ jobTypes: [], places: [], missing: false, loaded: false });
   const [range, setRange] = useState(null);
+  const [offers, setOffers] = useState([]); // volunteer_offers on the cards shown
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -91,6 +102,11 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
       setLoading(false);
       if (res.error) { setError(`Failed to load the planner: ${res.error.message}`); return; }
       setRange(res.data);
+      getVolunteerOffersForActivities((res.data?.cards || []).map(c => c.theatre_activity_id)).then(offersRes => {
+        if (cancelled) return;
+        if (offersRes.error) setError(`Failed to load offers: ${offersRes.error.message}`);
+        setOffers(offersRes.data || []);
+      });
     });
     return () => { cancelled = true; };
   }, [departmentId, weekStart, numDays, refreshKey]);
@@ -121,6 +137,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
   const rankRows = refData.staffRanks;
 
   const days = Array.from({ length: numDays }, (_, i) => addDays(startStr, i));
+  const todayStr = toLocalDateStr(new Date());
   const weeks = Array.from({ length: weeksShown }, (_, w) => days.slice(w * 7, w * 7 + 7));
 
   const cards = range?.cards || [];
@@ -210,6 +227,17 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
       }
       return res;
     });
+  };
+
+  const offerShift = (card, job, role, heldCount) => {
+    const when = new Date(`${card.date}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' });
+    if (!window.confirm(`Offer ${cardTitle(card, job)} on ${when} for volunteering (${OFFER_LABEL[role]})? Staff who can do it and are available that day will be emailed and notified.`)) return;
+    run("Couldn't offer the shift", () => createVolunteerOffer(departmentId, card.theatre_activity_id, role, heldCount));
+  };
+
+  const withdrawOffer = (card, job, role) => {
+    if (!window.confirm(`Take ${cardTitle(card, job)} (${OFFER_LABEL[role]}) off the volunteering list? Anyone who's volunteered for it will be dropped.`)) return;
+    run("Couldn't remove the offer", () => removeVolunteerOffer(card.theatre_activity_id, role));
   };
 
   // ---------- render helpers ----------
@@ -318,6 +346,21 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
     const extraBlockedReason = mode === 'fill' && selectedStaff ? conflictFor(selectedStaff.staff_id, card) : null;
     const canAddExtra = mode === 'fill' && selectedStaff && !extraBlockedReason;
 
+    // Offering: empty staff places by the role they'd be offered as, and
+    // which roles are already on offer (and not yet taken up).
+    const emptyByRole = { consultant: 0, registrar: 0 };
+    layout.places.forEach(({ place, slots }) => {
+      if (place.kind === 'visitor') return;
+      const role = place.grade === 'senior' ? 'consultant' : 'registrar';
+      slots.forEach(slot => { if (!slot.assignment && !slot.visitor) emptyByRole[role] += 1; });
+    });
+    const heldCount = (role) => cardAssignments.filter(a => a.role === role).length;
+    const openOffer = (role) => offers.find(o =>
+      o.theatre_activity_id === card.theatre_activity_id && o.role === role && !offerIsFilled(o, heldCount(role)));
+    const offerRoles = !selectedStaff && card.date >= todayStr
+      ? ['consultant', 'registrar'].filter(role => emptyByRole[role] > 0 || openOffer(role))
+      : [];
+
     return (
       <div key={card.theatre_activity_id} className="rounded-lg border p-1.5 space-y-1" style={jobCardStyle(category)}>
         <div className="flex items-start justify-between gap-1">
@@ -375,6 +418,27 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
         {extraBlockedReason && (
           <p className="text-[10px] text-gray-500 italic truncate" title={extraBlockedReason}>{extraBlockedReason}</p>
         )}
+        {offerRoles.map(role => (openOffer(role) ? (
+          <button
+            key={role}
+            onClick={() => withdrawOffer(card, job, role)}
+            disabled={busy}
+            className="w-full text-[10px] font-semibold text-blue-900 bg-blue-100 border border-blue-400 rounded hover:bg-blue-200"
+            title="On the volunteering list — volunteers show on the Calendar tab. Tap to take it off."
+          >
+            Offered · {OFFER_LABEL[role]}
+          </button>
+        ) : (
+          <button
+            key={role}
+            onClick={() => offerShift(card, job, role, heldCount(role))}
+            disabled={busy}
+            className="w-full text-[10px] text-blue-800 border border-blue-500 rounded hover:bg-blue-50"
+            title="Put this on the volunteering list and tell staff who can do it"
+          >
+            Offer {OFFER_LABEL[role]}
+          </button>
+        )))}
       </div>
     );
   };

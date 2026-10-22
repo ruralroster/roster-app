@@ -5,7 +5,7 @@ import { getSessionGroups, dedupeAssignmentsByShift, assignmentShiftKey } from '
 import { getMondayOfWeek } from './payrollExport';
 import { matchStaffName, suggestStaffMatches, staffLabelKey, onCallKindsForDay, dutyTypeForOnCallKind, ON_CALL_KIND_LABEL } from './rosterExcelImport';
 import { gradeForSection, GRADE_LABEL } from './staffGrade';
-import { isEligibleForOffer } from './offerEligibility';
+import { isEligibleForOffer, offerIsFilled } from './offerEligibility';
 import { findActiveOnCalls, findOvertimeShifts } from './callbackUtils';
 import { bestJobForNewCard, jobForImportedShift } from './plannerUtils';
 import { missingRolesForCard, classifyDayStatus } from './volunteerUtils';
@@ -2963,7 +2963,7 @@ export async function getAllocationStatusForRange(departmentId, startDate, endDa
         .lte('week_start_date', endWeekStr),
       supabase
         .from('volunteer_offers')
-        .select('theatre_activity_id, role')
+        .select('theatre_activity_id, role, filled_baseline')
         .eq('department_id', departmentId),
       supabase
         .from('volunteer_requests')
@@ -3003,19 +3003,17 @@ export async function getAllocationStatusForRange(departmentId, startDate, endDa
     });
 
     const filledCardIds = new Set();
-    const filledRoleKeys = new Set(); // `${theatre_activity_id}|${role}`
     (assignRes.data || []).forEach(a => {
-      if (!a.theatre_activity_id) return;
-      filledCardIds.add(a.theatre_activity_id);
-      filledRoleKeys.add(`${a.theatre_activity_id}|${a.role}`);
+      if (a.theatre_activity_id) filledCardIds.add(a.theatre_activity_id);
     });
 
-    // Only offers whose role is still empty count — an offer filled some
-    // other way (e.g. the Fortnight tab) is stale until it's cleared.
+    // Only offers not yet taken up count — an offer filled some other way
+    // (e.g. the Fortnight tab) is stale until it's cleared.
+    const roleCounts = countRolesOnCards(assignRes.data);
     const openOfferKeys = new Set(
       (offersRes.data || [])
+        .filter(o => !offerIsFilled(o, roleCounts.get(`${o.theatre_activity_id}|${o.role}`) || 0))
         .map(o => `${o.theatre_activity_id}|${o.role}`)
-        .filter(key => !filledRoleKeys.has(key))
     );
     const offeredCardIds = new Set([...openOfferKeys].map(key => key.split('|')[0]));
     const volunteerCountByCard = new Map(); // theatre_activity_id -> pending volunteers on its open offers
@@ -3135,7 +3133,7 @@ export async function getAvailableShiftsForStaff(staffId, departmentId) {
         .single(),
       supabase
         .from('volunteer_offers')
-        .select('theatre_activity_id, role, theatre_activities!inner(theatre_activity_id, date, location_id, required_grade, locations(name), shifts(name, start_time, end_time), activity_types(name, required_advanced_skills))')
+        .select('theatre_activity_id, role, filled_baseline, theatre_activities!inner(theatre_activity_id, date, location_id, required_grade, locations(name), shifts(name, start_time, end_time), activity_types(name, required_advanced_skills))')
         .eq('department_id', departmentId)
         .gte('theatre_activities.date', startStr),
       supabase
@@ -3167,9 +3165,7 @@ export async function getAvailableShiftsForStaff(staffId, departmentId) {
     // Keyed by theatre_activity_id, not location+date: a location can host
     // more than one card on the same day, and a role filled on one card
     // shouldn't hide a genuinely empty slot on a different card there.
-    const filledRoleKeys = new Set(
-      (assignRes.data || []).filter(a => a.theatre_activity_id).map(a => `${a.theatre_activity_id}|${a.role}`)
-    );
+    const roleCounts = countRolesOnCards(assignRes.data);
     const availableDates = new Set(
       (availRes.data || []).filter(r => r.available === true).map(r => r.date)
     );
@@ -3184,7 +3180,7 @@ export async function getAvailableShiftsForStaff(staffId, departmentId) {
           offerRole: offer.role,
           rankRow,
           requiredGrade: ta.required_grade,
-          roleFilled: filledRoleKeys.has(`${offer.theatre_activity_id}|${offer.role}`),
+          roleFilled: offerIsFilled(offer, roleCounts.get(`${offer.theatre_activity_id}|${offer.role}`) || 0),
           isAvailable: availableDates.has(ta.date),
           activityName: ta.activity_types?.name || null,
           restrictions: staffRes.data?.activity_restrictions || [],
@@ -3224,14 +3220,17 @@ export async function getAvailableShiftsForStaff(staffId, departmentId) {
 // shows a slot once it's been offered this way. Idempotent — offering an
 // already-offered slot is a no-op, via the table's
 // (theatre_activity_id, role) unique constraint.
-export async function createVolunteerOffer(departmentId, theatreActivityId, role) {
-  console.log('createVolunteerOffer called', departmentId, theatreActivityId, role);
+// filledBaseline: how many already hold this role on the card — 0 from the
+// Day view; the Planner passes its count when a job needs more than one
+// of a grade (see offerIsFilled in offerEligibility.js).
+export async function createVolunteerOffer(departmentId, theatreActivityId, role, filledBaseline = 0) {
+  console.log('createVolunteerOffer called', departmentId, theatreActivityId, role, filledBaseline);
 
   try {
     const { data, error } = await supabase
       .from('volunteer_offers')
       .upsert(
-        [{ department_id: departmentId, theatre_activity_id: theatreActivityId, role }],
+        [{ department_id: departmentId, theatre_activity_id: theatreActivityId, role, filled_baseline: filledBaseline }],
         { onConflict: 'theatre_activity_id,role' }
       )
       .select()
@@ -3255,7 +3254,7 @@ export async function getVolunteerOffersForActivities(theatreActivityIds) {
   try {
     const { data, error } = await supabase
       .from('volunteer_offers')
-      .select('theatre_activity_id, role')
+      .select('theatre_activity_id, role, filled_baseline')
       .in('theatre_activity_id', theatreActivityIds);
 
     return { data: data || [], error };
@@ -3263,6 +3262,18 @@ export async function getVolunteerOffersForActivities(theatreActivityIds) {
     console.error('getVolunteerOffersForActivities error:', err);
     return { data: [], error: err };
   }
+}
+
+// staff_assignments rows -> `${theatre_activity_id}|${role}` -> how many,
+// for offerIsFilled.
+function countRolesOnCards(assignments) {
+  const counts = new Map();
+  (assignments || []).forEach(a => {
+    if (!a.theatre_activity_id) return;
+    const key = `${a.theatre_activity_id}|${a.role}`;
+    counts.set(key, (counts.get(key) || 0) + 1);
+  });
+  return counts;
 }
 
 // Clears the offer for a role once it's been filled — mirrors
@@ -3429,7 +3440,7 @@ export async function getVolunteeringOverview(departmentId) {
     const [offersRes, requestsRes, cardsRes, assignRes] = await Promise.all([
       supabase
         .from('volunteer_offers')
-        .select(`theatre_activity_id, role, theatre_activities!inner(${cardColumns})`)
+        .select(`theatre_activity_id, role, filled_baseline, theatre_activities!inner(${cardColumns})`)
         .eq('department_id', departmentId)
         .gte('theatre_activities.date', today),
       supabase
@@ -3475,7 +3486,8 @@ export async function getVolunteeringOverview(departmentId) {
     });
     const byDateThenLocation = (a, b) => a.date.localeCompare(b.date) || a.location.localeCompare(b.location);
 
-    const openOffers = (offersRes.data || []).filter(o => !filledRolesFor(o.theatre_activity_id).has(o.role));
+    const roleCounts = countRolesOnCards(assignRes.data);
+    const openOffers = (offersRes.data || []).filter(o => !offerIsFilled(o, roleCounts.get(`${o.theatre_activity_id}|${o.role}`) || 0));
     const offeredKeys = new Set((offersRes.data || []).map(o => `${o.theatre_activity_id}|${o.role}`));
 
     const offers = openOffers

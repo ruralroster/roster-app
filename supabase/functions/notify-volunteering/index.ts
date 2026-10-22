@@ -49,7 +49,7 @@
 import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2';
 import nodemailer from 'npm:nodemailer@6.9.16';
 import webpush from 'npm:web-push@3.6.7';
-import { isEligibleForOffer } from '../_shared/offerEligibility.js';
+import { isEligibleForOffer, offerIsFilled } from '../_shared/offerEligibility.js';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!;
@@ -284,7 +284,7 @@ Deno.serve(async (req) => {
     if (event === 'offer') {
       const { data: offer, error } = await admin
         .from('volunteer_offers')
-        .select(`volunteer_offer_id, department_id, theatre_activities(${CARD_COLUMNS})`)
+        .select(`volunteer_offer_id, department_id, filled_baseline, theatre_activities(${CARD_COLUMNS})`)
         .eq('theatre_activity_id', theatreActivityId)
         .eq('role', role)
         .maybeSingle();
@@ -311,12 +311,12 @@ Deno.serve(async (req) => {
           .eq('active', true),
         admin.from('rank_supervision_rules').select('*').eq('department_id', offer.department_id),
         admin.from('staff_availability').select('staff_id').eq('date', card.date).eq('available', true),
-        admin.from('staff_assignments').select('assignment_id').eq('theatre_activity_id', theatreActivityId).eq('role', role).limit(1),
+        admin.from('staff_assignments').select('assignment_id').eq('theatre_activity_id', theatreActivityId).eq('role', role),
       ]);
       for (const res of [staffRes, ranksRes, availRes, filledRes]) if (res.error) throw res.error;
 
       const availableIds = new Set((availRes.data || []).map(a => a.staff_id));
-      const roleFilled = (filledRes.data || []).length > 0;
+      const roleFilled = offerIsFilled(offer, (filledRes.data || []).length);
       const recipients = (staffRes.data || []).filter(s => !myStaffIds.has(s.staff_id) && isEligibleForOffer({
         offerRole: role,
         rankRow: (ranksRes.data || []).find(r => r.rank === s.rank) || null,
