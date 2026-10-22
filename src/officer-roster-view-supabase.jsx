@@ -203,6 +203,15 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   const [fortnightWizardOnCallStaffId, setFortnightWizardOnCallStaffId] = useState(null);
   const [fortnightWizardOnCallStaffName, setFortnightWizardOnCallStaffName] = useState(null);
   const [selectedDate, setSelectedDate] = useState(null);
+  // The Day tab is one day of the Planner; the old card-by-card Day view
+  // stays reachable behind "Classic view" while the new one beds in.
+  const [classicDayView, setClassicDayView] = useState(() => {
+    try { return localStorage.getItem('officerClassicDayView') === '1'; } catch { return false; }
+  });
+  const chooseClassicDayView = (on) => {
+    setClassicDayView(on);
+    try { localStorage.setItem('officerClassicDayView', on ? '1' : '0'); } catch { /* per-device nicety only */ }
+  };
   const [selectedStaff, setSelectedStaff] = useState(null);
   const [openDropdown, setOpenDropdown] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -2677,7 +2686,59 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     );
   };
 
+  // Pending sick reports to approve or deny — top of the Day tab, in both
+  // the one-day Planner and the classic view.
+  const renderSickReportsBanner = () => {
+    if (pendingSickReports.length === 0) return null;
+    return (
+      <div className="mb-6 space-y-2">
+        {pendingSickReports.map(report => (
+          <div key={report.sick_report_id} className="p-4 bg-red-50 border border-red-300 rounded-lg flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-bold text-gray-900">{report.staff?.name} reported sick</p>
+              <p className="text-xs text-gray-600">
+                {new Date(`${report.date}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'short', month: 'short', day: 'numeric' })}
+              </p>
+              {report.message && <p className="text-xs text-gray-700 mt-1 whitespace-pre-wrap">"{report.message}"</p>}
+            </div>
+            <div className="flex gap-2 flex-shrink-0">
+              <button
+                onClick={() => handleResolveSickReport(report.sick_report_id, 'approved')}
+                className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded-lg transition"
+              >
+                Approve
+              </button>
+              <button
+                onClick={() => handleResolveSickReport(report.sick_report_id, 'denied')}
+                className="px-3 py-1.5 bg-gray-200 hover:bg-gray-300 text-gray-800 text-sm font-medium rounded-lg transition"
+              >
+                Deny
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
   const renderContent = () => {
+    if (activeTab === 'day' && selectedDate && !classicDayView) {
+      return (
+        <div>
+          <div className="px-4 pt-3 flex justify-end">
+            <button onClick={() => chooseClassicDayView(true)} className="text-xs text-gray-500 underline hover:text-gray-700">Classic view</button>
+          </div>
+          {pendingSickReports.length > 0 && <div className="px-4">{renderSickReportsBanner()}</div>}
+          <PlannerTab
+            departmentId={departmentId}
+            refData={refData}
+            singleDate={selectedDate}
+            onSingleDateChange={setSelectedDate}
+          />
+        </div>
+      );
+    }
+
     if (activeTab === 'planner') {
       return (
         <PlannerTab
@@ -3593,35 +3654,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
               topBarActionsNode
             )}
 
-            {pendingSickReports.length > 0 && (
-              <div className="mb-6 space-y-2">
-                {pendingSickReports.map(report => (
-                  <div key={report.sick_report_id} className="p-4 bg-red-50 border border-red-300 rounded-lg flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-bold text-gray-900">{report.staff?.name} reported sick</p>
-                      <p className="text-xs text-gray-600">
-                        {new Date(`${report.date}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'short', month: 'short', day: 'numeric' })}
-                      </p>
-                      {report.message && <p className="text-xs text-gray-700 mt-1 whitespace-pre-wrap">"{report.message}"</p>}
-                    </div>
-                    <div className="flex gap-2 flex-shrink-0">
-                      <button
-                        onClick={() => handleResolveSickReport(report.sick_report_id, 'approved')}
-                        className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded-lg transition"
-                      >
-                        Approve
-                      </button>
-                      <button
-                        onClick={() => handleResolveSickReport(report.sick_report_id, 'denied')}
-                        className="px-3 py-1.5 bg-gray-200 hover:bg-gray-300 text-gray-800 text-sm font-medium rounded-lg transition"
-                      >
-                        Deny
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+            {renderSickReportsBanner()}
 
             <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
               <div className="flex items-center justify-between gap-2">
@@ -3638,6 +3671,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                 <div className="text-center">
                   <h1 className="text-2xl font-bold text-gray-900">{formatDate(selectedDate)}</h1>
                   <p className="text-sm text-gray-500">{refData.department?.name || 'Department'} - Rostering Officer</p>
+                  <button onClick={() => chooseClassicDayView(false)} className="text-xs text-blue-600 underline">Back to the new Day view</button>
                   <input
                     type="date"
                     value={toLocalDateStr(selectedDate)}

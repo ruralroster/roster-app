@@ -14,6 +14,7 @@ import {
   saveWeekAsTemplate,
   getWeekTemplates,
   getVolunteerOffersForActivities,
+  getVolunteerRequestsForActivities,
   createVolunteerOffer,
   removeVolunteerOffer,
 } from './supabaseClient';
@@ -39,7 +40,11 @@ import {
 // rows the Day and Fortnight views use, so everything else keeps working.
 // A short job from today on can be offered for volunteering straight from
 // its card (Offer senior / Offer any grade) — the same volunteer_offers
-// the Calendar's Volunteering panel shows.
+// the Calendar's Volunteering panel shows — and its volunteers accepted
+// from the card too.
+//
+// With singleDate set it's the officer's Day tab: one day, laid out wide,
+// stepping a day at a time (onSingleDateChange), no templates.
 // See migrations/2026-10-18_planner_jobs.sql.
 
 const MAX_WEEKS = 4;
@@ -48,13 +53,17 @@ const MAX_WEEKS = 4;
 const OFFER_LABEL = { consultant: 'senior', registrar: 'any grade' };
 const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
-export default function PlannerTab({ departmentId, refData, onWeekTemplatesChange }) {
+export default function PlannerTab({ departmentId, refData, onWeekTemplatesChange, singleDate = null, onSingleDateChange }) {
+  const singleDay = !!singleDate;
   const [weekStart, setWeekStart] = useState(() => getMondayOfWeek(new Date()));
   const [weeksShown, setWeeksShown] = useState(1);
   const [mode, setMode] = useState('layout'); // 'layout' | 'fill'
   const [jobsData, setJobsData] = useState({ jobTypes: [], places: [], missing: false, loaded: false });
   const [range, setRange] = useState(null);
   const [offers, setOffers] = useState([]); // volunteer_offers on the cards shown
+  const [volunteers, setVolunteers] = useState([]); // volunteer_requests on those cards
+  // The offer whose volunteers are being chosen from: { card, job, role, layout }.
+  const [volunteerPick, setVolunteerPick] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -78,8 +87,9 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
     return () => observer.disconnect();
   }, []);
 
-  const numDays = weeksShown * 7;
-  const startStr = toLocalDateStr(weekStart);
+  const numDays = singleDay ? 1 : weeksShown * 7;
+  const rangeStart = singleDay ? singleDate : weekStart;
+  const startStr = toLocalDateStr(rangeStart);
   const endStr = addDays(startStr, numDays - 1);
 
   useEffect(() => {
@@ -97,19 +107,22 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
     if (!departmentId) return;
     let cancelled = false;
     setLoading(true);
-    getPlannerRange(departmentId, weekStart, numDays).then(res => {
+    getPlannerRange(departmentId, new Date(`${startStr}T00:00:00`), numDays).then(res => {
       if (cancelled) return;
       setLoading(false);
       if (res.error) { setError(`Failed to load the planner: ${res.error.message}`); return; }
       setRange(res.data);
-      getVolunteerOffersForActivities((res.data?.cards || []).map(c => c.theatre_activity_id)).then(offersRes => {
+      const cardIds = (res.data?.cards || []).map(c => c.theatre_activity_id);
+      Promise.all([getVolunteerOffersForActivities(cardIds), getVolunteerRequestsForActivities(cardIds)]).then(([offersRes, requestsRes]) => {
         if (cancelled) return;
-        if (offersRes.error) setError(`Failed to load offers: ${offersRes.error.message}`);
+        const failed = offersRes.error || requestsRes.error;
+        if (failed) setError(`Failed to load offers: ${failed.message}`);
         setOffers(offersRes.data || []);
+        setVolunteers(requestsRes.data || []);
       });
     });
     return () => { cancelled = true; };
-  }, [departmentId, weekStart, numDays, refreshKey]);
+  }, [departmentId, startStr, numDays, refreshKey]);
 
   const reload = () => setRefreshKey(k => k + 1);
 
@@ -238,6 +251,28 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
   const withdrawOffer = (card, job, role) => {
     if (!window.confirm(`Take ${cardTitle(card, job)} (${OFFER_LABEL[role]}) off the volunteering list? Anyone who's volunteered for it will be dropped.`)) return;
     run("Couldn't remove the offer", () => removeVolunteerOffer(card.theatre_activity_id, role));
+  };
+
+  // Books the chosen volunteer into an empty place they can fill (else on
+  // top as an extra), then takes the offer and its other volunteers off
+  // the list — the same as accepting from the old Day view.
+  const acceptVolunteer = (request) => {
+    const { card, job, role, layout } = volunteerPick;
+    const staff = staffById.get(request.staff_id);
+    if (!staff) { setError(`${request.staff?.name || 'That volunteer'} isn't an active staff member any more.`); return; }
+    const clash = conflictFor(staff.staff_id, card);
+    if (clash && !window.confirm(`${staff.name}: ${clash}. Book them on ${cardTitle(card, job)} anyway?`)) return;
+    const slotPlace = layout.places.find(({ place, slots }) =>
+      place.kind !== 'visitor'
+      && (place.grade === 'senior' ? 'consultant' : 'registrar') === role
+      && !placeMismatch(place, staff, rankRows)
+      && slots.some(slot => !slot.assignment && !slot.visitor));
+    setVolunteerPick(null);
+    run(`Couldn't book ${staff.name}`, async () => {
+      const booked = await bookPlannerPlace(departmentId, card, staff.staff_id, slotPlace?.place.place_id || null, role, job?.name);
+      if (booked.error) return booked;
+      return removeVolunteerOffer(card.theatre_activity_id, role);
+    });
   };
 
   // ---------- render helpers ----------
@@ -418,17 +453,20 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
         {extraBlockedReason && (
           <p className="text-[10px] text-gray-500 italic truncate" title={extraBlockedReason}>{extraBlockedReason}</p>
         )}
-        {offerRoles.map(role => (openOffer(role) ? (
-          <button
-            key={role}
-            onClick={() => withdrawOffer(card, job, role)}
-            disabled={busy}
-            className="w-full text-[10px] font-semibold text-blue-900 bg-blue-100 border border-blue-400 rounded hover:bg-blue-200"
-            title="On the volunteering list — volunteers show on the Calendar tab. Tap to take it off."
-          >
-            Offered · {OFFER_LABEL[role]}
-          </button>
-        ) : (
+        {offerRoles.map(role => (openOffer(role) ? (() => {
+          const count = volunteers.filter(v => v.theatre_activity_id === card.theatre_activity_id && v.role === role).length;
+          return (
+            <button
+              key={role}
+              onClick={() => setVolunteerPick({ card, job, role, layout })}
+              disabled={busy}
+              className={`w-full text-[10px] font-semibold rounded border ${count > 0 ? 'text-white bg-blue-600 border-blue-700 hover:bg-blue-700' : 'text-blue-900 bg-blue-100 border-blue-400 hover:bg-blue-200'}`}
+              title={count > 0 ? 'Tap to pick a volunteer' : 'On the volunteering list — tap to take it off'}
+            >
+              Offered · {OFFER_LABEL[role]}{count > 0 ? ` · ${count} volunteer${count === 1 ? '' : 's'}` : ''}
+            </button>
+          );
+        })() : (
           <button
             key={role}
             onClick={() => offerShift(card, job, role, heldCount(role))}
@@ -504,6 +542,33 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
     <div className={`p-4 ${mode === 'fill' ? 'pb-72' : 'pb-24'}`}>
       {/* Header: dates, weeks shown, step */}
       <div className="bg-white rounded-lg shadow-sm p-4 mb-4 flex flex-wrap items-center justify-between gap-3">
+        {singleDay ? (
+          <div className="flex items-center gap-2">
+            <button onClick={() => onSingleDateChange(new Date(`${addDays(startStr, -1)}T00:00:00`))} className="p-2 hover:bg-gray-100 rounded-lg" aria-label="Previous day">
+              <ChevronLeft size={22} />
+            </button>
+            <div className="text-center">
+              <p className="text-base font-bold text-gray-900">
+                {new Date(`${startStr}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+                {(loading || busy) && <Loader size={14} className="inline ml-2 animate-spin text-gray-400" />}
+              </p>
+              <input
+                type="date"
+                value={startStr}
+                onChange={(e) => e.target.value && onSingleDateChange(new Date(`${e.target.value}T00:00:00`))}
+                className="mt-0.5 px-2 py-0.5 border border-gray-200 rounded text-xs text-gray-600"
+              />
+            </div>
+            <button onClick={() => onSingleDateChange(new Date(`${addDays(startStr, 1)}T00:00:00`))} className="p-2 hover:bg-gray-100 rounded-lg" aria-label="Next day">
+              <ChevronRight size={22} />
+            </button>
+            {startStr !== todayStr && (
+              <button onClick={() => onSingleDateChange(new Date())} className="ml-1 px-2 py-1 border border-gray-300 rounded-lg text-xs text-gray-700 hover:bg-gray-50">
+                Today
+              </button>
+            )}
+          </div>
+        ) : (
         <div className="flex items-center gap-2">
           <button onClick={() => setWeekStart(d => { const n = new Date(d); n.setDate(n.getDate() - 7); return n; })} className="p-2 hover:bg-gray-100 rounded-lg" aria-label="Previous week">
             <ChevronLeft size={22} />
@@ -535,6 +600,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
             </button>
           </div>
         </div>
+        )}
         <div className="flex rounded-lg border border-gray-300 overflow-hidden text-sm font-semibold">
           <button onClick={() => setMode('layout')} className={`px-4 py-2 ${mode === 'layout' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700'}`}>
             1 · Lay out jobs
@@ -560,7 +626,11 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
             <p className="text-sm text-gray-600">No jobs yet — add them in Settings → Locations &amp; Activities → Jobs (Planner).</p>
           ) : (
             <>
-              <p className="text-xs text-gray-600 mb-2">Pick a job, then tap <span className="font-semibold">+</span> on each day it runs.</p>
+              <p className="text-xs text-gray-600 mb-2">
+                {singleDay
+                  ? <>Pick a job, then tap <span className="font-semibold">+</span> to add it to this day. Whole weeks and templates are on the Planner tab.</>
+                  : <>Pick a job, then tap <span className="font-semibold">+</span> on each day it runs.</>}
+              </p>
               {/* One row per colour (Emergency, Ward, Theatre, Maternity,
                   then uncoloured), same order as the day columns below. */}
               <div className="space-y-1.5">
@@ -594,6 +664,35 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
 
       {loading && !range ? (
         <div className="text-center py-10"><Loader size={24} className="animate-spin mx-auto text-gray-400" /></div>
+      ) : singleDay ? (
+        // One day, wide: on-call first, then the day's jobs in colour order
+        // and start time, as many across as fit.
+        <div className={`space-y-3 ${selectedStaff && unavailable.some(u => u.staff_id === selectedStaff.staff_id && u.date === startStr) ? 'opacity-50' : ''}`}>
+          {mode === 'layout' && selectedJob && (
+            <button
+              onClick={() => addJobToDay(startStr)}
+              disabled={busy}
+              className="w-full py-2 border-2 border-dashed border-blue-400 text-blue-700 rounded-lg text-sm font-semibold hover:bg-blue-50"
+            >
+              + {selectedJob.name}
+            </button>
+          )}
+          {dutyTypes.length > 0 && (
+            <div className="max-w-sm">{renderDuties(startStr)}</div>
+          )}
+          {cards.filter(c => c.date === startStr).length === 0 ? (
+            <p className="text-sm text-gray-500 italic bg-white rounded-lg shadow-sm p-4">No jobs on this day. Use 1 · Lay out jobs to add some.</p>
+          ) : (
+            <div className="grid gap-2 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {cards
+                .filter(c => c.date === startStr)
+                .sort((a, b) => jobCategoryRank(cardCategory(a)) - jobCategoryRank(cardCategory(b))
+                  || hhmm(a.start_time).localeCompare(hhmm(b.start_time))
+                  || cardTitle(a, jobForCard(a, jobTypes)).localeCompare(cardTitle(b, jobForCard(b, jobTypes))))
+                .map(renderCard)}
+            </div>
+          )}
+        </div>
       ) : (
         weeks.map(weekDays => (
           <div key={weekDays[0]} className="bg-white rounded-lg shadow-sm p-3 mb-4">
@@ -702,15 +801,66 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
                   title={`${s.name} (${s.rank || 'no rank'}) — ${worked} of ${target.toFixed(1)} days`}
                 >
                   {s.name}
-                  <span className={`ml-1 ${on ? 'text-gray-300' : worked > target ? 'text-orange-600 font-semibold' : 'text-gray-500'}`}>
-                    {worked}/{Number.isInteger(target) ? target : target.toFixed(1)}
-                  </span>
+                  {!singleDay && (
+                    <span className={`ml-1 ${on ? 'text-gray-300' : worked > target ? 'text-orange-600 font-semibold' : 'text-gray-500'}`}>
+                      {worked}/{Number.isInteger(target) ? target : target.toFixed(1)}
+                    </span>
+                  )}
                 </button>
               );
             })}
           </div>
         </div>
       )}
+
+      {volunteerPick && (() => {
+        const { card, job, role } = volunteerPick;
+        const list = volunteers.filter(v => v.theatre_activity_id === card.theatre_activity_id && v.role === role);
+        return (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div className="bg-white rounded-lg shadow-lg p-5 w-full max-w-md max-h-[85vh] overflow-y-auto">
+              <div className="flex justify-between items-start mb-3">
+                <div>
+                  <h2 className="text-lg font-bold text-gray-900">{cardTitle(card, job)}</h2>
+                  <p className="text-sm text-gray-600">
+                    {new Date(`${card.date}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })}
+                    {' · '}{hhmm(card.start_time)}–{hhmm(card.end_time)} · offered {OFFER_LABEL[role]}
+                  </p>
+                </div>
+                <button onClick={() => setVolunteerPick(null)} className="p-1 hover:bg-gray-100 rounded-lg" aria-label="Close"><X size={20} /></button>
+              </div>
+              {list.length === 0 ? (
+                <p className="text-sm text-gray-500 italic mb-4">Nobody has volunteered yet.</p>
+              ) : (
+                <ul className="space-y-2 mb-4">
+                  {list.map(v => (
+                    <li key={v.staff_id} className="flex items-center justify-between gap-2 p-2 border border-gray-200 rounded-lg">
+                      <span className="text-sm text-gray-900">
+                        <span className="font-medium">{v.staff?.name || 'Unknown'}</span>
+                        {v.staff?.rank && <span className="text-gray-500"> · {v.staff.rank}</span>}
+                      </span>
+                      <button
+                        onClick={() => acceptVolunteer(v)}
+                        disabled={busy}
+                        className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded-lg"
+                      >
+                        Accept
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <button
+                onClick={() => { setVolunteerPick(null); withdrawOffer(card, job, role); }}
+                disabled={busy}
+                className="w-full px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-800 text-sm font-medium rounded-lg"
+              >
+                Take it off the volunteering list
+              </button>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
