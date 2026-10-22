@@ -3764,33 +3764,45 @@ export async function getDepartmentCallbacks(departmentId, fromDate, toDate) {
 // notification to whoever's on call (notifyVolunteering 'sick').
 // ============================================================
 
-// Whether staffId already has a pending/approved sick report for date —
-// drives the "Notify Sick" button's own state (already sent / already
-// approved) in staffRosterView.jsx.
-export async function getMySickReportForDate(staffId, date) {
-  console.log('getMySickReportForDate called', staffId, date);
-  const dateStr = toLocalDateStr(date);
+// Notify Sick's starting point: this staff member's assignments from
+// yesterday to tomorrow (sickCallShiftsInWindow picks the ones under way
+// or starting within 24 hours — yesterday's for an overnight shift still
+// going), and their sick reports for those dates, latest first, so a
+// shift already reported isn't offered again.
+export async function getMySickCallState(staffId, now = new Date()) {
+  console.log('getMySickCallState called', staffId, now);
+  const dates = [-1, 0, 1].map(offset => {
+    const d = new Date(now);
+    d.setDate(d.getDate() + offset);
+    return toLocalDateStr(d);
+  });
 
   try {
-    const { data, error } = await supabase
-      .from('sick_reports')
-      .select('*')
-      .eq('staff_id', staffId)
-      .eq('date', dateStr)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    return { data, error };
+    const [assignmentsRes, reportsRes] = await Promise.all([
+      supabase
+        .from('staff_assignments')
+        .select('assignment_id, date, leave_code, locations(name), shifts(name, start_time, end_time), theatre_activities(start_time, end_time)')
+        .eq('staff_id', staffId)
+        .in('date', dates),
+      supabase
+        .from('sick_reports')
+        .select('*')
+        .eq('staff_id', staffId)
+        .in('date', dates)
+        .order('created_at', { ascending: false }),
+    ]);
+    if (assignmentsRes.error) throw assignmentsRes.error;
+    if (reportsRes.error) throw reportsRes.error;
+    return { data: { assignments: assignmentsRes.data || [], reports: reportsRes.data || [] }, error: null };
   } catch (err) {
-    console.error('getMySickReportForDate error:', err);
-    return { data: null, error: err };
+    console.error('getMySickCallState error:', err);
+    return { data: { assignments: [], reports: [] }, error: err };
   }
 }
 
-export async function createSickReport(departmentId, staffId, date, message = null) {
-  console.log('createSickReport called', departmentId, staffId, date);
-  const dateStr = toLocalDateStr(date);
+// date: the shift's date ("2026-10-23"), which may be tomorrow.
+export async function createSickReport(departmentId, staffId, dateStr, message = null) {
+  console.log('createSickReport called', departmentId, staffId, dateStr);
 
   try {
     const { data, error } = await supabase

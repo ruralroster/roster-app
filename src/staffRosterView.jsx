@@ -23,7 +23,7 @@ import {
   getAvailableShiftsForStaff,
   createVolunteerRequest,
   getStaffRanks,
-  getMySickReportForDate,
+  getMySickCallState,
   createSickReport,
   getSickCallRecipients,
   createSickCallAlerts,
@@ -64,6 +64,7 @@ import { isIOS } from './installPrompt';
 import { GRADE_LABEL } from './staffGrade';
 import { jobCategoryFor, jobCardStyle, jobBoxStyle, holdsOnCallDuty } from './jobColours';
 import { edLateOnCallFor } from './edLateOnCall';
+import { sickCallShiftsInWindow, describeSickCallShift } from './sickCallShifts';
 
 const SETTINGS_WEEKS_SHOWN = 4;
 const SETTINGS_DAYS_SHOWN = SETTINGS_WEEKS_SHOWN * 7;
@@ -187,16 +188,22 @@ export default function StaffRosterView({ departmentId, staffId }) {
   // list.
   const [hideRegistrarShifts, setHideRegistrarShifts] = useState(false);
   const isSeniorStaff = staffMember && staffRanks.find(r => r.rank === staffMember.rank)?.requires_supervision === false;
-  // Notify Sick — only enabled if this staff member has a shift today.
-  const [todayHasShift, setTodayHasShift] = useState(false);
-  const [mySickReportToday, setMySickReportToday] = useState(null); // { status: 'pending'|'approved'|'denied' } | null
+  // Notify Sick — enabled while this staff member has a shift under way or
+  // starting within 24 hours (see sickCallShifts.js) that they haven't
+  // already reported. sickShifts is every such shift; mySickReports their
+  // reports for those dates, latest first.
+  const [sickShifts, setSickShifts] = useState([]);
+  const [mySickReports, setMySickReports] = useState([]);
   const [submittingSickReport, setSubmittingSickReport] = useState(false);
-  // The Notify Sick confirm modal — who'll get a pop-up, and the
-  // (editable) message they'll see.
+  // The Notify Sick confirm modal — which shift(s), who'll get a pop-up,
+  // and the (editable) message they'll see. The message follows the ticked
+  // shifts until it's been edited by hand.
   const [showSickModal, setShowSickModal] = useState(false);
   const [sickRecipients, setSickRecipients] = useState([]);
   const [loadingSickRecipients, setLoadingSickRecipients] = useState(false);
   const [sickMessage, setSickMessage] = useState('');
+  const [sickMessageEdited, setSickMessageEdited] = useState(false);
+  const [selectedSickShiftIds, setSelectedSickShiftIds] = useState([]);
   // Bumped when a callback/overtime is recorded, so My Variations reloads.
   const [callbacksVersion, setCallbacksVersion] = useState(0);
 
@@ -511,33 +518,55 @@ export default function StaffRosterView({ departmentId, staffId }) {
     loadVolunteerOpportunities();
   }, [activeTab, staffId, departmentId]);
 
-  // Whether "Notify Sick" should be enabled (a shift today) and whether a
-  // report's already been sent for today.
+  // Which shifts Notify Sick can be used for, and what's already been sent.
   useEffect(() => {
     if (activeTab !== 'volunteer' || !staffId || !departmentId) return;
 
     const loadSickReportState = async () => {
-      try {
-        const [{ data: todayAssignmentsData, error: assignError }, { data: sickReport, error: sickError }] = await Promise.all([
-          getStaffAssignmentsForStaffDate(staffId, new Date()),
-          getMySickReportForDate(staffId, new Date()),
-        ]);
-        if (assignError) throw assignError;
-        if (sickError) throw sickError;
-        setTodayHasShift((todayAssignmentsData || []).length > 0);
-        setMySickReportToday(sickReport);
-      } catch (err) {
-        console.error('Failed to load sick report state:', err);
+      const { data, error: stateError } = await getMySickCallState(staffId, new Date());
+      if (stateError) {
+        console.error('Failed to load sick report state:', stateError);
+        return;
       }
+      setSickShifts(sickCallShiftsInWindow(data.assignments, new Date()));
+      setMySickReports(data.reports);
     };
 
     loadSickReportState();
   }, [activeTab, staffId, departmentId]);
 
-  const handleOpenSickModal = async () => {
-    if (!staffId || !departmentId || !todayHasShift || mySickReportToday) return;
+  // A report covers its whole date, so a shift on a date that's already
+  // been reported isn't offered again.
+  const reportedSickDates = new Set(mySickReports.map(r => r.date));
+  const unreportedSickShifts = sickShifts.filter(s => !reportedSickDates.has(s.assignment.date));
+  const sickShiftDates = new Set(sickShifts.map(s => s.assignment.date));
+  const shownSickReports = mySickReports.filter((r, i) =>
+    sickShiftDates.has(r.date) && mySickReports.findIndex(o => o.date === r.date) === i);
 
-    setSickMessage(`${staffMember?.name || 'A staff member'} has called in sick for their shift.`);
+  const defaultSickMessage = (shiftIds) => {
+    const chosen = unreportedSickShifts.filter(s => shiftIds.includes(s.assignment.assignment_id));
+    const name = staffMember?.name || 'A staff member';
+    if (chosen.length === 0) return `${name} has called in sick.`;
+    return `${name} has called in sick for ${chosen.length === 1 ? 'their shift' : 'their shifts'} on ${chosen.map(describeSickCallShift).join(' and ')}.`;
+  };
+
+  const toggleSickShift = (assignmentId) => {
+    const next = selectedSickShiftIds.includes(assignmentId)
+      ? selectedSickShiftIds.filter(id => id !== assignmentId)
+      : [...selectedSickShiftIds, assignmentId];
+    setSelectedSickShiftIds(next);
+    if (!sickMessageEdited) setSickMessage(defaultSickMessage(next));
+  };
+
+  const handleOpenSickModal = async () => {
+    if (!staffId || !departmentId || unreportedSickShifts.length === 0) return;
+
+    // Just one shift it could be: it's chosen, and the modal asks to
+    // confirm it. More than one: nothing's ticked until they choose.
+    const initial = unreportedSickShifts.length === 1 ? [unreportedSickShifts[0].assignment.assignment_id] : [];
+    setSelectedSickShiftIds(initial);
+    setSickMessage(defaultSickMessage(initial));
+    setSickMessageEdited(false);
     setSickRecipients([]);
     setShowSickModal(true);
     setLoadingSickRecipients(true);
@@ -548,22 +577,28 @@ export default function StaffRosterView({ departmentId, staffId }) {
   };
 
   const handleNotifySick = async () => {
-    if (!staffId || !departmentId || !todayHasShift || mySickReportToday || !sickMessage.trim()) return;
+    if (!staffId || !departmentId || selectedSickShiftIds.length === 0 || !sickMessage.trim()) return;
     // A second check — this emails officers and can wake whoever's on call.
     if (!window.confirm('Are you sure you want to send the sick call notification?')) return;
 
     setSubmittingSickReport(true);
     try {
       const message = sickMessage.trim();
-      const { data, error: sickErr } = await createSickReport(departmentId, staffId, new Date(), message);
-      if (sickErr) throw sickErr;
-      // Set before the alerts go out, so a failure there can't leave the
-      // button live for a second, duplicate report.
-      setMySickReportToday(data);
-      setShowSickModal(false);
-      const { error: alertsErr } = await createSickCallAlerts(departmentId, data.sick_report_id, sickRecipients, message);
-      if (alertsErr) throw new Error(`your report was saved, but the pop-ups didn't go out (${alertsErr.message}) — contact your officer directly`);
-      notifyVolunteering('sick', { sickReportId: data.sick_report_id });
+      // One report per date ticked — nearly always just one.
+      const dates = [...new Set(unreportedSickShifts
+        .filter(s => selectedSickShiftIds.includes(s.assignment.assignment_id))
+        .map(s => s.assignment.date))];
+      for (const date of dates) {
+        const { data, error: sickErr } = await createSickReport(departmentId, staffId, date, message);
+        if (sickErr) throw sickErr;
+        // Recorded before the alerts go out, so a failure there can't leave
+        // the button live for a second, duplicate report.
+        setMySickReports(prev => [data, ...prev]);
+        setShowSickModal(false);
+        const { error: alertsErr } = await createSickCallAlerts(departmentId, data.sick_report_id, sickRecipients, message);
+        if (alertsErr) throw new Error(`your report was saved, but the pop-ups didn't go out (${alertsErr.message}) — contact your officer directly`);
+        notifyVolunteering('sick', { sickReportId: data.sick_report_id });
+      }
       setVolunteerError(null);
     } catch (err) {
       setVolunteerError(`Failed to send sick report: ${err.message}`);
@@ -1746,24 +1781,26 @@ export default function StaffRosterView({ departmentId, staffId }) {
             <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
               <h2 className="text-lg font-bold text-gray-900 mb-1">Notify Sick</h2>
               <p className="text-sm text-gray-500 mb-4">
-                {todayHasShift
-                  ? "Let your officer know you can't make today's shift."
-                  : "You don't have a shift scheduled today."}
+                {sickShifts.length > 0
+                  ? "Let your officer know you can't make a shift in the next 24 hours."
+                  : "You don't have a shift in the next 24 hours."}
               </p>
-              {mySickReportToday ? (
-                <p className={`text-sm font-medium text-center py-2 rounded-lg ${
-                  mySickReportToday.status === 'approved' ? 'bg-green-50 text-green-800'
-                  : mySickReportToday.status === 'denied' ? 'bg-red-50 text-red-800'
+              {shownSickReports.map(report => (
+                <p key={report.sick_report_id} className={`text-sm font-medium text-center py-2 px-2 rounded-lg mb-2 ${
+                  report.status === 'approved' ? 'bg-green-50 text-green-800'
+                  : report.status === 'denied' ? 'bg-red-50 text-red-800'
                   : 'bg-orange-50 text-orange-800'
                 }`}>
-                  {mySickReportToday.status === 'approved' && 'Approved by your officer.'}
-                  {mySickReportToday.status === 'denied' && 'Your officer denied this report — get in touch with them directly.'}
-                  {mySickReportToday.status === 'pending' && "Sent — your supervisors will see it next time they open the app. Waiting on your officer's approval."}
+                  {new Date(`${report.date}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })}:{' '}
+                  {report.status === 'approved' && 'Approved by your officer.'}
+                  {report.status === 'denied' && 'Your officer denied this report — get in touch with them directly.'}
+                  {report.status === 'pending' && "Sent — your officers have been emailed and whoever's on call notified. Waiting on your officer's approval."}
                 </p>
-              ) : (
+              ))}
+              {(unreportedSickShifts.length > 0 || shownSickReports.length === 0) && (
                 <button
                   onClick={handleOpenSickModal}
-                  disabled={!todayHasShift}
+                  disabled={unreportedSickShifts.length === 0}
                   className="w-full bg-red-600 hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-medium py-2 rounded-lg transition"
                 >
                   Notify Sick
@@ -1856,10 +1893,33 @@ export default function StaffRosterView({ departmentId, staffId }) {
                     </button>
                   </div>
 
+                  {unreportedSickShifts.length === 1 ? (
+                    <p className="text-sm font-medium text-gray-900 mb-4">
+                      Are you calling in sick for your shift on {describeSickCallShift(unreportedSickShifts[0])}?
+                    </p>
+                  ) : (
+                    <div className="mb-4">
+                      <p className="text-sm font-medium text-gray-900 mb-2">Which shift are you calling in sick for? Tick each one.</p>
+                      <div className="space-y-2">
+                        {unreportedSickShifts.map(s => (
+                          <label key={s.assignment.assignment_id} className="flex items-start gap-2 p-2 border border-gray-200 rounded-lg text-sm text-gray-800 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={selectedSickShiftIds.includes(s.assignment.assignment_id)}
+                              onChange={() => toggleSickShift(s.assignment.assignment_id)}
+                              className="mt-0.5 h-4 w-4"
+                            />
+                            <span>{describeSickCallShift(s)}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Message</label>
                   <textarea
                     value={sickMessage}
-                    onChange={(e) => setSickMessage(e.target.value)}
+                    onChange={(e) => { setSickMessage(e.target.value); setSickMessageEdited(true); }}
                     rows={3}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm mb-4"
                   />
@@ -1891,7 +1951,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
                     </button>
                     <button
                       onClick={handleNotifySick}
-                      disabled={submittingSickReport || loadingSickRecipients || !sickMessage.trim()}
+                      disabled={submittingSickReport || loadingSickRecipients || selectedSickShiftIds.length === 0 || !sickMessage.trim()}
                       className="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-medium rounded-lg transition"
                     >
                       {submittingSickReport ? 'Sending…' : 'Send'}
