@@ -3296,9 +3296,11 @@ export async function clearVolunteerOfferForRole(theatreActivityId, role) {
 // already succeeded, and a failed email or push mustn't turn that into an
 // error on screen. The function checks the caller is allowed, and only
 // ever notifies each row once.
-export function notifyVolunteering(event, { theatreActivityId, role }) {
+// Also used for Notify Sick: event 'sick' with { sickReportId }, once its
+// sick_call_alerts rows are written.
+export function notifyVolunteering(event, { theatreActivityId, role, sickReportId }) {
   supabase.functions
-    .invoke('notify-volunteering', { body: { event, theatreActivityId, role } })
+    .invoke('notify-volunteering', { body: { event, theatreActivityId, role, sickReportId } })
     .then(({ data, error }) => {
       if (error) console.error(`notify-volunteering (${event}) failed:`, error);
       else console.log(`notify-volunteering (${event})`, data?.data);
@@ -3317,6 +3319,31 @@ export async function sendTestNotification(departmentId) {
     return { data: data?.data, error: null };
   } catch (err) {
     return { data: null, error: err };
+  }
+}
+
+// Settings → Notifications' email switch (staff.notify_email). Staff can't
+// update their own staff row, so writing goes through set_my_notify_email,
+// which only touches the caller's own row.
+export async function getNotifyEmail(staffId) {
+  try {
+    const { data, error } = await supabase
+      .from('staff')
+      .select('notify_email')
+      .eq('staff_id', staffId)
+      .single();
+    return { data: data ? data.notify_email !== false : true, error };
+  } catch (err) {
+    return { data: true, error: err };
+  }
+}
+
+export async function setNotifyEmail(staffId, on) {
+  try {
+    const { error } = await supabase.rpc('set_my_notify_email', { p_staff_id: staffId, p_on: on });
+    return { error };
+  } catch (err) {
+    return { error: err };
   }
 }
 
@@ -3732,10 +3759,9 @@ export async function getDepartmentCallbacks(departmentId, fromDate, toDate) {
 // ============================================================
 // SICK REPORTS — see migrations/2026-08-25_sick_reports.sql. A staff
 // member with a shift today can flag themselves sick from the Variation
-// tab; an officer approves or denies it. Approval is meant to alert
-// whoever's on call at the time, but real push notifications aren't wired
-// up yet (see push-notifications-deferred in project memory) — for now,
-// an approved report just needs to be visible in the app.
+// tab; an officer approves or denies it. Sending it alerts people straight
+// away — in-app pop-ups (below), plus email to officers and a phone
+// notification to whoever's on call (notifyVolunteering 'sick').
 // ============================================================
 
 // Whether staffId already has a pending/approved sick report for date —

@@ -1,12 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { Bell, BellOff } from 'lucide-react';
-import { savePushSubscription, deletePushSubscription, hasPushSubscription, sendTestNotification } from './supabaseClient';
+import { Bell, BellOff, Mail } from 'lucide-react';
+import { savePushSubscription, deletePushSubscription, hasPushSubscription, sendTestNotification, getNotifyEmail, setNotifyEmail } from './supabaseClient';
 
 // Settings → Notifications, for staff and officers alike — GitHub issue #1.
-// Email needs nothing turned on here: it goes to the address on the staff
-// record. Push is per device, so each phone/browser turns it on itself.
+// Each person chooses email, phone or both. Email goes to the address on
+// the staff record unless they untick it (staff.notify_email). Push is per
+// device, so each phone/browser turns it on itself.
 // Staff are told when a shift they can do is offered; officers are told
-// when someone volunteers (see supabase/functions/notify-volunteering).
+// when someone volunteers and (always by email) when someone calls in
+// sick; whoever's on call gets sick calls by push (see
+// supabase/functions/notify-volunteering).
 
 const VAPID_PUBLIC_KEY = process.env.REACT_APP_VAPID_PUBLIC_KEY;
 
@@ -25,9 +28,30 @@ function isIos() {
 export default function NotificationSettings({ staffId, departmentId, email, isOfficer = false }) {
   // 'checking' | 'unsupported' | 'ios-install' | 'not-configured' | 'no-worker' | 'off' | 'on' | 'blocked'
   const [pushState, setPushState] = useState('checking');
+  const [emailOn, setEmailOn] = useState(true);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState(null);
   const [error, setError] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getNotifyEmail(staffId).then(({ data }) => { if (!cancelled) setEmailOn(data); });
+    return () => { cancelled = true; };
+  }, [staffId]);
+
+  const toggleEmail = async (on) => {
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    const { error: saveError } = await setNotifyEmail(staffId, on);
+    setBusy(false);
+    if (saveError) {
+      setError(`Couldn't change email notifications: ${saveError.message}`);
+      return;
+    }
+    setEmailOn(on);
+    setMessage(on ? 'Email notifications are on.' : 'Email notifications are off.');
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -101,7 +125,7 @@ export default function NotificationSettings({ staffId, departmentId, email, isO
         if (deleteError) throw deleteError;
       }
       setPushState('off');
-      setMessage('Notifications are off for this device. You will still get emails.');
+      setMessage(`Phone notifications are off for this device.${emailOn && email ? ' You will still get emails.' : ''}`);
     } catch (err) {
       setError(`Couldn't turn off notifications: ${err.message}`);
     } finally {
@@ -124,14 +148,14 @@ export default function NotificationSettings({ staffId, departmentId, email, isO
     if (data?.pushed) parts.push(`${data.pushed} phone notification${data.pushed === 1 ? '' : 's'}`);
     setMessage(parts.length > 0
       ? `Sent ${parts.join(' and ')}.`
-      : 'Nothing was sent — check you have an email address, or turn on notifications for this device.');
+      : 'Nothing was sent — turn on email or phone notifications above.');
   };
 
   const pushHelp = {
     'ios-install': 'On iPhone, phone notifications only work once Roster is on your Home Screen: tap Share → Add to Home Screen, then open Roster from there and come back here.',
-    unsupported: "This browser can't show phone notifications. You'll still get emails.",
-    'not-configured': "Phone notifications aren't set up for this app yet. You'll still get emails.",
-    'no-worker': 'Phone notifications only work in the installed app, not this preview. You will still get emails.',
+    unsupported: "This browser can't show phone notifications.",
+    'not-configured': "Phone notifications aren't set up for this app yet.",
+    'no-worker': 'Phone notifications only work in the installed app, not this preview.',
     blocked: "Notifications are blocked for this site. Allow them in your browser or phone settings, then reload.",
   }[pushState];
 
@@ -140,14 +164,28 @@ export default function NotificationSettings({ staffId, departmentId, email, isO
       <h3 className="text-base font-semibold text-gray-900">Notifications</h3>
       <p className="text-sm text-gray-600">
         {isOfficer
-          ? "You're told when someone volunteers for a shift you've offered, and when a shift you can do is offered."
+          ? "You're told when someone volunteers for a shift you've offered, and when a shift you can do is offered. Sick calls are always emailed to you."
           : "You're told when a shift you can do is offered for volunteering, on a day you've marked yourself available."}
+        {' '}If someone calls in sick while you're on call, it comes to every device you've turned phone notifications on for.
       </p>
-      <p className="text-sm text-gray-600">
-        {email
-          ? <>Emails go to <span className="font-medium text-gray-900">{email}</span>.</>
-          : 'There is no email address on your staff record, so you won\'t get emails. Ask an officer to add one.'}
-      </p>
+
+      {email ? (
+        <label className="flex items-center gap-2 text-sm text-gray-800">
+          <input
+            type="checkbox"
+            checked={emailOn}
+            onChange={e => toggleEmail(e.target.checked)}
+            disabled={busy}
+            className="h-4 w-4"
+          />
+          <Mail size={16} className="text-gray-500" />
+          <span>Email me at <span className="font-medium text-gray-900">{email}</span></span>
+        </label>
+      ) : (
+        <p className="text-sm text-gray-600">
+          There is no email address on your staff record, so you won't get emails. Ask an officer to add one.
+        </p>
+      )}
 
       <div className="flex flex-wrap items-center gap-2">
         {pushState === 'off' && (
@@ -162,7 +200,7 @@ export default function NotificationSettings({ staffId, departmentId, email, isO
         {pushState === 'on' && (
           <>
             <span className="flex items-center gap-1.5 text-sm text-green-700 font-medium">
-              <Bell size={16} /> On for this device
+              <Bell size={16} /> Phone notifications on for this device
             </span>
             <button
               onClick={turnOff}

@@ -8,6 +8,18 @@
 //                       officers are told.
 //   event 'test'      - sends the caller a test, from Settings →
 //                       Notifications, to check their setup.
+//   event 'sick'      - a staff member just pressed Notify Sick. Of the
+//                       report's sick_call_alerts rows (written by their
+//                       app, see getSickCallRecipients), rostering
+//                       officers are emailed — always, whatever their email
+//                       setting, since covering a sick call is their job —
+//                       and whoever's on call now gets a phone
+//                       notification. Everyone on the list still gets the
+//                       in-app pop-up too.
+//
+// Each person chooses in Settings → Notifications: email unless they've
+// turned it off (staff.notify_email), and push on each device they've
+// turned it on for (a push_subscriptions row).
 //
 // Called from the browser straight after the row is written
 // (supabase.functions.invoke, with the caller's own login), not from a
@@ -61,7 +73,7 @@ function json(body: unknown, status = 200) {
   });
 }
 
-type Recipient = { staff_id: string; name: string | null; email: string | null };
+type Recipient = { staff_id: string; name: string | null; email: string | null; notify_email: boolean };
 type Message = { title: string; body: string; path: string; tag: string };
 type Card = {
   date: string;
@@ -93,13 +105,21 @@ function escapeHtml(text: string) {
   return text.replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]!));
 }
 
-async function send(admin: SupabaseClient, recipients: Recipient[], message: Message) {
+// channels narrows a send to just email or just push (the sick call);
+// either way each person's own settings still apply to what's left.
+async function send(
+  admin: SupabaseClient,
+  recipients: Recipient[],
+  message: Message,
+  channels: { email?: boolean; push?: boolean } = {},
+) {
+  const { email: useEmail = true, push: usePush = true } = channels;
   const url = `${APP_URL}${message.path}`;
   let emailed = 0;
   let pushed = 0;
   let failed = 0;
 
-  if (GMAIL_USER && GMAIL_APP_PASSWORD) {
+  if (useEmail && GMAIL_USER && GMAIL_APP_PASSWORD) {
     const transporter = nodemailer.createTransport({
       host: 'smtp.gmail.com',
       port: 465,
@@ -109,7 +129,7 @@ async function send(admin: SupabaseClient, recipients: Recipient[], message: Mes
     // One email each, so nobody sees who else was told. Gmail's Sent
     // folder keeps the record.
     for (const r of recipients) {
-      if (!r.email) continue;
+      if (!r.email || !r.notify_email) continue;
       try {
         await transporter.sendMail({
           from: `"${APP_NAME}" <${GMAIL_USER}>`,
@@ -128,7 +148,7 @@ async function send(admin: SupabaseClient, recipients: Recipient[], message: Mes
     }
   }
 
-  if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY && recipients.length > 0) {
+  if (usePush && VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY && recipients.length > 0) {
     webpush.setVapidDetails(`mailto:${GMAIL_USER || 'ruralroster@gmail.com'}`, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
     const { data: subs, error } = await admin
       .from('push_subscriptions')
@@ -164,13 +184,13 @@ Deno.serve(async (req) => {
   const authHeader = req.headers.get('Authorization');
   if (!authHeader) return json({ error: 'Missing Authorization header' }, 401);
 
-  let body: { event?: string; theatreActivityId?: string; role?: string; departmentId?: string };
+  let body: { event?: string; theatreActivityId?: string; role?: string; departmentId?: string; sickReportId?: string };
   try {
     body = await req.json();
   } catch {
     return json({ error: 'Invalid JSON body' }, 400);
   }
-  const { event, theatreActivityId, role, departmentId } = body;
+  const { event, theatreActivityId, role, departmentId, sickReportId } = body;
 
   const userClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     global: { headers: { Authorization: authHeader } },
@@ -181,7 +201,7 @@ Deno.serve(async (req) => {
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
   const { data: myStaffRows, error: meError } = await admin
     .from('staff')
-    .select('staff_id, department_id, name, email')
+    .select('staff_id, department_id, name, email, notify_email')
     .eq('user_id', user.id)
     .eq('active', true);
   if (meError) return json({ error: meError.message }, 500);
@@ -198,6 +218,63 @@ Deno.serve(async (req) => {
         tag: 'test',
       });
       return json({ data: result });
+    }
+
+    if (event === 'sick') {
+      if (!sickReportId) return json({ error: 'sickReportId is required' }, 400);
+      const { data: report, error } = await admin
+        .from('sick_reports')
+        .select('sick_report_id, staff_id, staff(name)')
+        .eq('sick_report_id', sickReportId)
+        .maybeSingle();
+      if (error) throw error;
+      if (!report || !myStaffIds.has(report.staff_id)) return json({ error: 'No sick report of yours with that id' }, 403);
+
+      const { data: claimed, error: claimError } = await admin
+        .from('sick_reports')
+        .update({ notified_at: new Date().toISOString() })
+        .eq('sick_report_id', sickReportId)
+        .is('notified_at', null)
+        .select('sick_report_id');
+      if (claimError) throw claimError;
+      if (!claimed || claimed.length === 0) return json({ data: { skipped: 'already notified' } });
+
+      const { data: alerts, error: alertsError } = await admin
+        .from('sick_call_alerts')
+        .select('reason, message, staff:recipient_staff_id(staff_id, name, email, notify_email, role, active)')
+        .eq('sick_report_id', sickReportId);
+      if (alertsError) throw alertsError;
+
+      type AlertStaff = Recipient & { role: string; active: boolean };
+      const rows = (alerts || [])
+        .map(a => ({ reasons: (a.reason as string).split(','), staff: a.staff as unknown as AlertStaff | null }))
+        .filter(a => a.staff?.active);
+      // The reporter's app picked these reasons, so the officer email is
+      // checked against the staff record rather than taken on trust.
+      const officers = rows
+        .filter(a => a.reasons.includes('officer') && a.staff!.role === 'officer')
+        .map(a => ({ ...a.staff!, notify_email: true }));
+      const onCall = rows.filter(a => a.reasons.includes('on_call')).map(a => a.staff!);
+
+      const reporterName = (report.staff as unknown as { name: string } | null)?.name || 'Someone';
+      const message = {
+        title: `${reporterName} has called in sick`,
+        body: alerts?.[0]?.message || `${reporterName} has called in sick for their shift.`,
+        path: '',
+        tag: `sick-${sickReportId}`,
+      };
+      const [emailResult, pushResult] = await Promise.all([
+        send(admin, officers, message, { push: false }),
+        send(admin, onCall, message, { email: false }),
+      ]);
+      return json({
+        data: {
+          emailed: emailResult.emailed,
+          pushed: pushResult.pushed,
+          failed: emailResult.failed + pushResult.failed,
+          recipients: officers.length + onCall.length,
+        },
+      });
     }
 
     if (!theatreActivityId || (role !== 'consultant' && role !== 'registrar')) {
@@ -229,7 +306,7 @@ Deno.serve(async (req) => {
       const card = offer.theatre_activities as unknown as Card;
       const [staffRes, ranksRes, availRes, filledRes] = await Promise.all([
         admin.from('staff')
-          .select('staff_id, name, email, rank, activity_restrictions, advanced_skills')
+          .select('staff_id, name, email, notify_email, rank, activity_restrictions, advanced_skills')
           .eq('department_id', offer.department_id)
           .eq('active', true),
         admin.from('rank_supervision_rules').select('*').eq('department_id', offer.department_id),
@@ -293,7 +370,7 @@ Deno.serve(async (req) => {
 
       const { data: officers, error: officersError } = await admin
         .from('staff')
-        .select('staff_id, name, email')
+        .select('staff_id, name, email, notify_email')
         .eq('department_id', cardRow.department_id)
         .eq('role', 'officer')
         .eq('active', true)
@@ -311,7 +388,7 @@ Deno.serve(async (req) => {
       return json({ data: { ...result, recipients: (officers || []).length } });
     }
 
-    return json({ error: "event must be 'offer', 'volunteer' or 'test'" }, 400);
+    return json({ error: "event must be 'offer', 'volunteer', 'sick' or 'test'" }, 400);
   } catch (err) {
     console.error('notify-volunteering error:', err);
     return json({ error: (err as Error).message || String(err) }, 500);

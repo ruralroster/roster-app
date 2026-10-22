@@ -27,6 +27,7 @@ import {
   createSickReport,
   getSickCallRecipients,
   createSickCallAlerts,
+  notifyVolunteering,
   updateMyCoffeeOrder,
   getActivityTypes,
   updateMyActivityRestrictions,
@@ -548,6 +549,8 @@ export default function StaffRosterView({ departmentId, staffId }) {
 
   const handleNotifySick = async () => {
     if (!staffId || !departmentId || !todayHasShift || mySickReportToday || !sickMessage.trim()) return;
+    // A second check — this emails officers and can wake whoever's on call.
+    if (!window.confirm('Are you sure you want to send the sick call notification?')) return;
 
     setSubmittingSickReport(true);
     try {
@@ -560,6 +563,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
       setShowSickModal(false);
       const { error: alertsErr } = await createSickCallAlerts(departmentId, data.sick_report_id, sickRecipients, message);
       if (alertsErr) throw new Error(`your report was saved, but the pop-ups didn't go out (${alertsErr.message}) — contact your officer directly`);
+      notifyVolunteering('sick', { sickReportId: data.sick_report_id });
       setVolunteerError(null);
     } catch (err) {
       setVolunteerError(`Failed to send sick report: ${err.message}`);
