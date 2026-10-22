@@ -26,3 +26,6 @@ yarn-error.log*
 # Real roster exports — contain staff phone numbers and provider numbers,
 # shouldn't go into version control.
 /exelRosters
+
+# Supabase CLI cache
+/supabase/.temp

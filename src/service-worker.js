@@ -45,3 +45,42 @@ self.addEventListener('message', (event) => {
     self.skipWaiting();
   }
 });
+
+// Web Push — GitHub issue #1. The notify-volunteering Edge Function sends
+// { title, body, url, tag }; tag collapses repeats about the same shift
+// into one notification.
+self.addEventListener('push', (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch {
+    data = { body: event.data ? event.data.text() : '' };
+  }
+  event.waitUntil(
+    self.registration.showNotification(data.title || 'Roster', {
+      body: data.body || '',
+      icon: `${process.env.PUBLIC_URL}/logo192.png`,
+      badge: `${process.env.PUBLIC_URL}/logo192.png`,
+      tag: data.tag,
+      data: { url: data.url || self.registration.scope },
+    })
+  );
+});
+
+// Tapping a notification opens its link — in an already-open Roster
+// window if there is one, otherwise a new one.
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const url = event.notification.data?.url || self.registration.scope;
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windows) => {
+      const existing = windows.find(w => w.url.startsWith(self.registration.scope));
+      if (!existing) return self.clients.openWindow(url);
+      // navigate() only works on a window this worker controls; fall back
+      // to a new window rather than leaving the tap doing nothing.
+      return existing.focus()
+        .then(() => existing.navigate(url))
+        .catch(() => self.clients.openWindow(url));
+    })
+  );
+});

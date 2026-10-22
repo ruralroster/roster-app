@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { ChevronLeft, ChevronRight, ChevronDown, X, AlertCircle, Loader, Search, Download, Coffee, Copy, Check, Hand, Settings, Phone, Star, Shuffle, Plus } from 'lucide-react';
 import TwoFactorSettings from './TwoFactorSettings';
 import ChangePassword from './ChangePassword';
+import NotificationSettings from './NotificationSettings';
 import StaffWalkthrough from './StaffWalkthrough';
 import { CallbackBanner, MyCallbacks } from './CallbackPanel';
 import {
@@ -115,7 +116,11 @@ function startOfWeek(date) {
 }
 
 export default function StaffRosterView({ departmentId, staffId }) {
-  const [activeTab, setActiveTab] = useState('day');
+  // A notification about an offered shift links to ?tab=volunteer (see
+  // supabase/functions/notify-volunteering), opening Variation directly.
+  const [activeTab, setActiveTab] = useState(() => (
+    new URLSearchParams(window.location.search).get('tab') === 'volunteer' ? 'volunteer' : 'day'
+  ));
   const [currentDate, setCurrentDate] = useState(new Date());
   const [dayViewDate, setDayViewDate] = useState(new Date());
   const [staffMember, setStaffMember] = useState(null);
@@ -1764,7 +1769,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
 
             <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
               <h1 className="text-2xl font-bold text-gray-900">Available Shifts</h1>
-              <p className="text-sm text-gray-500">Shifts your officers have opened up for volunteering, over the next 30 days</p>
+              <p className="text-sm text-gray-500">Shifts your officers have opened up for volunteering</p>
               {isSeniorStaff && (
                 <label className="flex items-center gap-2 mt-3 text-sm text-gray-700 cursor-pointer select-none">
                   <input
@@ -1902,6 +1907,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
         { key: 'restrictions', label: 'Activity Restrictions' },
         { key: 'coffee', label: 'Coffee Preferences' },
         { key: 'availability', label: 'Availability' },
+        { key: 'notifications', label: 'Notifications' },
         { key: 'security', label: 'Security' },
         { key: 'walkthrough', label: 'Walkthrough' },
       ];
@@ -2031,6 +2037,14 @@ export default function StaffRosterView({ departmentId, staffId }) {
                   value={staffMember?.coffee_order}
                   onSave={handleCoffeeOrderChange}
                 />
+              </div>
+            )}
+
+            {settingsSubTab === 'notifications' && (
+              <div className="bg-white rounded-lg shadow-sm p-6">
+                {staffId
+                  ? <NotificationSettings staffId={staffId} departmentId={departmentId} email={staffMember?.email} />
+                  : <p className="text-sm text-gray-600">Notifications need a staff record linked to your login.</p>}
               </div>
             )}
 

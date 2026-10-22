@@ -12,8 +12,6 @@
 
 export const GRADE_LABEL = { smo: 'SMO', registrar: 'Registrar', intern: 'Intern' };
 
-const GRADE_ORDER = { intern: 0, registrar: 1, smo: 2 };
-
 // A classic-format sheet section (parseRosterWeek's `section`) → the
 // grade its rows are rostered at. null for anything else (e.g. the ED
 // format, which has no sections).
@@ -24,24 +22,10 @@ export function gradeForSection(section) {
   return null;
 }
 
-// rankRow: the staff member's rank_supervision_rules row. Same split as
-// the import tab's rank suggestion: no supervision needed → SMO, a rank
-// named like "intern" → Intern, every other supervised rank → Registrar.
-// null when the rank isn't configured.
-export function gradeForRank(rankRow) {
-  if (!rankRow) return null;
-  if (rankRow.requires_supervision === false) return 'smo';
-  if (/intern/i.test(rankRow.rank || '')) return 'intern';
-  return 'registrar';
-}
-
-// No required grade → no restriction. A required grade but no known
-// staff grade → not eligible (the safe default).
-export function gradeCanCover(staffGrade, requiredGrade) {
-  if (!requiredGrade) return true;
-  if (!staffGrade) return false;
-  return GRADE_ORDER[staffGrade] >= GRADE_ORDER[requiredGrade];
-}
+// gradeForRank and gradeCanCover live in offerEligibility.js (shared with
+// the notify-offer Edge Function); re-exported here so existing imports
+// keep working.
+export { gradeForRank, gradeCanCover } from './offerEligibility';
 
 // The staff_assignments / volunteer_offers role a graded slot is filled
 // under: SMO slots are consultant roles, everything junior is registrar.

@@ -15,6 +15,7 @@ import RosterExcelExportTab from './RosterExcelExportTab';
 import CollapsibleSection from './CollapsibleSection';
 import ChangePassword from './ChangePassword';
 import TwoFactorSettings from './TwoFactorSettings';
+import NotificationSettings from './NotificationSettings';
 import PlannerJobsSettings from './PlannerJobsSettings';
 import PlannerTab from './PlannerTab';
 import { toLocalDateStr } from './dateUtils';
@@ -71,6 +72,7 @@ import { createTheatreActivity,
   clearVolunteerOfferForRole,
   removeVolunteerOffer,
   getVolunteeringOverview,
+  setStaffRankCanCoverSenior,
   createLeaveType,
   updateLeaveType,
   deleteLeaveType,
@@ -124,7 +126,6 @@ const ALLOCATION_STATUS_STYLES = {
 
 const VOLUNTEER_ROLE_LABEL = { consultant: 'Consultant', registrar: 'Registrar' };
 
-// eslint-disable-next-line no-unused-vars -- staffId (the signed-in officer's own staff_id, now known via App.js) is threaded through for upcoming self-service/audit features; not consumed internally yet.
 export default function OfficerRosterView({ departmentId: departmentIdProp, staffId, topBarActionsRef, isSuperAdmin = false } = {}) {
   const departmentId = departmentIdProp || process.env.REACT_APP_DEPARTMENT_ID;
 
@@ -1538,6 +1539,21 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     setSavingRank(true);
     try {
       const { error } = await setStaffRankSupervision(rank.rule_id, !rank.requires_supervision);
+      if (error) throw error;
+
+      await refreshStaffRanks();
+      setRankError(null);
+    } catch (err) {
+      setRankError(`Failed to update rank: ${err.message}`);
+    } finally {
+      setSavingRank(false);
+    }
+  };
+
+  const handleToggleRankCanCoverSenior = async (rank) => {
+    setSavingRank(true);
+    try {
+      const { error } = await setStaffRankCanCoverSenior(rank.rule_id, !rank.can_cover_senior);
       if (error) throw error;
 
       await refreshStaffRanks();
@@ -4366,6 +4382,15 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
             {/* My Account Group — self-service password + 2FA, same as staff's Security tab */}
             <CollapsibleSection title="My Account">
               <div className="space-y-6">
+                {/* A super admin viewing a department has no staff row in it */}
+                {staffId && (
+                  <NotificationSettings
+                    staffId={staffId}
+                    departmentId={departmentId}
+                    email={refData.staff.find(s => s.staff_id === staffId)?.email}
+                    isOfficer
+                  />
+                )}
                 <ChangePassword />
                 <TwoFactorSettings />
               </div>
@@ -5540,6 +5565,20 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                               />
                               Requires supervision by a higher rank
                             </label>
+                            {rank.requires_supervision && (
+                              <label
+                                className="flex items-center gap-1.5 text-xs text-gray-600 mt-1"
+                                title="For advanced trainees: they're offered, and notified about, senior shifts put out for volunteering"
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={rank.can_cover_senior === true}
+                                  disabled={savingRank}
+                                  onChange={() => handleToggleRankCanCoverSenior(rank)}
+                                />
+                                Can cover senior shifts (advanced trainee)
+                              </label>
+                            )}
                           </div>
                           <div className="flex gap-1 items-center">
                             <button

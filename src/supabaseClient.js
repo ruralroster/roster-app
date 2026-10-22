@@ -4,7 +4,8 @@ import { toLocalDateStr } from './dateUtils';
 import { getSessionGroups, dedupeAssignmentsByShift, assignmentShiftKey } from './shiftSessionUtils';
 import { getMondayOfWeek } from './payrollExport';
 import { matchStaffName, suggestStaffMatches, staffLabelKey, onCallKindsForDay, dutyTypeForOnCallKind, ON_CALL_KIND_LABEL } from './rosterExcelImport';
-import { gradeForSection, gradeForRank, gradeCanCover, GRADE_LABEL } from './staffGrade';
+import { gradeForSection, GRADE_LABEL } from './staffGrade';
+import { isEligibleForOffer } from './offerEligibility';
 import { findActiveOnCalls, findOvertimeShifts } from './callbackUtils';
 import { bestJobForNewCard, jobForImportedShift } from './plannerUtils';
 import { missingRolesForCard, classifyDayStatus } from './volunteerUtils';
@@ -2175,6 +2176,24 @@ export async function setStaffRankSupervision(ruleId, requiresSupervision) {
   }
 }
 
+// Advanced trainees: a rank ticked here can pick up senior shifts offered
+// for volunteering (consultant offers, SMO-graded cards) while still
+// requiring supervision for normal rostering — see canCoverSenior in
+// offerEligibility.js and migrations/2026-10-20_offer_notifications.sql.
+export async function setStaffRankCanCoverSenior(ruleId, canCoverSenior) {
+  try {
+    const { data, error } = await supabase
+      .from('rank_supervision_rules')
+      .update({ can_cover_senior: !!canCoverSenior })
+      .eq('rule_id', ruleId)
+      .select();
+
+    return { data, error };
+  } catch (err) {
+    return { data: null, error: err };
+  }
+}
+
 // Persists a full reordering — orderedRuleIds is every rule_id for this
 // department in its new display order.
 export async function reorderStaffRanks(orderedRuleIds) {
@@ -3082,129 +3101,99 @@ export async function getAllocationStatusForRange(departmentId, startDate, endDa
 // VOLUNTEER SHIFTS
 // ============================================================
 
+// How far ahead the officer's "Unfilled, not offered yet" list looks.
 const VOLUNTEER_LOOKAHEAD_DAYS = 30;
 
-// Theatre activity roles in the next 30 days that an officer has
-// explicitly opened up for volunteering (volunteer_offers — see
-// migrations/2026-09-23_location_requires_both_and_volunteer_offers.sql),
-// this staff member is senior enough for, isn't missing a required
-// Advanced Skill for, isn't activity-restricted from, and has explicitly
-// marked themselves available that date (an unconfirmed day doesn't
-// count, same rule as officer-side assignment).
+// Every role an officer has explicitly opened up for volunteering
+// (volunteer_offers — see
+// migrations/2026-09-23_location_requires_both_and_volunteer_offers.sql)
+// from today on that this staff member is eligible for — see
+// isEligibleForOffer in offerEligibility.js, the same rules the
+// notify-offer Edge Function uses to decide who to email/push. In short:
+// senior enough (an offer's role is a FLOOR — a registrar offer is open to
+// everyone configured, a consultant offer only to ranks that can cover
+// senior shifts), at or above the card's required grade, holding a
+// required Advanced Skill, not activity-restricted, and explicitly marked
+// available that date.
 //
-// Confirmed 2026-09-23: previously EVERY unfilled role in the lookahead
-// window was shown to every staff member whose own rank matched it
-// exactly — no officer action needed, and no way for a senior to see (or
-// help with) a junior-designated shift. That was both too noisy (an
-// officer had no way to hold a slot back) and too narrow (a consultant
-// couldn't offer to cover a free registrar shift). Now: an offer's role
-// is a FLOOR, not an exact match — "registrar" is open to any configured
-// rank (junior or senior; senior covering junior is allowed), "consultant"
-// only to senior ranks (rank_supervision_rules.requires_supervision ===
-// false) — and nothing shows at all unless the officer opened it.
+// Confirmed 2026-09-23: nothing shows unless an officer opened it — an
+// officer needs to be able to hold a slot back. Changed 2026-10-20: no
+// longer limited to the next 30 days, since staff are now notified the
+// moment a shift is offered, however far ahead, and the shift they were
+// told about has to be in their list.
 export async function getAvailableShiftsForStaff(staffId, departmentId) {
   console.log('getAvailableShiftsForStaff called', staffId, departmentId);
 
   try {
-    const today = new Date();
-    const endDate = new Date(today);
-    endDate.setDate(endDate.getDate() + VOLUNTEER_LOOKAHEAD_DAYS);
-    const startStr = toLocalDateStr(today);
-    const endStr = toLocalDateStr(endDate);
+    const startStr = toLocalDateStr(new Date());
 
-    const [staffRes, theatreRes, assignRes, availRes, volunteerRes, offersRes] = await Promise.all([
+    const [staffRes, offersRes, assignRes, availRes, volunteerRes, ranksRes] = await Promise.all([
       supabase
         .from('staff')
         .select('rank, activity_restrictions, advanced_skills')
         .eq('staff_id', staffId)
         .single(),
       supabase
-        .from('theatre_activities')
-        .select('theatre_activity_id, date, location_id, required_grade, locations(name), shifts(name, start_time, end_time), activity_types(name, required_advanced_skills)')
+        .from('volunteer_offers')
+        .select('theatre_activity_id, role, theatre_activities!inner(theatre_activity_id, date, location_id, required_grade, locations(name), shifts(name, start_time, end_time), activity_types(name, required_advanced_skills))')
         .eq('department_id', departmentId)
-        .gte('date', startStr)
-        .lte('date', endStr),
+        .gte('theatre_activities.date', startStr),
       supabase
         .from('staff_assignments')
         .select('theatre_activity_id, role')
         .eq('department_id', departmentId)
-        .gte('date', startStr)
-        .lte('date', endStr),
+        .gte('date', startStr),
       supabase
         .from('staff_availability')
         .select('date, available')
         .eq('staff_id', staffId)
-        .gte('date', startStr)
-        .lte('date', endStr),
+        .gte('date', startStr),
       supabase
         .from('volunteer_requests')
         .select('theatre_activity_id, role')
         .eq('staff_id', staffId),
-      supabase
-        .from('volunteer_offers')
-        .select('theatre_activity_id, role')
-        .eq('department_id', departmentId),
+      getStaffRanks(departmentId),
     ]);
 
     if (staffRes.error) throw staffRes.error;
-    if (theatreRes.error) throw theatreRes.error;
+    if (offersRes.error) throw offersRes.error;
     if (assignRes.error) throw assignRes.error;
     if (availRes.error) throw availRes.error;
     if (volunteerRes.error) throw volunteerRes.error;
-    if (offersRes.error) throw offersRes.error;
+    if (ranksRes.error) throw ranksRes.error;
 
-    const rank = staffRes.data?.rank || '';
-    const { data: staffRanks } = await getStaffRanks(departmentId);
-    const rankRow = staffRanks.find(r => r.rank === rank);
-    if (!rankRow) return { data: [], error: null }; // rank not configured -> nothing to volunteer for
-    const isSenior = !rankRow.requires_supervision;
-    const myGrade = gradeForRank(rankRow);
-
-    const restrictions = staffRes.data?.activity_restrictions || [];
-    const mySkills = new Set(staffRes.data?.advanced_skills || []);
+    const rankRow = (ranksRes.data || []).find(r => r.rank === (staffRes.data?.rank || '')) || null;
 
     // Keyed by theatre_activity_id, not location+date: a location can host
-    // more than one activity/card on the same day (e.g. AM Endoscopy and PM
-    // Anaesthetics both at "Theatre 1"), and a role filled on one card
-    // shouldn't hide a genuinely empty slot on a different card at the same
-    // location. theatre_activity_id is always set here — duty-type
-    // assignments (on-call) no longer create a staff_assignments row at
-    // all, so every row this query sees belongs to a real card.
-    const filledRolesByTheatreActivity = new Map(); // theatre_activity_id -> Set(role)
-    (assignRes.data || []).forEach(a => {
-      if (!a.theatre_activity_id) return;
-      if (!filledRolesByTheatreActivity.has(a.theatre_activity_id)) filledRolesByTheatreActivity.set(a.theatre_activity_id, new Set());
-      filledRolesByTheatreActivity.get(a.theatre_activity_id).add(a.role);
-    });
-
+    // more than one card on the same day, and a role filled on one card
+    // shouldn't hide a genuinely empty slot on a different card there.
+    const filledRoleKeys = new Set(
+      (assignRes.data || []).filter(a => a.theatre_activity_id).map(a => `${a.theatre_activity_id}|${a.role}`)
+    );
     const availableDates = new Set(
       (availRes.data || []).filter(r => r.available === true).map(r => r.date)
     );
-
     const alreadyVolunteered = new Set(
       (volunteerRes.data || []).map(v => `${v.theatre_activity_id}|${v.role}`)
     );
 
-    const theatreById = new Map((theatreRes.data || []).map(ta => [ta.theatre_activity_id, ta]));
-
     const opportunities = (offersRes.data || [])
       .filter(offer => {
-        const eligibleByRank = offer.role === 'registrar' || isSenior; // consultant offers need a senior; registrar offers are open to everyone configured
-        if (!eligibleByRank) return false;
-        const ta = theatreById.get(offer.theatre_activity_id);
-        if (!ta) return false; // outside the lookahead window, or the card's since been removed
-        if (!gradeCanCover(myGrade, ta.required_grade)) return false; // below the card's grade (e.g. an SMO shift never reaches a registrar or intern)
-        const filledRoles = filledRolesByTheatreActivity.get(offer.theatre_activity_id) || new Set();
-        if (filledRoles.has(offer.role)) return false; // already filled — stale offer, not yet cleared
-        if (!availableDates.has(ta.date)) return false; // staff hasn't confirmed availability
-        const activityName = ta.activity_types?.name;
-        if (activityName && restrictions.includes(activityName)) return false; // restricted
-        const requiredSkills = ta.activity_types?.required_advanced_skills || [];
-        if (requiredSkills.length > 0 && !requiredSkills.some(id => mySkills.has(id))) return false; // missing the required Advanced Skill
-        return true;
+        const ta = offer.theatre_activities;
+        return isEligibleForOffer({
+          offerRole: offer.role,
+          rankRow,
+          requiredGrade: ta.required_grade,
+          roleFilled: filledRoleKeys.has(`${offer.theatre_activity_id}|${offer.role}`),
+          isAvailable: availableDates.has(ta.date),
+          activityName: ta.activity_types?.name || null,
+          restrictions: staffRes.data?.activity_restrictions || [],
+          requiredSkills: ta.activity_types?.required_advanced_skills || [],
+          skills: staffRes.data?.advanced_skills || [],
+        });
       })
       .map(offer => {
-        const ta = theatreById.get(offer.theatre_activity_id);
+        const ta = offer.theatre_activities;
         return {
           theatre_activity_id: offer.theatre_activity_id,
           location_id: ta.location_id,
@@ -3248,6 +3237,7 @@ export async function createVolunteerOffer(departmentId, theatreActivityId, role
       .select()
       .single();
 
+    if (!error) notifyVolunteering('offer', { theatreActivityId, role });
     return { data, error };
   } catch (err) {
     return { data: null, error: err };
@@ -3295,6 +3285,90 @@ export async function clearVolunteerOfferForRole(theatreActivityId, role) {
   }
 }
 
+// ============================================================
+// NOTIFICATIONS — email + push, GitHub issue #1. See
+// supabase/functions/notify-volunteering and
+// migrations/2026-10-20_offer_notifications.sql.
+// ============================================================
+
+// Tells the notify-volunteering Edge Function an offer or volunteer
+// request was just written. Fire-and-forget: the offer/request itself has
+// already succeeded, and a failed email or push mustn't turn that into an
+// error on screen. The function checks the caller is allowed, and only
+// ever notifies each row once.
+export function notifyVolunteering(event, { theatreActivityId, role }) {
+  supabase.functions
+    .invoke('notify-volunteering', { body: { event, theatreActivityId, role } })
+    .then(({ data, error }) => {
+      if (error) console.error(`notify-volunteering (${event}) failed:`, error);
+      else console.log(`notify-volunteering (${event})`, data?.data);
+    })
+    .catch(err => console.error(`notify-volunteering (${event}) failed:`, err));
+}
+
+// Settings → Notifications' "Send me a test".
+export async function sendTestNotification(departmentId) {
+  try {
+    const { data, error } = await supabase.functions.invoke('notify-volunteering', {
+      body: { event: 'test', departmentId },
+    });
+    if (error) return { data: null, error };
+    if (data?.error) return { data: null, error: new Error(data.error) };
+    return { data: data?.data, error: null };
+  } catch (err) {
+    return { data: null, error: err };
+  }
+}
+
+// subscriptionJson: PushSubscription.toJSON() — { endpoint, keys: { p256dh, auth } }.
+export async function savePushSubscription(staffId, departmentId, subscriptionJson) {
+  try {
+    const { error } = await supabase
+      .from('push_subscriptions')
+      .upsert([{
+        staff_id: staffId,
+        department_id: departmentId,
+        endpoint: subscriptionJson.endpoint,
+        p256dh: subscriptionJson.keys.p256dh,
+        auth: subscriptionJson.keys.auth,
+        user_agent: navigator.userAgent.slice(0, 300),
+      }], { onConflict: 'staff_id,endpoint' });
+    return { error };
+  } catch (err) {
+    return { error: err };
+  }
+}
+
+// Only removes this staff member's row — the browser's subscription itself
+// is left alone, since the same browser may also be subscribed for another
+// department's staff row.
+export async function deletePushSubscription(staffId, endpoint) {
+  try {
+    const { error } = await supabase
+      .from('push_subscriptions')
+      .delete()
+      .eq('staff_id', staffId)
+      .eq('endpoint', endpoint);
+    return { error };
+  } catch (err) {
+    return { error: err };
+  }
+}
+
+export async function hasPushSubscription(staffId, endpoint) {
+  try {
+    const { data, error } = await supabase
+      .from('push_subscriptions')
+      .select('push_subscription_id')
+      .eq('staff_id', staffId)
+      .eq('endpoint', endpoint)
+      .limit(1);
+    return { data: (data || []).length > 0, error };
+  } catch (err) {
+    return { data: false, error: err };
+  }
+}
+
 // Officer-side: takes a role back off the volunteering list. Its pending
 // volunteers go too — the shift they asked for is no longer on offer, and
 // leaving their requests would keep it showing as "Request Sent".
@@ -3308,9 +3382,7 @@ export async function removeVolunteerOffer(theatreActivityId, role) {
 
 // The officer's Volunteering panel on the Calendar tab, from today on:
 //   offers   - every open offer (role still empty), each with its pending
-//              volunteers, soonest first. Not limited to the staff
-//              lookahead — an officer can offer further out, and staff
-//              see it once it's within VOLUNTEER_LOOKAHEAD_DAYS.
+//              volunteers, soonest first, however far ahead.
 //   unoffered - cards in the next VOLUNTEER_LOOKAHEAD_DAYS with a role
 //              that needs someone (missingRolesForCard) and hasn't been
 //              offered, so an officer can offer it straight from the list.
@@ -3423,6 +3495,7 @@ export async function createVolunteerRequest(departmentId, theatreActivityId, st
       .select()
       .single();
 
+    if (!error) notifyVolunteering('volunteer', { theatreActivityId, role });
     return { data, error };
   } catch (err) {
     return { data: null, error: err };
