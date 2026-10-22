@@ -24,8 +24,12 @@ yarn-debug.log*
 yarn-error.log*
 
 # Real roster exports — contain staff phone numbers and provider numbers,
-# shouldn't go into version control.
+# shouldn't go into version control (this repo is public).
 /exelRosters
+/Rosters
+
+# Logo design originals — the app uses the exported copies in public/.
+/Logos
 
 # Supabase CLI cache
 /supabase/.temp
