@@ -1,4 +1,4 @@
-import { jobCategoryFor } from './jobColours';
+import { isEdLateAssignment } from './coffeeDay';
 import { dutyTypeForOnCallKind } from './rosterExcelImport';
 
 // ============================================================
@@ -14,22 +14,8 @@ import { dutyTypeForOnCallKind } from './rosterExcelImport';
 // the fairness report and fatigue checks still read the real slot, and
 // filling the slot (by hand or by import) takes over straight away.
 
-const minutes = (time) => {
-  const [h, m] = (time || '').split(':').map(Number);
-  return Number.isFinite(h) ? h * 60 + (m || 0) : null;
-};
-
-// A consultant on an Emergency shift starting 10:00-14:00 and finishing
-// 20:00 or later — the EDL (10:30-21:00). Registrars' "Evening 1300-2300"
-// and interns' "ED 1030-2030" aren't consultant shifts, so never count.
-export function isEdLateAssignment(assignment) {
-  if (assignment.role !== 'consultant') return false;
-  if (jobCategoryFor(assignment.locations?.name) !== 'emergency') return false;
-  const start = minutes(assignment.shifts?.start_time);
-  const end = minutes(assignment.shifts?.end_time);
-  if (start === null || end === null) return false;
-  return start >= 10 * 60 && start <= 14 * 60 && end >= 20 * 60;
-}
+// isEdLateAssignment lives in coffeeDay.js (the coffee emails need it too).
+export { isEdLateAssignment };
 
 // One day's stand-in ED on-call: { dutyKey, dutyLabel, staffId, staffName }
 // when the department's ED on-call slot is empty and exactly one

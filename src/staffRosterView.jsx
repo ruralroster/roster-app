@@ -46,6 +46,7 @@ import {
 } from './supabaseClient';
 import CollapsibleSection from './CollapsibleSection';
 import CoffeePicker from './CoffeePicker';
+import { summarizeCoffeeOrder } from './coffeeDay';
 import EditableCell from './EditableCell';
 import { getSessionGroups, SESSION_GROUP_ORDER, SESSION_GROUP_LABELS, getDepartmentSessionBoundaries, dedupeAssignmentsByShift } from './shiftSessionUtils';
 import {
@@ -941,6 +942,18 @@ export default function StaffRosterView({ departmentId, staffId }) {
     loadCoffeeAttention();
   }, [departmentId, department]);
 
+  // The 8:15 "no coffee order" push links to ?coffee=1: open the popup
+  // straight away, once, then drop the flag so a reload doesn't reopen it.
+  useEffect(() => {
+    if (!departmentId || !department) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('coffee') !== '1') return;
+    params.delete('coffee');
+    const query = params.toString();
+    window.history.replaceState(null, '', window.location.pathname + (query ? `?${query}` : '') + window.location.hash);
+    handleOpenCoffeeModal();
+  }, [departmentId, department]);
+
   const closeCoffeeModal = () => {
     setShowCoffeeModal(false);
     loadCoffeeAttention();
@@ -1009,31 +1022,10 @@ export default function StaffRosterView({ departmentId, staffId }) {
 
   const coffeeOrdersIncluded = coffeeOrdersForModal.filter(person => !coffeeRemovedStaffIds.has(person.staff_id));
 
-  // One line per distinct (coffee type, milk type, xtra shot) combination,
-  // with a count — what actually gets ordered from the coffee place, as
-  // opposed to the per-person table above it which is for checking who's
-  // getting what. An xtra-shot order is always its own line, even when it
-  // otherwise matches a non-shot line, so the coffee place doesn't miss it.
-  // Extras (locums, visiting surgeons — people with no staff row to read a
-  // coffee_order off) are tallied into the same counts, since the coffee
-  // place only cares about the total by type, not who it's for.
-  const coffeeSummaryLines = (() => {
-    const counts = new Map(); // `${coffeeType}|${milkType}|${extraShot}` -> count
-    coffeeOrdersIncluded.forEach(person => {
-      const key = `${person.coffeeType}|${person.milkType || ''}|${person.extraShot ? '1' : '0'}`;
-      counts.set(key, (counts.get(key) || 0) + 1);
-    });
-    coffeeExtras.forEach(extra => {
-      const key = `${extra.coffee_type}|${extra.milk_type || ''}|${extra.extra_shot ? '1' : '0'}`;
-      counts.set(key, (counts.get(key) || 0) + extra.quantity);
-    });
-    return Array.from(counts.entries()).map(([key, count]) => {
-      const [coffeeType, milkType, extraShot] = key.split('|');
-      const milkSuffix = milkType && milkType !== NO_MILK ? ` on ${milkType}` : '';
-      const shotSuffix = extraShot === '1' ? ' + Xtra Shot' : '';
-      return `${count} x ${coffeeType}${milkSuffix}${shotSuffix}`;
-    });
-  })();
+  // What's ordered from the café: one line per distinct coffee, with
+  // extras tallied in (see summarizeCoffeeOrder). The 9:00 email uses the
+  // same lines.
+  const coffeeSummaryLines = summarizeCoffeeOrder(coffeeOrdersIncluded, coffeeExtras);
 
   const coffeeExtrasTotal = coffeeExtras.reduce((sum, extra) => sum + extra.quantity, 0);
   const totalCoffeeCount = coffeeOrdersIncluded.length + coffeeExtrasTotal;
