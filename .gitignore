@@ -33,3 +33,6 @@ yarn-error.log*
 
 # Supabase CLI cache
 /supabase/.temp
+
+# v3 Google Sheet export for the district-roster import (staff data, never commit)
+v3-import/
