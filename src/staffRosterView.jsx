@@ -925,14 +925,17 @@ export default function StaffRosterView({ departmentId, staffId }) {
           staff_id: a.staff_id, name: a.staff?.name, rank: a.staff?.rank, coffee_order: a.staff?.coffee_order,
         }])).values()];
       const visitorNames = visitors.filter(v => morning({ start_time: v.start_time, end_time: v.end_time })).map(v => v.name);
-      setCoffeeAttentionList(coffeeAttention({
+      const list = coffeeAttention({
         rostered,
         visitorNames,
         removedStaffIds: adjustments.removedStaffIds,
         extras: adjustments.extras,
-      }));
+      });
+      setCoffeeAttentionList(list);
+      return list;
     } catch (err) {
       console.error('loadCoffeeAttention error:', err);
+      return [];
     }
   };
 
@@ -943,8 +946,8 @@ export default function StaffRosterView({ departmentId, staffId }) {
   }, [departmentId, department]);
 
   // The 8:15 "no coffee order" push (and the coffee emails) link to
-  // ?coffee=1: greet them with who still needs an order, then on to the
-  // Coffee popup. Once only: the flag is dropped so a reload doesn't repeat it.
+  // ?coffee=1: if anyone still needs an order, greet them with who, then on
+  // to the Coffee popup; if nobody does, straight to the Coffee popup. Once only: the flag is dropped so a reload doesn't repeat it.
   const [showCoffeeGreeting, setShowCoffeeGreeting] = useState(false);
   useEffect(() => {
     if (!departmentId || !department) return;
@@ -953,8 +956,11 @@ export default function StaffRosterView({ departmentId, staffId }) {
     params.delete('coffee');
     const query = params.toString();
     window.history.replaceState(null, '', window.location.pathname + (query ? `?${query}` : '') + window.location.hash);
-    // After the list loads, so it never flashes "Nothing to do" first.
-    loadCoffeeAttention().then(() => setShowCoffeeGreeting(true));
+    // Greet only if someone still needs an order; otherwise straight to Coffee.
+    loadCoffeeAttention().then(list => {
+      if (list?.length) setShowCoffeeGreeting(true);
+      else handleOpenCoffeeModal();
+    });
   }, [departmentId, department]);
 
   const closeCoffeeModal = () => {
@@ -2277,7 +2283,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
             <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2 mb-3">
               <Coffee size={22} /> Good morning{staffMember?.name ? ` ${staffMember.name.replace(/^\s*(dr|prof|a\/prof)\.?\s+/i, '').trim().split(/\s+/)[0]}` : ''}!
             </h2>
-            {coffeeAttentionList.length > 0 ? (
+            {coffeeAttentionList.length > 0 && (
               <>
                 <p className="text-sm text-gray-700 mb-2">
                   {coffeeAttentionList.length === 1 ? 'This person is' : 'These people are'} working today with no coffee order yet:
@@ -2287,8 +2293,6 @@ export default function StaffRosterView({ departmentId, staffId }) {
                 </ul>
                 <p className="text-xs text-gray-500 mb-4">Add theirs before the coffee order is emailed at 9:00.</p>
               </>
-            ) : (
-              <p className="text-sm text-gray-700 mb-4">Everyone working today has a coffee order. Nothing to do.</p>
             )}
             <div className="flex justify-end gap-2">
               <button onClick={() => setShowCoffeeGreeting(false)} className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg">
@@ -2298,7 +2302,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
                 onClick={() => { setShowCoffeeGreeting(false); handleOpenCoffeeModal(); }}
                 className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg"
               >
-                {coffeeAttentionList.length > 0 ? 'Add coffees' : 'Open coffee order'}
+                Add coffees
               </button>
             </div>
           </div>
