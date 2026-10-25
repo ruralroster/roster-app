@@ -256,7 +256,8 @@ async function runDepartment(admin, department, preview) {
   const { date, minutes: minutes2 } = brisbaneNow();
   const day = await loadDay(admin, department, date);
   if (preview) {
-    await sendOrderEmail(department, day.order, { staff_id: null, name: null, email: preview }, null, null);
+    const { data: who } = await admin.from("staff").select("staff_id, name").eq("department_id", department.department_id).ilike("email", preview).limit(1).maybeSingle();
+    await sendOrderEmail(department, day.order, { staff_id: who?.staff_id ?? null, name: who?.name ?? null, email: preview }, null, null);
     return { preview: true };
   }
   const done = [];

@@ -942,8 +942,10 @@ export default function StaffRosterView({ departmentId, staffId }) {
     loadCoffeeAttention();
   }, [departmentId, department]);
 
-  // The 8:15 "no coffee order" push links to ?coffee=1: open the popup
-  // straight away, once, then drop the flag so a reload doesn't reopen it.
+  // The 8:15 "no coffee order" push (and the coffee emails) link to
+  // ?coffee=1: greet them with who still needs an order, then on to the
+  // Coffee popup. Once only: the flag is dropped so a reload doesn't repeat it.
+  const [showCoffeeGreeting, setShowCoffeeGreeting] = useState(false);
   useEffect(() => {
     if (!departmentId || !department) return;
     const params = new URLSearchParams(window.location.search);
@@ -951,7 +953,8 @@ export default function StaffRosterView({ departmentId, staffId }) {
     params.delete('coffee');
     const query = params.toString();
     window.history.replaceState(null, '', window.location.pathname + (query ? `?${query}` : '') + window.location.hash);
-    handleOpenCoffeeModal();
+    // After the list loads, so it never flashes "Nothing to do" first.
+    loadCoffeeAttention().then(() => setShowCoffeeGreeting(true));
   }, [departmentId, department]);
 
   const closeCoffeeModal = () => {
@@ -2268,6 +2271,40 @@ export default function StaffRosterView({ departmentId, staffId }) {
       )}
 
       {/* Coffee Orders Modal */}
+      {showCoffeeGreeting && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-sm">
+            <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2 mb-3">
+              <Coffee size={22} /> Good morning{staffMember?.name ? ` ${staffMember.name.replace(/^\s*(dr|prof|a\/prof)\.?\s+/i, '').trim().split(/\s+/)[0]}` : ''}!
+            </h2>
+            {coffeeAttentionList.length > 0 ? (
+              <>
+                <p className="text-sm text-gray-700 mb-2">
+                  {coffeeAttentionList.length === 1 ? 'This person is' : 'These people are'} working today with no coffee order yet:
+                </p>
+                <ul className="text-sm font-medium text-gray-900 list-disc pl-5 mb-3">
+                  {coffeeAttentionList.map(item => <li key={item.key}>{item.name}{item.kind === 'visitor' ? ' (visitor)' : ''}</li>)}
+                </ul>
+                <p className="text-xs text-gray-500 mb-4">Add theirs before the coffee order is emailed at 9:00.</p>
+              </>
+            ) : (
+              <p className="text-sm text-gray-700 mb-4">Everyone working today has a coffee order. Nothing to do.</p>
+            )}
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setShowCoffeeGreeting(false)} className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg">
+                Close
+              </button>
+              <button
+                onClick={() => { setShowCoffeeGreeting(false); handleOpenCoffeeModal(); }}
+                className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg"
+              >
+                {coffeeAttentionList.length > 0 ? 'Add coffees' : 'Open coffee order'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showCoffeeModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-lg max-h-[85vh] flex flex-col">
