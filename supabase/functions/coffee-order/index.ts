@@ -357,11 +357,11 @@ function firstName(name) {
 async function sendOrderEmail(department, order, to, changes, fallbackNote) {
   if (!GMAIL_USER || !GMAIL_APP_PASSWORD) throw new Error("GMAIL_USER / GMAIL_APP_PASSWORD not set");
   const place = department.coffee_place_name || "the coffee shop";
-  const deptName = department.name;
+  const deptName = department.name.replace(/\s+hospital$/i, "");
   const totalText = `Total: ${order.total} coffee${order.total === 1 ? "" : "s"}`;
   const html = [
     `<p style="${FONT}">Good morning ${escapeHtml(firstName(to.name))}!</p>`,
-    `<p style="${FONT}">This email contains the most up-to-date coffee order. Don't forget, you can text the order directly to ${escapeHtml(place)} by <a href="${COFFEE_URL}">opening the app</a> and pressing the coffee icon.</p>`,
+    `<p style="${FONT}">This email contains the most up-to-date coffee order. Don't forget, you can add extra people or text the order directly to ${escapeHtml(place)} by <a href="${COFFEE_URL}">opening the app</a> and pressing the coffee icon.</p>`,
     fallbackNote ? `<p style="${FONT} color: #b45309;">${escapeHtml(fallbackNote)}</p>` : "",
     changes ? `<h3 style="${FONT}">What's changed</h3><ul style="${FONT}">${changes.map((c) => `<li>${escapeHtml(c)}</li>`).join("")}</ul>` : `<p style="${FONT}">You're on-call today for ED late (and coffee!) in ${escapeHtml(deptName)}. Here is the coffee order for today:</p>`,
     `<h3 style="${FONT}">Coffee Summary</h3>`,
@@ -376,7 +376,7 @@ async function sendOrderEmail(department, order, to, changes, fallbackNote) {
   const text = [
     `Good morning ${firstName(to.name)}!`,
     "",
-    `This email contains the most up-to-date coffee order. Don't forget, you can text the order directly to ${place} by opening the app (${COFFEE_URL}) and pressing the coffee icon.`,
+    `This email contains the most up-to-date coffee order. Don't forget, you can add extra people or text the order directly to ${place} by opening the app (${COFFEE_URL}) and pressing the coffee icon.`,
     ...fallbackNote ? ["", fallbackNote] : [],
     "",
     ...changes ? ["What's changed:", ...changes.map((c) => `- ${c}`)] : [`You're on-call today for ED late (and coffee!) in ${deptName}. Here is the coffee order for today:`],
@@ -400,6 +400,7 @@ async function sendOrderEmail(department, order, to, changes, fallbackNote) {
   });
   await transporter.sendMail({
     from: `"${deptName} Coffee" <${GMAIL_USER}>`,
+    // e.g. "Innisfail Coffee"
     to: to.email,
     subject: changes ? "Coffee order update" : "Daily Coffee Order",
     text,
