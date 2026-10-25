@@ -9,7 +9,7 @@
 // from src/, so this file and the three it imports (coffeeUtils.js,
 // shiftSessionUtils.js, jobColours.js) are byte-for-byte copies in
 // supabase/functions/_shared/. coffeeDay.test.js fails if they drift. Edit
-// these, then copy them across.
+// these, then copy them across and run `npm run build:functions`.
 //
 // Imports carry their .js extension so the same file runs in Deno.
 

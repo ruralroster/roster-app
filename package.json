@@ -20,7 +20,8 @@
     "start": "react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
-    "eject": "react-scripts eject"
+    "eject": "react-scripts eject",
+    "build:functions": "node scripts/build-functions.mjs"
   },
   "eslintConfig": {
     "extends": [
@@ -42,6 +43,7 @@
   },
   "devDependencies": {
     "autoprefixer": "^10.5.4",
+    "esbuild": "^0.25.0",
     "postcss": "^8.5.26",
     "supabase": "^2.115.0",
     "tailwindcss": "^4.3.3"

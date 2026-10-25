@@ -1,4 +1,5 @@
 import fs from 'fs';
+import { execFileSync } from 'child_process';
 import path from 'path';
 import { dayCoffeeOrder, summarizeCoffeeOrder, edLateConsultant, edOnCallStaffId, edOnCallDutyType } from './coffeeDay';
 import { dutyTypeForOnCallKind } from './rosterExcelImport';
@@ -11,6 +12,11 @@ test.each(['coffeeDay.js', 'coffeeUtils.js', 'shiftSessionUtils.js', 'jobColours
     expect(shared).toBe(here);
   },
 );
+
+test('the deployable coffee-order/index.ts is rebuilt from its source', () => {
+  // Throws (failing the test) if npm run build:functions needs running.
+  execFileSync('node', ['scripts/build-functions.mjs', '--check'], { cwd: path.join(__dirname, '..'), stdio: 'pipe' });
+});
 
 const MORNING = { start_time: '08:00:00', end_time: '17:00:00' };
 const EDL = { start_time: '10:30:00', end_time: '21:00:00' };
