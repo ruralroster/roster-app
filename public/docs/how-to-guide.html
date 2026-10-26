@@ -438,6 +438,15 @@
         <p>The moment you offer a shift, everyone who'd see it in their Available Shifts list is <strong>emailed</strong>, and gets a <strong>phone notification</strong> if they've turned that on. When someone volunteers, every officer is emailed and notified the same way. Each offer and each volunteer is only ever notified once, so taking an offer off and putting it back sends it again.</p>
         <p>Emails come from ruralroster@gmail.com and go to the email address on each staff record, so check those are filled in (Staff and Availability). Phone notifications are turned on per device in <strong>Settings → My Account → Notifications</strong> (staff: <strong>Settings → Notifications</strong>), where <strong>Send me a test</strong> checks it's working. On iPhone they only work once Roster has been added to the Home Screen.</p>
         <p>In <strong>Classic view</strong>, a volunteer instead appears as a clickable entry inside the card's Consultant/Registrar dropdown, with a <span aria-hidden="true">🤚</span> badge on the card. Picking one and tapping <strong>Complete Allocation</strong> clears the offer and any other pending requests the same way.</p>
+        <h4>If nobody local takes it: DR Roster</h4>
+        <p>If your department is linked to a site in <a href="https://ruralroster.github.io/district-roster/">DR Roster</a> (the district app), an offer nobody here has taken goes out to the district's doctors:</p>
+        <ul>
+          <li>It goes up once it's been offered for the site's <strong>keep local</strong> time, 72 hours unless changed on DR Roster's Sites tab, or straight away if the shift starts sooner than that. It's checked every 15 minutes.</li>
+          <li>It's posted as a consultant, registrar or intern shift to match the offer. A consultant shift needs the skill the card's consultant needs; lower ones are open to any doctor at or above that level.</li>
+          <li>If someone here volunteers and is booked, or you remove the offer, the district shift is cancelled and anyone who applied is told.</li>
+          <li>When you (or any officer for the site) approve a district doctor in DR Roster, they go onto the card by themselves: as an ordinary booking if they're staff here, otherwise as a visitor marked <strong>From DR Roster</strong>. The offer comes off at the same time. If the district shift is later reopened or cancelled, they come off the card and the offer goes back up.</li>
+          <li>A shift already posted in DR Roster for the same site, date and hours (for example one sent to the whole network) is linked to your offer instead of being posted twice.</li>
+        </ul>
       </article>
 
       <article class="topic" id="officer-sick-calls">
@@ -500,7 +509,8 @@
           <li>Pick a person in the bar at the bottom. Use the <strong>Show</strong> filter (Everyone, Seniors, Juniors or a single rank) to narrow the list. Each name shows how many days they've worked this period against their target.</li>
           <li>The places they can fill light up <span class="mark">green</span>. Tap one to book them there.</li>
           <li>To add someone on top of a job's places, tap <strong>+ extra</strong> on that card. It's shown separately from the places, so the places still read as covered or short.</li>
-          <li>For a visiting surgeon or dentist, tap an amber place and type their name. Visitors are never counted against staffing and never appear on the roster.</li>
+          <li>For a visiting surgeon or dentist, tap an amber place and type their name. Visitors aren't staff: they're not in payroll or fairness counts. They do show on the Day view card and in the staff app's Day tab, and a card with a visitor on it counts as covered.</li>
+          <li>District doctors booked from DR Roster appear as visitors marked <strong>From DR Roster</strong>, in an empty place for their role (or as an extra if there's none). Change or remove them in DR Roster, not here.</li>
           <li>With nobody picked, tap a name on the grid to take it off that card, or tap a visitor's name to change or clear it.</li>
         </ol>
         <p>A person is not offered a place they can't do. Each place can say what it needs:</p>
@@ -737,7 +747,8 @@
       <article class="topic" id="staff-coffee">
         <span class="eyebrow">Coffee</span>
         <h3>Ordering, and sending the order</h3>
-        <p>Set your usual order once in <strong>Settings → Coffee Preferences</strong>: coffee type, milk, and an optional <strong>Xtra shot</strong>. The <strong>Coffee</strong> button (bottom bar) opens today's orders, defaulted to the morning shift. At the top, an <strong>Order Summary</strong> totals everyone's order by type and milk (e.g. "3 x Flat White on Oat Milk"), with extra-shot orders on their own line. Tap <strong>Text order to [Coffee Place]</strong> to open your messages app with the order pre-filled, ready to check over and send.</p>
+        <p>Set your usual order once in <strong>Settings → Coffee Preferences</strong>: coffee type, milk, and an optional <strong>Xtra shot</strong>. The <strong>Coffee</strong> button (bottom bar) opens today's orders, defaulted to the morning shift. At the top, an <strong>Order Summary</strong> totals everyone's order by type and milk (e.g. "3 x Flat White on Oat Milk"), with extra-shot orders on their own line. Tap <strong>Text order to [Coffee Place]</strong>, then <strong>Pick up 10:25</strong> or <strong>Delivery 10:30</strong>. Your messages app opens with the order pre-filled, ending "I can pick it up at 10:25, but let me know if delivery is easier!" or "If you can deliver it to the hospital today at 10:30 that'd be awesome. If not, let me know.", ready to check over and send.</p>
+        <p><strong>The daily email.</strong> At 9:00 each day the consultant on the ED late is emailed the morning's order (if the app can't tell who that is, or they have no email, it goes to the rostering officers). If the order changes later in the day, they're emailed what's changed. At 8:15, whoever was on ED call overnight gets a phone notification if anyone working the morning has no coffee order yet.</p>
         <ul>
           <li>Untick someone's row to leave them off today's order.</li>
           <li><strong>Add someone not on the roster</strong> (under the list) adds a coffee for a locum or visitor. It appears as a normal row in the list.</li>
@@ -761,7 +772,7 @@
         <span class="eyebrow">Settings</span>
         <h3>Availability and profile</h3>
         <p>Settings has six sub-tabs: <strong>Profile</strong>, <strong>Activity Restrictions</strong>, <strong>Coffee Preferences</strong>, <strong>Availability</strong>, <strong>Security</strong> and <strong>Walkthrough</strong>.</p>
-        <p><strong>Availability:</strong> mark yourself available or unavailable day by day. This is what the roster and Variation opportunities check against. New accounts start out available every day, so you only need to mark the days you <em>can't</em> work. <strong>Profile</strong> lets you set your phone and email. Changing your email here also changes the address you sign in with. <strong>Activity Restrictions</strong> lets you opt out of activities you can't or won't do. Advanced Skills are different: an officer tags those on your behalf, so if a slot you'd expect to see isn't offered to you, check with them about what it requires.</p>
+        <p><strong>Availability:</strong> tap a day to cycle it: grey (not set) → green (available) → red (unavailable) → dark grey (unavailable, working elsewhere) → grey. This is what the roster and Variation opportunities check against; to this app red and dark grey are both unavailable. The difference is for <strong>DR Roster</strong>, the district app: on a red day (leave, a day off) you can still be offered district shifts, in case you'd like to pick one up; on a dark grey day you're working another job and DR Roster offers you nothing. New accounts start out available every day, so you only need to mark the days you <em>can't</em> work. <strong>Profile</strong> lets you set your phone and email. Changing your email here also changes the address you sign in with. <strong>Activity Restrictions</strong> lets you opt out of activities you can't or won't do. Advanced Skills are different: an officer tags those on your behalf, so if a slot you'd expect to see isn't offered to you, check with them about what it requires.</p>
         <p>The <strong>Security</strong> sub-tab is where you change your password and turn two-factor authentication on or off (see below). Officers have the same options under Settings → <strong>My Account</strong>.</p>
         <p><strong>Walkthrough</strong> is a plain-English tour of every staff screen, built into the app. It's a good place to send someone who's new.</p>
       </article>
