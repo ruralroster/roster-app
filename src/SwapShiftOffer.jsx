@@ -68,8 +68,8 @@ export default function SwapShiftOffer() {
     <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
       <h2 className="text-lg font-bold text-gray-900 mb-1">Swap a shift (DR Roster)</h2>
       <p className="text-sm text-gray-500 mb-3">
-        Can't do a shift? Put it on DR Roster's swap marketplace. Doctors there can take it or swap one of theirs for it,
-        and your officer approves the swap. You still work it unless a swap is approved.{' '}
+        Can't do a shift? Put it on DR Roster's swap marketplace. A doctor there swaps one of theirs for it, on a day you can
+        work, and your officer approves the swap. You still work it unless a swap is approved.{' '}
         <a href={DR_ROSTER_URL} target="_blank" rel="noreferrer" className="text-blue-700 underline">Open DR Roster</a>
       </p>
       {error && <p className="text-sm text-red-700 mb-2">{error}</p>}
@@ -126,7 +126,8 @@ export default function SwapShiftOffer() {
 }
 
 // Service disruption, and the days/nights of the shift's pay fortnight you
-// could work in return (none: someone can only take it).
+// could work in return (at least one: a swap never changes anyone's number
+// of shifts).
 function ListForm({ shift, busy, onCancel, onSubmit }) {
   const [disruption, setDisruption] = useState(false);
   const [slots, setSlots] = useState([]);
@@ -146,7 +147,10 @@ function ListForm({ shift, busy, onCancel, onSubmit }) {
         <span>Service disruption: if nobody takes it, the shift goes uncovered</span>
       </label>
       <div>
-        <p className="text-gray-700">Days or nights you could work in return (this pay fortnight). Leave them all clear if you only want someone to take it.</p>
+        <p className="text-gray-700">
+          Days or nights you could work in return (this pay fortnight): tick at least one. Whoever takes your shift gives you one of
+          theirs on one of them, so neither of you ends up with fewer shifts.
+        </p>
         <div className="grid gap-x-3 gap-y-1 mt-2 items-center" style={{ gridTemplateColumns: 'auto 3rem 3rem', maxWidth: '20rem' }}>
           <span />
           <span className="text-xs text-gray-500 text-center">Day</span>
@@ -173,7 +177,7 @@ function ListForm({ shift, busy, onCancel, onSubmit }) {
         <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Family wedding" className="mt-1 w-full px-2 py-1 border border-gray-300 rounded" />
       </label>
       <div className="flex gap-2">
-        <button type="submit" disabled={busy} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded disabled:opacity-50">
+        <button type="submit" disabled={busy || slots.length === 0} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded disabled:opacity-50">
           Offer for swap
         </button>
         <button type="button" onClick={onCancel} className="px-3 py-1.5 border border-gray-300 rounded text-gray-700">Cancel</button>
