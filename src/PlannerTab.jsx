@@ -8,6 +8,7 @@ import {
   bookPlannerPlace,
   deleteStaffAssignment,
   setPlannerVisitor,
+  renamePlannerVisitor,
   deletePlannerVisitor,
   updateDutyAssignment,
   applyWeekTemplate,
@@ -196,9 +197,11 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
     run("Couldn't remove the booking", () => deleteStaffAssignment(a.assignment_id));
   };
 
+  // place is null for a visitor DR Roster added with no place of their own.
   const editVisitor = (card, place, slot, existing) => {
+    const label = place?.role || 'extra';
     const name = window.prompt(
-      existing ? `Visitor for ${place.role} — change the name, or clear it to remove:` : `Visiting ${place.role}'s name:`,
+      existing ? `Visitor for ${label} — change the name, or clear it to remove:` : `Visiting ${label}'s name:`,
       existing?.name || '',
     );
     if (name === null) return;
@@ -206,7 +209,8 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
       if (existing) run("Couldn't remove the visitor", () => deletePlannerVisitor(existing.visitor_id));
       return;
     }
-    run("Couldn't save the visitor", () => setPlannerVisitor(departmentId, card.theatre_activity_id, place.place_id, slot.index, name));
+    if (existing) run("Couldn't save the visitor", () => renamePlannerVisitor(existing.visitor_id, name));
+    else run("Couldn't save the visitor", () => setPlannerVisitor(departmentId, card.theatre_activity_id, place.place_id, slot.index, name));
   };
 
   const setDuty = (dateStr, dutyType, holder) => {
@@ -319,7 +323,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
           disabled={mode !== 'fill' || busy}
           onClick={() => editVisitor(card, place, slot, slot.visitor)}
           className="block w-full text-left text-xs italic text-gray-700 truncate"
-          title="Visitor — tap to change"
+          title={`${slot.visitor.source === 'dr_roster' ? 'From DR Roster' : 'Visitor'} — tap to change`}
         >
           {slot.visitor.name}
         </button>
@@ -425,8 +429,19 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
             {p.slots.map(slot => renderSlot(card, job, category, { place: p.place, slot }))}
           </div>
         ))}
-        {layout.extras.length > 0 && (
+        {(layout.extras.length > 0 || layout.extraVisitors.length > 0) && (
           <div className="flex flex-wrap gap-0.5 pt-0.5 border-t border-black/10">
+            {layout.extraVisitors.map(v => (
+              <button
+                key={v.visitor_id}
+                disabled={mode !== 'fill' || busy}
+                onClick={() => editVisitor(card, null, null, v)}
+                className="text-xs italic text-gray-700 truncate"
+                title={`${v.source === 'dr_roster' ? 'From DR Roster' : 'Visitor'} (extra)${mode === 'fill' ? ' — tap to change' : ''}`}
+              >
+                {v.name}
+              </button>
+            ))}
             {layout.extras.map(a => (
               <button
                 key={a.assignment_id}

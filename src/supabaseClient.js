@@ -4605,6 +4605,16 @@ export async function setPlannerVisitor(departmentId, theatreActivityId, placeId
   }
 }
 
+// Renames a visitor in place — also the ones DR Roster adds with no place.
+export async function renamePlannerVisitor(visitorId, name) {
+  try {
+    const { error } = await supabase.from('theatre_activity_visitors').update({ name: name.trim() }).eq('visitor_id', visitorId);
+    return { error };
+  } catch (err) {
+    return { error: err };
+  }
+}
+
 export async function deletePlannerVisitor(visitorId) {
   try {
     const { error } = await supabase.from('theatre_activity_visitors').delete().eq('visitor_id', visitorId);

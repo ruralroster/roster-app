@@ -79,6 +79,18 @@ describe('layOutCard', () => {
     expect(out.extras).toHaveLength(0);
   });
 
+  it('fits a visitor with no place into an empty place for their role, else makes them an extra', () => {
+    const district = { visitor_id: 'v1', place_id: null, slot: 0, name: 'Dr District', role: 'consultant' };
+    const out = layOutCard(card, endo, places, [{ assignment_id: 'a1', staff_id: 'smo', place_id: 'p-endoscopist' }], [district], staffById, ranks);
+    expect(out.places[1].slots[0].visitor.name).toBe('Dr District');
+    expect(out).toMatchObject({ filled: 2, needed: 2, extraVisitors: [] });
+
+    const reg = { ...district, role: 'registrar' };
+    const full = layOutCard(card, endo, places, [], [reg], staffById, ranks);
+    expect(full.filled).toBe(0);
+    expect(full.extraVisitors.map(v => v.name)).toEqual(['Dr District']);
+  });
+
   it('a card with no job has no places — everyone is an extra', () => {
     const out = layOutCard(card, null, places, [{ assignment_id: 'a1', staff_id: 'smo' }], [], staffById, ranks);
     expect(out).toMatchObject({ places: [], needed: 0 });

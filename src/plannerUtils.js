@@ -128,7 +128,7 @@ export function placeMismatch(place, staff, rankRows) {
 // already-staffed day reads as covered; anyone left over is an extra.
 //
 // Returns { places: [{ place, slots: [{ index, assignment, visitor }] }],
-// extras: [assignment], filled, needed }.
+// extras: [assignment], extraVisitors: [visitor], filled, needed }.
 export function layOutCard(card, job, allPlaces, cardAssignments, cardVisitors, staffById, rankRows) {
   const jobPlaces = job
     ? allPlaces.filter(p => p.job_type_id === job.job_type_id)
@@ -140,10 +140,14 @@ export function layOutCard(card, job, allPlaces, cardAssignments, cardVisitors, 
   }));
   const extras = [];
 
+  // Visitors with no place of their own (district doctors booked from DR
+  // Roster) are fitted in after the bookings, below.
+  const looseVisitors = [];
   for (const v of cardVisitors) {
-    const p = places.find(x => x.place.place_id === v.place_id);
+    const p = v.place_id && places.find(x => x.place.place_id === v.place_id);
     const slot = p?.slots[v.slot];
     if (slot && !slot.visitor) slot.visitor = v;
+    else looseVisitors.push(v);
   }
 
   const emptySlot = (p) => p.slots.find(s => !s.assignment && !s.visitor);
@@ -165,11 +169,23 @@ export function layOutCard(card, job, allPlaces, cardAssignments, cardVisitors, 
     if (p) emptySlot(p).assignment = a;
     else extras.push(a);
   }
+  // An approved district doctor takes an empty place for their role (a
+  // senior place is a consultant's, any other a registrar's; 'any' takes
+  // either) — the officer has already checked they can do it. Otherwise
+  // they're an extra.
+  const extraVisitors = [];
+  for (const v of looseVisitors) {
+    const roleFits = (place) => !v.role || place.grade === 'any' || (place.grade === 'senior') === (v.role === 'consultant');
+    const p = places.find(x => emptySlot(x) && roleFits(x.place));
+    if (p) emptySlot(p).visitor = v;
+    else extraVisitors.push(v);
+  }
 
   const allSlots = places.flatMap(p => p.slots);
   return {
     places,
     extras,
+    extraVisitors,
     filled: allSlots.filter(s => s.assignment || s.visitor).length,
     needed: allSlots.length,
   };
