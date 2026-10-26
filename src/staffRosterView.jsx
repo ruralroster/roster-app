@@ -1144,7 +1144,10 @@ export default function StaffRosterView({ departmentId, staffId }) {
     '',
     ...coffeeSummaryLines,
     '',
-    'Thanks! Have a good day',
+    "If you can deliver it to the hospital today at 10:30 that'd be awesome. If not, let me know.",
+    '',
+    'Thanks!',
+    'Have a good day',
   ].join('\n');
 
   // iOS Safari and Android disagree on the separator between an sms: URI's
