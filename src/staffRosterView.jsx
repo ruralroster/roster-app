@@ -4,6 +4,7 @@ import TwoFactorSettings from './TwoFactorSettings';
 import ChangePassword from './ChangePassword';
 import NotificationSettings from './NotificationSettings';
 import StaffWalkthrough from './StaffWalkthrough';
+import SwapShiftOffer from './SwapShiftOffer';
 import { CallbackBanner, MyCallbacks } from './CallbackPanel';
 import {
   getStaffById,
@@ -1783,7 +1784,8 @@ export default function StaffRosterView({ departmentId, staffId }) {
           <div className="max-w-2xl mx-auto">
             {/* Order: Variations (Callback per on-call slot / Overtime
                 buttons — only while on call or near the end of a rostered
-                shift), My Variations, Notify Sick, then Available Shifts. */}
+                shift), My Variations, Swap a shift (DR Roster), Notify Sick,
+                then Available Shifts. */}
             <CallbackBanner
               staffId={staffId}
               departmentId={departmentId}
@@ -1794,6 +1796,9 @@ export default function StaffRosterView({ departmentId, staffId }) {
             <CollapsibleSection title="My Variations">
               <MyCallbacks staffId={staffId} dutyTypes={dutyTypes} refreshKey={callbacksVersion} />
             </CollapsibleSection>
+
+            {/* Only for DR Roster doctors at a linked department; otherwise empty. */}
+            <SwapShiftOffer />
 
             {/* Shared error box for Notify Sick and Volunteer below */}
             {volunteerError && (
