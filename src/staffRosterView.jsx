@@ -1143,7 +1143,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
 
   // The text to the café, for picking the order up or having it delivered.
   const COFFEE_HANDOVER_LINE = {
-    pickup: "I can pick it up at 10:25. If that doesn't work, let me know.",
+    pickup: "I can pick it up at 10:25, but let me know if delivery is easier!",
     delivery: "If you can deliver it to the hospital today at 10:30 that'd be awesome. If not, let me know.",
   };
   const coffeeOrderMessage = (handover) => [
