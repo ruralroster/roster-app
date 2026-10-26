@@ -10,6 +10,7 @@ import {
   getStaffAssignmentsForStaffDate,
   getStaffAssignmentsForDate,
   getStaffAssignmentsForWeek,
+  getVisitorAssignmentsForDate,
   getAllOnCallAssignmentsForWeek,
   getDutyAssignmentsForDate,
   getDutyTypes,
@@ -90,6 +91,13 @@ const RANK_LABEL = {
   advanced_trainee: 'Advanced Trainee',
   basic_trainee: 'Basic Trainee',
   intern: 'Intern',
+};
+
+// A visitor's role line: "Consultant · DR Roster" for a district doctor,
+// else their place on the card ("Surgeon").
+const visitorLabel = (v) => {
+  const role = v.role === 'consultant' ? 'Consultant' : v.role === 'registrar' ? 'Registrar' : v.role;
+  return v.source === 'dr_roster' ? `${role} · DR Roster` : role;
 };
 
 const toDateStr = toLocalDateStr;
@@ -315,16 +323,20 @@ export default function StaffRosterView({ departmentId, staffId }) {
     const loadDay = async () => {
       setLoadingDay(true);
       try {
-        const [assignRes, allAssignRes, dutyRes] = await Promise.all([
+        const [assignRes, allAssignRes, dutyRes, visitorRes] = await Promise.all([
           staffId ? getStaffAssignmentsForStaffDate(staffId, dayViewDate) : Promise.resolve({ data: [], error: null }),
           getStaffAssignmentsForDate(departmentId, dayViewDate),
           getDutyAssignmentsForDate(departmentId, dayViewDate),
+          getVisitorAssignmentsForDate(departmentId, dayViewDate),
         ]);
         if (assignRes.error) throw assignRes.error;
         if (allAssignRes.error) throw allAssignRes.error;
         if (dutyRes.error) throw dutyRes.error;
+        if (visitorRes.error) throw visitorRes.error;
         setTodayAssignments(assignRes.data);
-        setTodayAllAssignments(allAssignRes.data);
+        // Visitors (visiting surgeons, district doctors from DR Roster) are
+        // listed with everyone else in "who is where".
+        setTodayAllAssignments([...allAssignRes.data, ...visitorRes.data]);
         setTodayOnCall(dutyRes.data);
       } catch (err) {
         setError(`Failed to load today's assignments: ${err.message}`);
@@ -799,7 +811,8 @@ export default function StaffRosterView({ departmentId, staffId }) {
   // fetches full details (phone, coffee order, etc.) on demand since the
   // roster queries only carry name/rank for those rows.
   const handleViewStaffDetail = async (staffIdToView) => {
-    if (!staffIdToView) return;
+    // Visitors aren't staff: there's no profile to show.
+    if (!staffIdToView || String(staffIdToView).startsWith('visitor:')) return;
     try {
       const { data, error: fetchError } = await getStaffById(staffIdToView);
       if (fetchError) throw fetchError;
@@ -1332,7 +1345,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
                                         <button onClick={() => handleViewStaffDetail(c.staff_id)} className="text-sm font-medium text-gray-800 hover:underline hover:text-blue-700">
                                           {c.staff?.name}
                                         </button>
-                                        <span className="text-xs text-gray-500">{RANK_LABEL[c.staff?.rank] || c.staff?.rank}</span>
+                                        <span className="text-xs text-gray-500">{c.visitor ? visitorLabel(c) : RANK_LABEL[c.staff?.rank] || c.staff?.rank}</span>
                                       </div>
                                     ))}
                                   </div>
@@ -1431,10 +1444,10 @@ export default function StaffRosterView({ departmentId, staffId }) {
                                             {isYou && <span className="px-2 py-0.5 bg-blue-600 text-white text-xs font-semibold rounded-full">You</span>}
                                           </p>
                                           <p className="text-xs text-gray-600">
-                                            {assignment.shifts?.name} ({assignment.shifts?.start_time?.slice(0, 5)} - {assignment.shifts?.end_time?.slice(0, 5)})
+                                            {assignment.visitor ? 'Visitor' : assignment.shifts?.name} ({assignment.shifts?.start_time?.slice(0, 5)} - {assignment.shifts?.end_time?.slice(0, 5)})
                                           </p>
                                         </div>
-                                        <p className="text-xs font-medium text-gray-600">{RANK_LABEL[assignment.staff?.rank] || assignment.role}</p>
+                                        <p className="text-xs font-medium text-gray-600">{assignment.visitor ? visitorLabel(assignment) : RANK_LABEL[assignment.staff?.rank] || assignment.role}</p>
                                       </div>
                                     );
                                   })}

@@ -69,6 +69,7 @@ import { createTheatreActivity,
   clearVolunteerRequestsForRole,
   createVolunteerOffer,
   getVolunteerOffersForActivities,
+  getVisitorsForActivities,
   clearVolunteerOfferForRole,
   removeVolunteerOffer,
   getVolunteeringOverview,
@@ -251,6 +252,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   const [sortedStaffByActivity, setSortedStaffByActivity] = useState({});
   const [volunteerRequests, setVolunteerRequests] = useState([]); // pending volunteer_requests for the visible theatreActivities
   const [volunteerOffers, setVolunteerOffers] = useState([]); // volunteer_offers already opened for the visible theatreActivities
+  const [cardVisitors, setCardVisitors] = useState([]); // theatre_activity_visitors on the visible theatreActivities (Planner visitors, district doctors from DR Roster)
   // Department-wide, from today on — the Calendar tab's Volunteering panel
   // and the volunteer count on the Calendar nav button. See
   // getVolunteeringOverview.
@@ -539,6 +541,20 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     refreshVolunteerRequests();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [theatreActivities]);
+
+  // Visitors are read-only here: they're named in the Planner, or booked
+  // from DR Roster.
+  useEffect(() => {
+    const ids = theatreActivities.map(ta => ta.theatre_activity_id);
+    getVisitorsForActivities(ids).then(({ data, error }) => {
+      if (error) console.error('Failed to load visitors:', error);
+      setCardVisitors(data || []);
+    });
+  }, [theatreActivities]);
+
+  // A visitor's role on the card: DR Roster records it; a Planner visitor
+  // takes their place's (a senior place is a consultant's).
+  const visitorRole = (v) => v.role || (v.job_places?.grade === 'senior' ? 'consultant' : 'registrar');
 
   const refreshVolunteerOffers = async () => {
     const activityIds = theatreActivities.map(ta => ta.theatre_activity_id);
@@ -3807,6 +3823,17 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                 const entryCoversGroup = (entry) => getSessionGroups(refData.shifts.find(s => s.shift_id === entry.shiftId), sessionBoundaries).includes(groupKey);
                 const consultantEntries = entries.filter(e => e.role === 'consultant' && entryCoversGroup(e));
                 const registrarEntries = entries.filter(e => e.role === 'registrar' && entryCoversGroup(e));
+                const visitorsHere = cardVisitors.filter(v => v.theatre_activity_id === ta.theatre_activity_id);
+                const consultantVisitors = visitorsHere.filter(v => visitorRole(v) === 'consultant');
+                const registrarVisitors = visitorsHere.filter(v => visitorRole(v) === 'registrar');
+                const renderVisitors = (list) => list.map(v => (
+                  <div key={v.visitor_id} className="flex items-center gap-2 flex-wrap p-2 bg-white/60 rounded-lg border border-dashed border-black/20">
+                    <span className="text-sm italic text-gray-800">{v.name}</span>
+                    <span className="text-xs text-gray-500">
+                      {v.source === 'dr_roster' ? 'From DR Roster — change it there' : `Visitor${v.job_places?.role ? ` (${v.job_places.role})` : ''} — change it in the Planner`}
+                    </span>
+                  </div>
+                ));
                 const consultantPending = pendingAssignment?.theatreActivityId === ta.theatre_activity_id && pendingAssignment.role === 'consultant';
                 const registrarPending = pendingAssignment?.theatreActivityId === ta.theatre_activity_id && pendingAssignment.role === 'registrar';
                 const consultantOverride = overridePrompt?.theatreActivityId === ta.theatre_activity_id && overridePrompt.role === 'consultant';
@@ -3942,7 +3969,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                   );
                 };
 
-                const hasNobodyAssigned = entries.length === 0;
+                const hasNobodyAssigned = entries.length === 0 && visitorsHere.length === 0;
 
                 // Which roles can be offered for volunteering — see
                 // missingRolesForCard: any role missing at a location
@@ -3959,7 +3986,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                 const missingRoles = missingRolesForCard({
                   requiresBoth: locationRequiresBoth,
                   requiredGrade: ta.required_grade,
-                  filledRoles: new Set(entries.map(e => e.role)),
+                  filledRoles: new Set([...entries.map(e => e.role), ...visitorsHere.map(visitorRole)]),
                 });
                 const missingConsultant = missingRoles.includes('consultant');
                 const missingRegistrar = missingRoles.includes('registrar');
@@ -4067,7 +4094,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                   {/* Consultant(s) */}
                   <div className="mb-4">
                     <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Consultant</label>
-                    {consultantEntries.length === 0 && (
+                    {consultantEntries.length === 0 && consultantVisitors.length === 0 && (
                       <p className="text-xs text-gray-400 italic mb-2">Nobody allocated yet.</p>
                     )}
                     {missingConsultant && (
@@ -4093,6 +4120,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                       )
                     )}
                     <div className="space-y-2 mb-2">
+                      {renderVisitors(consultantVisitors)}
                       {consultantEntries.map(entry => {
                         const shift = refData.shifts.find(s => s.shift_id === entry.shiftId);
                         return (
@@ -4205,7 +4233,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                   {/* Registrar */}
                   <div>
                     <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Registrar</label>
-                    {registrarEntries.length === 0 && (
+                    {registrarEntries.length === 0 && registrarVisitors.length === 0 && (
                       <p className="text-xs text-gray-400 italic mb-2">Nobody allocated yet.</p>
                     )}
                     {missingRegistrar && (
@@ -4231,6 +4259,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                       )
                     )}
                     <div className="space-y-2 mb-2">
+                      {renderVisitors(registrarVisitors)}
                       {registrarEntries.map(entry => {
                         const shift = refData.shifts.find(s => s.shift_id === entry.shiftId);
                         return (

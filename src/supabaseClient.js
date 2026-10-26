@@ -3002,8 +3002,9 @@ export async function getAllocationStatusForRange(departmentId, startDate, endDa
       cardsByDate.get(ta.date).push(ta);
     });
 
+    const visitorRows = await getCardVisitorRows(departmentId, startStr, endStr);
     const filledCardIds = new Set();
-    (assignRes.data || []).forEach(a => {
+    [...(assignRes.data || []), ...visitorRows].forEach(a => {
       if (a.theatre_activity_id) filledCardIds.add(a.theatre_activity_id);
     });
 
@@ -3276,6 +3277,24 @@ function countRolesOnCards(assignments) {
   return counts;
 }
 
+// Visitors on cards in a date range, shaped like the staff_assignments
+// rows the "is this card covered" checks read: { date,
+// theatre_activity_id, role }. role is NULL for a visitor in a place of
+// their own (visiting surgeons) and 'consultant'/'registrar' for district
+// doctors DR Roster books on (migrations/2026-10-28_card_visitors_without_
+// place.sql). Either way the card has someone on it.
+async function getCardVisitorRows(departmentId, startStr, endStr = null) {
+  let query = supabase
+    .from('theatre_activity_visitors')
+    .select('theatre_activity_id, role, theatre_activities!inner(date)')
+    .eq('department_id', departmentId)
+    .gte('theatre_activities.date', startStr);
+  if (endStr) query = query.lte('theatre_activities.date', endStr);
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data || []).map(v => ({ date: v.theatre_activities?.date, theatre_activity_id: v.theatre_activity_id, role: v.role }));
+}
+
 // Clears the offer for a role once it's been filled — mirrors
 // clearVolunteerRequestsForRole below, called alongside it wherever a role
 // gets assigned, so a filled slot stops being offered as well as stops
@@ -3466,8 +3485,9 @@ export async function getVolunteeringOverview(departmentId) {
     if (cardsRes.error) throw cardsRes.error;
     if (assignRes.error) throw assignRes.error;
 
+    const visitorRows = (await getCardVisitorRows(departmentId, today)).filter(v => v.role);
     const filledRolesByCard = new Map(); // theatre_activity_id -> Set(role)
-    (assignRes.data || []).forEach(a => {
+    [...(assignRes.data || []), ...visitorRows].forEach(a => {
       if (!a.theatre_activity_id) return;
       if (!filledRolesByCard.has(a.theatre_activity_id)) filledRolesByCard.set(a.theatre_activity_id, new Set());
       filledRolesByCard.get(a.theatre_activity_id).add(a.role);
@@ -4602,6 +4622,58 @@ export async function setPlannerVisitor(departmentId, theatreActivityId, placeId
     return { data, error };
   } catch (err) {
     return { data: null, error: err };
+  }
+}
+
+// Visitors on a set of cards, with their place's role name, for the Day
+// view.
+export async function getVisitorsForActivities(theatreActivityIds) {
+  if (!theatreActivityIds || theatreActivityIds.length === 0) return { data: [], error: null };
+  try {
+    const { data, error } = await supabase
+      .from('theatre_activity_visitors')
+      .select('*, job_places(role, grade)')
+      .in('theatre_activity_id', theatreActivityIds);
+    return { data: data || [], error };
+  } catch (err) {
+    return { data: [], error: err };
+  }
+}
+
+// One day's visitors shaped like getStaffAssignmentsForDate rows (working
+// their card's hours), so the staff app's "who is where" lists them with
+// everyone else. staff_id is a made-up 'visitor:…' key — they aren't staff.
+export async function getVisitorAssignmentsForDate(departmentId, date) {
+  const dateStr = toLocalDateStr(date);
+  try {
+    const { data, error } = await supabase
+      .from('theatre_activity_visitors')
+      .select('visitor_id, name, role, source, theatre_activity_id, job_places(role), theatre_activities!inner(date, location_id, activity_id, start_time, end_time, locations(name), shifts(name, start_time, end_time))')
+      .eq('department_id', departmentId)
+      .eq('theatre_activities.date', dateStr);
+    if (error) throw error;
+    const rows = (data || []).map(v => {
+      const ta = v.theatre_activities;
+      return {
+        assignment_id: `visitor:${v.visitor_id}`,
+        staff_id: `visitor:${v.visitor_id}`,
+        visitor: true,
+        source: v.source,
+        date: ta.date,
+        role: v.role || v.job_places?.role || 'visitor',
+        location_id: ta.location_id,
+        theatre_activity_id: v.theatre_activity_id,
+        on_call: false,
+        staff: { name: v.name },
+        locations: ta.locations,
+        shifts: { name: ta.shifts?.name || 'Visitor', start_time: ta.start_time || ta.shifts?.start_time, end_time: ta.end_time || ta.shifts?.end_time },
+        theatre_activities: { activity_id: ta.activity_id },
+      };
+    });
+    return { data: rows, error: null };
+  } catch (err) {
+    console.error('getVisitorAssignmentsForDate error:', err);
+    return { data: [], error: err };
   }
 }
 
