@@ -235,6 +235,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
   const [coffeeModalError, setCoffeeModalError] = useState(null);
   const [coffeeModalStaff, setCoffeeModalStaff] = useState([]); // [{ staff_id, name, rank, coffee_order, sessionGroups }]
   const [coffeeCopied, setCoffeeCopied] = useState(false);
+  const [coffeeChoosingHandover, setCoffeeChoosingHandover] = useState(false); // "Text order" pressed: pickup or delivery?
   // Today's people and visitors still needing a coffee order — the red count
   // on the Coffee button. coffeeAttentionPick holds the coffee chosen for
   // each one in the popup before it's added (key -> composed order).
@@ -987,6 +988,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
     if (!departmentId) return;
 
     setShowCoffeeModal(true);
+    setCoffeeChoosingHandover(false);
     setLoadingCoffeeModal(true);
     setCoffeeCopied(false);
     setCoffeeSessionFilters({ morning: true, afternoon: false, night: false });
@@ -1139,12 +1141,17 @@ export default function StaffRosterView({ departmentId, staffId }) {
     setCoffeeAttentionList(prev => prev.filter(x => x.key !== item.key));
   };
 
-  const coffeeOrderMessage = [
+  // The text to the café, for picking the order up or having it delivered.
+  const COFFEE_HANDOVER_LINE = {
+    pickup: "I can pick it up at 10:25. If that doesn't work, let me know.",
+    delivery: "If you can deliver it to the hospital today at 10:30 that'd be awesome. If not, let me know.",
+  };
+  const coffeeOrderMessage = (handover) => [
     'Good morning, the order for the hospital coffees is:',
     '',
     ...coffeeSummaryLines,
     '',
-    "If you can deliver it to the hospital today at 10:30 that'd be awesome. If not, let me know.",
+    COFFEE_HANDOVER_LINE[handover],
     '',
     'Thanks!',
     'Have a good day',
@@ -1154,7 +1161,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
   // number and its query string (& vs ?) — there's no single syntax both
   // accept.
   const coffeePlaceSmsHref = department?.coffee_place_phone
-    ? `sms:${encodeURIComponent(department.coffee_place_phone)}${isIOS() ? '&' : '?'}body=${encodeURIComponent(coffeeOrderMessage)}`
+    ? (handover) => `sms:${encodeURIComponent(department.coffee_place_phone)}${isIOS() ? '&' : '?'}body=${encodeURIComponent(coffeeOrderMessage(handover))}`
     : null;
 
   const handleCopyCoffeeOrders = async () => {
@@ -2376,12 +2383,36 @@ export default function StaffRosterView({ departmentId, staffId }) {
                       {coffeeSummaryLines.map((line, i) => <li key={i}>{line}</li>)}
                     </ul>
                     {coffeePlaceSmsHref ? (
-                      <a
-                        href={coffeePlaceSmsHref}
-                        className="block text-center px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white text-sm font-medium rounded-lg transition"
-                      >
-                        Text order to {department?.coffee_place_name || 'Coffee Place'}
-                      </a>
+                      coffeeChoosingHandover ? (
+                        <div className="space-y-2">
+                          <p className="text-xs font-semibold text-amber-900 text-center">Pick up or delivery?</p>
+                          <div className="grid grid-cols-2 gap-2">
+                            {[['pickup', 'Pick up 10:25'], ['delivery', 'Delivery 10:30']].map(([handover, label]) => (
+                              <a
+                                key={handover}
+                                href={coffeePlaceSmsHref(handover)}
+                                onClick={() => setCoffeeChoosingHandover(false)}
+                                className="block text-center px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white text-sm font-medium rounded-lg transition"
+                              >
+                                {label}
+                              </a>
+                            ))}
+                          </div>
+                          <button
+                            onClick={() => setCoffeeChoosingHandover(false)}
+                            className="block w-full text-center text-xs text-gray-600 hover:text-gray-900"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => setCoffeeChoosingHandover(true)}
+                          className="block w-full text-center px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white text-sm font-medium rounded-lg transition"
+                        >
+                          Text order to {department?.coffee_place_name || 'Coffee Place'}
+                        </button>
+                      )
                     ) : (
                       <p className="text-xs text-gray-500">An officer can set a Coffee Place number in Settings → Phone Book to text this order directly from here.</p>
                     )}
