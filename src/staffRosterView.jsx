@@ -56,6 +56,7 @@ import {
   getAvailabilityState,
   nextAvailabilityState,
   stateToStoredValue,
+  storedAvailabilityValue,
   DAY_STATE_STYLES,
 } from './availabilityUtils';
 import { buildAssignmentsIcs, getIcsExportFilename, downloadTextFile } from './icsExport';
@@ -660,7 +661,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
           if (fetchError) throw fetchError;
           (data || []).forEach(record => {
             if (record.staff_id === staffId) {
-              map[record.date] = record.available;
+              map[record.date] = storedAvailabilityValue(record);
             }
           });
         });
@@ -2220,7 +2221,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
                   )}
 
                   <p className="text-xs text-gray-500 mt-3">
-                    Tap a date to cycle your availability: grey = not set, green = available, red = unavailable. Changes save immediately.
+                    Tap a date to cycle your availability: grey = not set, green = available, red = unavailable (you can still pick up district shifts in DR Roster), dark grey = working elsewhere (no district shifts either). Changes save immediately.
                   </p>
                 </div>
               </>

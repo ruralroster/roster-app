@@ -1715,9 +1715,17 @@ export async function toggleStaffAvailability(departmentId, staffId, date, avail
       return { data: null, error };
     }
 
+    // 'working': unavailable because they're working elsewhere (see
+    // availabilityUtils.getAvailabilityState).
     const { data, error } = await supabase
       .from('staff_availability')
-      .upsert([{ department_id: departmentId, staff_id: staffId, date: dateStr, available }], { onConflict: 'staff_id,date' })
+      .upsert([{
+        department_id: departmentId,
+        staff_id: staffId,
+        date: dateStr,
+        available: available === true,
+        working_elsewhere: available === 'working',
+      }], { onConflict: 'staff_id,date' })
       .select();
 
     console.log('Toggle availability result:', data, error);
@@ -1747,6 +1755,8 @@ export async function bulkSetStaffAvailability(departmentId, staffId, dates, ava
       staff_id: staffId,
       date: toLocalDateStr(date),
       available,
+      // A rule or leave block is a plain day off, not working elsewhere.
+      working_elsewhere: false,
       ...(leaveTypeId !== undefined ? { leave_type_id: leaveTypeId } : {}),
     }));
 

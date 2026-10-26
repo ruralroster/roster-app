@@ -70,9 +70,15 @@ export const COMPLIANCE_STYLES = {
 // a missing key means unset. Unset days are NOT treated as available.
 // ------------------------------------------------------------------
 
+// availabilityMap values: true (available), false (unavailable) or
+// 'working' (unavailable because they're working elsewhere —
+// staff_availability.working_elsewhere). Only 'working' days stop DR Roster
+// offering district shifts; a plain unavailable day (leave, a day off) is
+// still open to them. To roster-app both are unavailable.
 export function getAvailabilityState(availabilityMap, dateStr) {
   const value = availabilityMap[dateStr];
   if (value === true) return 'available';
+  if (value === 'working') return 'working';
   if (value === false) return 'unavailable';
   return 'unset';
 }
@@ -80,16 +86,21 @@ export function getAvailabilityState(availabilityMap, dateStr) {
 export function nextAvailabilityState(state) {
   if (state === 'unset') return 'available';
   if (state === 'available') return 'unavailable';
+  if (state === 'unavailable') return 'working';
   return 'unset';
 }
 
 // Value to persist via toggleStaffAvailability(departmentId, staffId, date, value):
-// true/false to set a state, or null to clear the record (back to unset).
+// true/false/'working' to set a state, or null to clear the record (back to unset).
 export function stateToStoredValue(state) {
   if (state === 'available') return true;
   if (state === 'unavailable') return false;
+  if (state === 'working') return 'working';
   return null;
 }
+
+// A staff_availability row as an availabilityMap value.
+export const storedAvailabilityValue = (record) => (record.working_elsewhere ? 'working' : record.available);
 
 export const DAY_STATE_STYLES = {
   unset: {
@@ -102,7 +113,11 @@ export const DAY_STATE_STYLES = {
   },
   unavailable: {
     classes: 'bg-red-50 border-red-300 text-red-900 hover:bg-red-100',
-    title: 'Unavailable — tap to clear',
+    title: 'Unavailable (still open to district shifts) — tap to mark working elsewhere',
+  },
+  working: {
+    classes: 'bg-slate-500 border-slate-600 text-white hover:bg-slate-600',
+    title: 'Unavailable, working elsewhere (no district shifts) — tap to clear',
   },
 };
 
