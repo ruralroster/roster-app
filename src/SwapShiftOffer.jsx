@@ -132,6 +132,7 @@ function ListForm({ shift, busy, onCancel, onSubmit }) {
   const [disruption, setDisruption] = useState(false);
   const [slots, setSlots] = useState([]);
   const [note, setNote] = useState('');
+  const [otherSites, setOtherSites] = useState(false);
   const toggle = (slot) => setSlots(prev => (prev.includes(slot) ? prev.filter(x => x !== slot) : [...prev, slot]));
 
   return (
@@ -139,7 +140,7 @@ function ListForm({ shift, busy, onCancel, onSubmit }) {
       className="mt-2 p-3 bg-gray-50 rounded-lg space-y-3 text-sm"
       onSubmit={(e) => {
         e.preventDefault();
-        onSubmit({ p_service_disruption: disruption, p_slots: [...slots].sort(), p_note: note });
+        onSubmit({ p_service_disruption: disruption, p_slots: [...slots].sort(), p_note: note, p_other_sites: otherSites });
       }}
     >
       <label className="flex items-start gap-2">
@@ -172,6 +173,10 @@ function ListForm({ shift, busy, onCancel, onSubmit }) {
           ))}
         </div>
       </div>
+      <label className="flex items-start gap-2">
+        <input type="checkbox" checked={otherSites} onChange={(e) => setOtherSites(e.target.checked)} className="mt-1" />
+        <span>I'd take a shift in return at another site I'd work at (not just this one)</span>
+      </label>
       <label className="block">
         <span className="text-gray-700">Note (optional)</span>
         <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Family wedding" className="mt-1 w-full px-2 py-1 border border-gray-300 rounded" />
