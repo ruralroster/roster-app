@@ -36,3 +36,6 @@ yarn-error.log*
 
 # v3 Google Sheet export for the district-roster import (staff data, never commit)
 v3-import/
+
+# Demo login passwords for the screenshot script
+scripts/demo-copy/.screenshot-logins

@@ -1,0 +1,19 @@
+{
+  "name": "demo-decks",
+  "private": true,
+  "description": "Screenshots of the demo and the four feature decks",
+  "scripts": {
+    "shots": "node shots.js",
+    "decks": "node build.js",
+    "sheets": "node sheet.js",
+    "fit": "python3 fit.py *.pptx"
+  },
+  "dependencies": {
+    "playwright": "^1.64.1",
+    "pptxgenjs": "^4.0.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-icons": "^5.7.0",
+    "sharp": "^0.35.5"
+  }
+}
