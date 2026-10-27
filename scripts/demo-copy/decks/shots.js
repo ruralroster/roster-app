@@ -92,6 +92,7 @@ const bringUp = (locator, offset = 90) => locator.evaluate((el, off) => {
       // Click from the bottom up so earlier indexes stay put.
       for (const r of [...picks].reverse()) {
         await o.page.getByRole('button', { name: 'Offer Registrar' }).nth(r.i).click();
+        await o.page.getByRole('button', { name: 'Offer', exact: true }).click(); // the offer dialog
         await o.page.waitForTimeout(2500);
         console.log('setup: offered', r.t);
       }
@@ -123,7 +124,13 @@ const bringUp = (locator, offset = 90) => locator.evaluate((el, off) => {
     await shot(page, 'r_swapform', async () => {
       await tap(page, 'Variation');
       await page.getByRole('button', { name: 'Offer for swap' }).first().click();
-      await bringUp(page.getByText(/Service disruption/).first(), 220);
+      await bringUp(page.getByText(/could work in return/).first(), 220);
+    });
+    await shot(page, 'r_myvariations', async () => {
+      await tap(page, 'Variation');
+      const head = page.getByText('My Variations', { exact: true }).first();
+      await head.click();
+      await bringUp(head, 120);
     });
     await shot(page, 'r_sick', async () => {
       await tap(page, 'Variation');
@@ -135,6 +142,8 @@ const bringUp = (locator, offset = 90) => locator.evaluate((el, off) => {
     await page.goto(ROSTAR, { waitUntil: 'networkidle' }); await page.waitForTimeout(2500);
     await shot(page, 'r_availability', async () => { await tap(page, 'Settings'); await tap(page, 'Availability'); });
     await shot(page, 'r_notifications', async () => { await tap(page, 'Settings'); await tap(page, 'Notifications'); });
+    await shot(page, 'r_restrictions', async () => { await tap(page, 'Settings'); await tap(page, 'Activity Restrictions'); await top(page); });
+    await shot(page, 'r_security', async () => { await tap(page, 'Settings'); await tap(page, 'Security'); await top(page); });
     await ctx.close();
   }
 
@@ -146,7 +155,30 @@ const bringUp = (locator, offset = 90) => locator.evaluate((el, off) => {
     await shot(page, 'o_calendar', async () => { await page.getByRole('button', { name: /^Calendar/ }).last().click(); await top(page); });
     await shot(page, 'o_planner', async () => { await tap(page, 'Planner'); await page.waitForTimeout(2500); await top(page); });
     await shot(page, 'o_day', async () => { await tap(page, 'Day'); await page.waitForTimeout(2500); await top(page); });
+    await shot(page, 'o_offer', async () => {
+      await page.getByRole('button', { name: /^Calendar/ }).last().click(); await page.waitForTimeout(2000);
+      await page.getByText(/Unfilled, not offered yet/).click(); await page.waitForTimeout(800);
+      await page.getByRole('button', { name: /^Offer / }).first().click();
+      await page.getByText(/^Service disruption:/).first().click(); // tick it, for the picture only
+    });
+    // Close the dialog without offering.
+    if (await page.getByRole('button', { name: 'Cancel', exact: true }).count()) await page.getByRole('button', { name: 'Cancel', exact: true }).click();
     await shot(page, 'o_settings', async () => { await tap(page, 'Settings'); await top(page); });
+    // One Settings section open at a time: open its group, then the section.
+    const section = async (group, title) => {
+      await page.goto(ROSTAR, { waitUntil: 'networkidle' }); await page.waitForTimeout(2500);
+      if (await page.getByText('View: Staff').count()) await page.getByText('View: Staff').click();
+      await tap(page, 'Settings'); await page.waitForTimeout(800);
+      await tap(page, group); await page.waitForTimeout(500);
+      const head = page.getByText(title, { exact: true }).last();
+      await head.click(); await page.waitForTimeout(1500);
+      await bringUp(head, 80);
+    };
+    await shot(page, 'o_jobs', () => section('Locations & Activities', 'Jobs (Planner)'));
+    await shot(page, 'o_ranks', () => section('Staff & Contacts', 'Ranks'));
+    await shot(page, 'o_accounts', () => section('Staff & Contacts', 'Staff Accounts'));
+    await shot(page, 'o_import', () => section('Rostering Tools', 'Excel Roster Import'));
+    await shot(page, 'o_reports', () => section('Reports & Compliance', 'On-Call & Weekend Fairness'));
     await ctx.close();
   }
 

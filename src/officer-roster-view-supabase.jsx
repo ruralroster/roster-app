@@ -68,6 +68,7 @@ import { createTheatreActivity,
   getVolunteerRequestsForActivities,
   clearVolunteerRequestsForRole,
   createVolunteerOffer,
+  setOfferServiceDisruption,
   getVolunteerOffersForActivities,
   getVisitorsForActivities,
   clearVolunteerOfferForRole,
@@ -252,6 +253,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   const [sortedStaffByActivity, setSortedStaffByActivity] = useState({});
   const [volunteerRequests, setVolunteerRequests] = useState([]); // pending volunteer_requests for the visible theatreActivities
   const [volunteerOffers, setVolunteerOffers] = useState([]); // volunteer_offers already opened for the visible theatreActivities
+  const [offerPrompt, setOfferPrompt] = useState(null); // the offer dialog: { theatreActivityId, role, disruption }
   const [cardVisitors, setCardVisitors] = useState([]); // theatre_activity_visitors on the visible theatreActivities (Planner visitors, district doctors from DR Roster)
   // Department-wide, from today on — the Calendar tab's Volunteering panel
   // and the volunteer count on the Calendar nav button. See
@@ -714,15 +716,34 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     return volunteerOffers.some(o => o.theatre_activity_id === theatreActivityId && o.role === role);
   };
 
-  const handleOfferForVolunteering = async (theatreActivityId, role) => {
+  // Offer buttons open offerPrompt first, so the officer can mark the shift
+  // as a service disruption before staff are told about it.
+  const handleOfferForVolunteering = (theatreActivityId, role) => {
+    setOfferPrompt({ theatreActivityId, role, disruption: false });
+  };
+
+  const confirmOfferPrompt = async () => {
+    const { theatreActivityId, role, disruption } = offerPrompt;
+    setOfferPrompt(null);
     try {
-      const { error } = await createVolunteerOffer(departmentId, theatreActivityId, role);
+      const { error } = await createVolunteerOffer(departmentId, theatreActivityId, role, 0, disruption);
       if (error) throw error;
       await Promise.all([refreshVolunteerOffers(), refreshVolunteeringOverview()]);
       setCalendarRefreshKey(k => k + 1);
       setError(null);
     } catch (err) {
       setError(`Failed to offer this shift for volunteering: ${err.message}`);
+    }
+  };
+
+  const handleToggleDisruption = async (theatreActivityId, role, disruption) => {
+    try {
+      const { error } = await setOfferServiceDisruption(theatreActivityId, role, disruption);
+      if (error) throw error;
+      await Promise.all([refreshVolunteerOffers(), refreshVolunteeringOverview()]);
+      setError(null);
+    } catch (err) {
+      setError(`Failed to change the offer: ${err.message}`);
     }
   };
 
@@ -2610,6 +2631,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
           {rowSummary(row)}
           <p className="text-xs text-gray-600 mt-0.5">
             {roleLabelFor(row, row.role)} needed
+            {row.service_disruption && <span className="text-red-700 font-semibold"> · Service disruption</span>}
             {row.volunteers.length > 0 && (
               <span className="text-purple-700 font-semibold">
                 {' · '}<Hand size={11} className="inline -mt-0.5" /> {row.volunteers.map(v => v.name).join(', ')}
@@ -2625,6 +2647,13 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
             }`}
           >
             {row.volunteers.length > 0 ? 'Review' : 'Open day'}
+          </button>
+          <button
+            onClick={() => handleToggleDisruption(row.theatre_activity_id, row.role, !row.service_disruption)}
+            className="text-xs px-2 py-1 text-gray-500 hover:text-red-700 font-medium"
+            title="If nobody takes this shift, the service closes"
+          >
+            {row.service_disruption ? 'Not a disruption' : 'Mark disruption'}
           </button>
           <button
             onClick={() => handleRemoveVolunteerOffer(row.theatre_activity_id, row.role, row.volunteers.length)}
@@ -6362,6 +6391,28 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
           >
             <div className="text-sm font-semibold">Day</div>
           </button>
+          {offerPrompt && createPortal(
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+              <div className="bg-white rounded-lg shadow-lg p-5 w-full max-w-md text-left">
+                <h2 className="text-lg font-bold text-gray-900 mb-2">Offer this shift for volunteering?</h2>
+                <p className="text-sm text-gray-700 mb-3">Staff who can do it and are available that day will be emailed and notified.</p>
+                <label className="flex items-start gap-2 text-sm text-gray-800 mb-4">
+                  <input
+                    type="checkbox"
+                    checked={offerPrompt.disruption}
+                    onChange={(e) => setOfferPrompt(p => ({ ...p, disruption: e.target.checked }))}
+                    className="mt-1"
+                  />
+                  <span><span className="font-semibold">Service disruption:</span> if nobody takes this shift, the service closes (for example, obstetrics goes on bypass)</span>
+                </label>
+                <div className="flex gap-2">
+                  <button onClick={() => setOfferPrompt(null)} className="flex-1 px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-800 text-sm font-medium rounded-lg">Cancel</button>
+                  <button onClick={confirmOfferPrompt} className="flex-1 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg">Offer</button>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )}
           <button
             onClick={() => setActiveTab('settings')}
             className={`flex-1 py-4 text-center transition ${

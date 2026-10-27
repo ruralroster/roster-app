@@ -284,7 +284,7 @@ Deno.serve(async (req) => {
     if (event === 'offer') {
       const { data: offer, error } = await admin
         .from('volunteer_offers')
-        .select(`volunteer_offer_id, department_id, filled_baseline, theatre_activities(${CARD_COLUMNS})`)
+        .select(`volunteer_offer_id, department_id, filled_baseline, service_disruption, theatre_activities(${CARD_COLUMNS})`)
         .eq('theatre_activity_id', theatreActivityId)
         .eq('role', role)
         .maybeSingle();
@@ -331,8 +331,8 @@ Deno.serve(async (req) => {
 
       const { date, where, shift, level } = describeCard(card, role);
       const result = await send(admin, recipients, {
-        title: `Shift available ${date}`,
-        body: `${where}${shift} on ${date} needs a ${level}. Open Variation → Available Shifts to volunteer.`,
+        title: `${offer.service_disruption ? 'Service disruption: ' : ''}Shift available ${date}`,
+        body: `${where}${shift} on ${date} needs a ${level}.${offer.service_disruption ? ' If nobody takes it, the service closes.' : ''} Open Variation → Available Shifts to volunteer.`,
         path: '?tab=volunteer',
         tag: `offer-${theatreActivityId}-${role}`,
       });

@@ -1882,6 +1882,11 @@ export default function StaffRosterView({ departmentId, staffId }) {
                       </div>
                     </div>
 
+                    {opportunity.service_disruption && (
+                      <p className="mb-2 px-3 py-2 bg-red-50 border border-red-300 text-red-800 text-sm font-semibold rounded">
+                        Service disruption: if nobody takes this shift, the service closes.
+                      </p>
+                    )}
                     <h3 className="text-lg font-bold text-gray-900 mb-1">{opportunity.location}</h3>
                     {opportunity.activity && <p className="text-sm text-gray-700 mb-1">{opportunity.activity}</p>}
                     {opportunity.shift && (

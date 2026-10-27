@@ -125,11 +125,9 @@ export default function SwapShiftOffer() {
   );
 }
 
-// Service disruption, and the days/nights of the shift's pay fortnight you
-// could work in return (at least one: a swap never changes anyone's number
+// The days/nights of the shift's pay fortnight you could work in return (at least one: a swap never changes anyone's number
 // of shifts).
 function ListForm({ shift, busy, onCancel, onSubmit }) {
-  const [disruption, setDisruption] = useState(false);
   const [slots, setSlots] = useState([]);
   const [note, setNote] = useState('');
   const [otherSites, setOtherSites] = useState(false);
@@ -140,13 +138,9 @@ function ListForm({ shift, busy, onCancel, onSubmit }) {
       className="mt-2 p-3 bg-gray-50 rounded-lg space-y-3 text-sm"
       onSubmit={(e) => {
         e.preventDefault();
-        onSubmit({ p_service_disruption: disruption, p_slots: [...slots].sort(), p_note: note, p_other_sites: otherSites });
+        onSubmit({ p_service_disruption: false, p_slots: [...slots].sort(), p_note: note, p_other_sites: otherSites });
       }}
     >
-      <label className="flex items-start gap-2">
-        <input type="checkbox" checked={disruption} onChange={(e) => setDisruption(e.target.checked)} className="mt-1" />
-        <span>Service disruption: if nobody takes it, the shift goes uncovered</span>
-      </label>
       <div>
         <p className="text-gray-700">
           Days or nights you could work in return (this pay fortnight): tick at least one. Whoever takes your shift gives you one of

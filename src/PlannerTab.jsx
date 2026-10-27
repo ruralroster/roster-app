@@ -17,6 +17,7 @@ import {
   getVolunteerOffersForActivities,
   getVolunteerRequestsForActivities,
   createVolunteerOffer,
+  setOfferServiceDisruption,
   removeVolunteerOffer,
 } from './supabaseClient';
 import { offerIsFilled } from './offerEligibility';
@@ -65,6 +66,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
   const [volunteers, setVolunteers] = useState([]); // volunteer_requests on those cards
   // The offer whose volunteers are being chosen from: { card, job, role, layout }.
   const [volunteerPick, setVolunteerPick] = useState(null);
+  const [offerPick, setOfferPick] = useState(null); // the offer dialog: { card, job, role, heldCount, disruption }
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -246,10 +248,18 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
     });
   };
 
-  const offerShift = (card, job, role, heldCount) => {
-    const when = new Date(`${card.date}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' });
-    if (!window.confirm(`Offer ${cardTitle(card, job)} on ${when} for volunteering (${OFFER_LABEL[role]})? Staff who can do it and are available that day will be emailed and notified.`)) return;
-    run("Couldn't offer the shift", () => createVolunteerOffer(departmentId, card.theatre_activity_id, role, heldCount));
+  // Opens the offer dialog (offerPick), where the officer can also mark the
+  // shift as a service disruption before staff are told about it.
+  const offerShift = (card, job, role, heldCount) => setOfferPick({ card, job, role, heldCount, disruption: false });
+
+  const confirmOffer = () => {
+    const { card, role, heldCount, disruption } = offerPick;
+    setOfferPick(null);
+    run("Couldn't offer the shift", () => createVolunteerOffer(departmentId, card.theatre_activity_id, role, heldCount, disruption));
+  };
+
+  const toggleDisruption = (card, role, disruption) => {
+    run("Couldn't change the offer", () => setOfferServiceDisruption(card.theatre_activity_id, role, disruption));
   };
 
   const withdrawOffer = (card, job, role) => {
@@ -478,7 +488,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
               className={`w-full text-[10px] font-semibold rounded border ${count > 0 ? 'text-white bg-blue-600 border-blue-700 hover:bg-blue-700' : 'text-blue-900 bg-blue-100 border-blue-400 hover:bg-blue-200'}`}
               title={count > 0 ? 'Tap to pick a volunteer' : 'On the volunteering list — tap to take it off'}
             >
-              Offered · {OFFER_LABEL[role]}{count > 0 ? ` · ${count} volunteer${count === 1 ? '' : 's'}` : ''}
+              Offered · {OFFER_LABEL[role]}{openOffer(role).service_disruption ? ' · disruption' : ''}{count > 0 ? ` · ${count} volunteer${count === 1 ? '' : 's'}` : ''}
             </button>
           );
         })() : (
@@ -828,9 +838,41 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
         </div>
       )}
 
+      {offerPick && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg shadow-lg p-5 w-full max-w-md">
+            <div className="flex justify-between items-start mb-3">
+              <div>
+                <h2 className="text-lg font-bold text-gray-900">Offer {cardTitle(offerPick.card, offerPick.job)}</h2>
+                <p className="text-sm text-gray-600">
+                  {new Date(`${offerPick.card.date}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })}
+                  {' · '}{OFFER_LABEL[offerPick.role]}
+                </p>
+              </div>
+              <button onClick={() => setOfferPick(null)} className="p-1 hover:bg-gray-100 rounded-lg" aria-label="Close"><X size={20} /></button>
+            </div>
+            <p className="text-sm text-gray-700 mb-3">Staff who can do it and are available that day will be emailed and notified.</p>
+            <label className="flex items-start gap-2 text-sm text-gray-800 mb-4">
+              <input
+                type="checkbox"
+                checked={offerPick.disruption}
+                onChange={(e) => setOfferPick(p => ({ ...p, disruption: e.target.checked }))}
+                className="mt-1"
+              />
+              <span><span className="font-semibold">Service disruption:</span> if nobody takes this shift, the service closes (for example, obstetrics goes on bypass)</span>
+            </label>
+            <div className="flex gap-2">
+              <button onClick={() => setOfferPick(null)} className="flex-1 px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-800 text-sm font-medium rounded-lg">Cancel</button>
+              <button onClick={confirmOffer} disabled={busy} className="flex-1 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg">Offer</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {volunteerPick && (() => {
         const { card, job, role } = volunteerPick;
         const list = volunteers.filter(v => v.theatre_activity_id === card.theatre_activity_id && v.role === role);
+        const offer = offers.find(o => o.theatre_activity_id === card.theatre_activity_id && o.role === role);
         return (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
             <div className="bg-white rounded-lg shadow-lg p-5 w-full max-w-md max-h-[85vh] overflow-y-auto">
@@ -864,6 +906,18 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
                     </li>
                   ))}
                 </ul>
+              )}
+              {offer && (
+                <label className="flex items-start gap-2 text-sm text-gray-800 mb-3">
+                  <input
+                    type="checkbox"
+                    checked={!!offer.service_disruption}
+                    onChange={(e) => toggleDisruption(card, role, e.target.checked)}
+                    disabled={busy}
+                    className="mt-1"
+                  />
+                  <span><span className="font-semibold">Service disruption:</span> if nobody takes this shift, the service closes</span>
+                </label>
               )}
               <button
                 onClick={() => { setVolunteerPick(null); withdrawOffer(card, job, role); }}

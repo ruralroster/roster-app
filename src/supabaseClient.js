@@ -3144,7 +3144,7 @@ export async function getAvailableShiftsForStaff(staffId, departmentId) {
         .single(),
       supabase
         .from('volunteer_offers')
-        .select('theatre_activity_id, role, filled_baseline, theatre_activities!inner(theatre_activity_id, date, location_id, required_grade, locations(name), shifts(name, start_time, end_time), activity_types(name, required_advanced_skills))')
+        .select('theatre_activity_id, role, filled_baseline, service_disruption, theatre_activities!inner(theatre_activity_id, date, location_id, required_grade, locations(name), shifts(name, start_time, end_time), activity_types(name, required_advanced_skills))')
         .eq('department_id', departmentId)
         .gte('theatre_activities.date', startStr),
       supabase
@@ -3213,6 +3213,7 @@ export async function getAvailableShiftsForStaff(staffId, departmentId) {
           role_needed: offer.role,
           required_grade: ta.required_grade || null,
           already_volunteered: alreadyVolunteered.has(`${offer.theatre_activity_id}|${offer.role}`),
+          service_disruption: !!offer.service_disruption,
         };
       })
       .sort((a, b) => a.date.localeCompare(b.date));
@@ -3234,14 +3235,17 @@ export async function getAvailableShiftsForStaff(staffId, departmentId) {
 // filledBaseline: how many already hold this role on the card — 0 from the
 // Day view; the Planner passes its count when a job needs more than one
 // of a grade (see offerIsFilled in offerEligibility.js).
-export async function createVolunteerOffer(departmentId, theatreActivityId, role, filledBaseline = 0) {
-  console.log('createVolunteerOffer called', departmentId, theatreActivityId, role, filledBaseline);
+// serviceDisruption: the officer's flag that the service closes (e.g.
+// obstetrics goes on bypass) if nobody takes it. Officers only; it carries
+// through to DR Roster if the offer escalates.
+export async function createVolunteerOffer(departmentId, theatreActivityId, role, filledBaseline = 0, serviceDisruption = false) {
+  console.log('createVolunteerOffer called', departmentId, theatreActivityId, role, filledBaseline, serviceDisruption);
 
   try {
     const { data, error } = await supabase
       .from('volunteer_offers')
       .upsert(
-        [{ department_id: departmentId, theatre_activity_id: theatreActivityId, role, filled_baseline: filledBaseline }],
+        [{ department_id: departmentId, theatre_activity_id: theatreActivityId, role, filled_baseline: filledBaseline, service_disruption: serviceDisruption }],
         { onConflict: 'theatre_activity_id,role' }
       )
       .select()
@@ -3251,6 +3255,24 @@ export async function createVolunteerOffer(departmentId, theatreActivityId, role
     return { data, error };
   } catch (err) {
     return { data: null, error: err };
+  }
+}
+
+// Marks or unmarks an open offer as a service disruption after it's been
+// offered (see createVolunteerOffer).
+export async function setOfferServiceDisruption(theatreActivityId, role, serviceDisruption) {
+  console.log('setOfferServiceDisruption called', theatreActivityId, role, serviceDisruption);
+
+  try {
+    const { error } = await supabase
+      .from('volunteer_offers')
+      .update({ service_disruption: serviceDisruption })
+      .eq('theatre_activity_id', theatreActivityId)
+      .eq('role', role);
+
+    return { error };
+  } catch (err) {
+    return { error: err };
   }
 }
 
@@ -3265,7 +3287,7 @@ export async function getVolunteerOffersForActivities(theatreActivityIds) {
   try {
     const { data, error } = await supabase
       .from('volunteer_offers')
-      .select('theatre_activity_id, role, filled_baseline')
+      .select('theatre_activity_id, role, filled_baseline, service_disruption')
       .in('theatre_activity_id', theatreActivityIds);
 
     return { data: data || [], error };
@@ -3469,7 +3491,7 @@ export async function getVolunteeringOverview(departmentId) {
     const [offersRes, requestsRes, cardsRes, assignRes] = await Promise.all([
       supabase
         .from('volunteer_offers')
-        .select(`theatre_activity_id, role, filled_baseline, theatre_activities!inner(${cardColumns})`)
+        .select(`theatre_activity_id, role, filled_baseline, service_disruption, theatre_activities!inner(${cardColumns})`)
         .eq('department_id', departmentId)
         .gte('theatre_activities.date', today),
       supabase
@@ -3524,6 +3546,7 @@ export async function getVolunteeringOverview(departmentId) {
       .map(o => ({
         ...cardInfo(o.theatre_activities),
         role: o.role,
+        service_disruption: !!o.service_disruption,
         volunteers: (requestsRes.data || [])
           .filter(r => r.theatre_activity_id === o.theatre_activity_id && r.role === o.role && r.staff)
           .map(r => ({ staff_id: r.staff_id, name: r.staff.name, rank: r.staff.rank })),

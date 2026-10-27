@@ -21,6 +21,16 @@ The demo's dates age, so refresh the demo first.
    ```
    `node shots.js d_day r_coffee` retakes only the named shots.
 
+## Walkthroughs as Word and PDF
+
+The written walkthroughs live in Claude Docs. To refresh the copies in
+`walkthroughs/`: export each one as Markdown, then
+```
+pandoc "<name>.md" -o "walkthroughs/<name>.docx"
+pandoc "<name>.md" -s --embed-resources --css style.css -o "<name>.html"
+node pdf.js walkthroughs "<name>.html"
+```
+
 The demo logins come from `../.screenshot-logins` (never commit or share it).
 `npm run shots` also offers two gaps and volunteers for one in the demo so the
 Calendar and Variation screens have something to show; demo people have
@@ -32,3 +42,4 @@ notifications off, so nobody is emailed.
 - `build.js`: slide layouts, slide content, and `SHOTS` (which screenshot goes on which slide).
 - `variants.js`: the four decks (which slides each has) and the spoken notes.
 - `apply_theme.js`: writes the colour theme into each deck.
+- `pdf.js`: prints HTML files to A4 PDFs.
