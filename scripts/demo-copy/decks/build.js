@@ -446,10 +446,10 @@ const rostar = {
       { icon: 'MdAssessment', h: 'Reports', t: 'Case mix, fairness, rule violations' },
     ] },
     { type: 'steps', section: 'For officers', title: 'Marking a service disruption', icon: 'MdReportProblem', items: [
-      { h: 'Offer the gap', t: 'Offer senior or Offer any grade, from the Planner, Calendar or Day view' },
-      { h: 'Tick Service disruption', t: 'If nobody takes it, the service closes: obstetrics goes on bypass, say' },
+      { h: 'Offer the gap', t: 'From the Planner, Calendar or Day view' },
+      { h: 'Tick Service disruption', t: 'Unfilled means the service closes' },
       { h: 'Staff see it flagged', t: 'On their Available shifts, and in the email and phone alert' },
-      { h: 'It travels with the shift', t: 'Escalates to DR Roster marked the same. Change it from the Offered button' },
+      { h: 'It travels with the shift', t: 'Marked the same in DR Roster' },
     ] },
     { type: 'cards', section: 'For officers', title: 'Day-to-day officer tools', items: [
       { icon: 'MdHealing', h: 'Sick calls', t: 'Approve or deny from the red banner on Day view' },
