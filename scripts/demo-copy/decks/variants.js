@@ -2,6 +2,14 @@
 // the speaker notes, written to be read aloud (about 45-60 seconds a slide).
 
 const ROSTAR_NOTES = {
+  'Coffee preferences': "Under Settings, Coffee Preferences, set your usual coffee once: the coffee, the milk, and an extra shot if you want one. It goes on the morning order every day you're working. Pick No Coffee if you don't want one. And if it's different just for today, change it on the Coffee tab instead.",
+  'My Variations': "My Variations is your list of recorded callbacks and overtime, for your payroll variation form. If a time's wrong, because you tapped Complete late say, tap the pencil to fix it; officers can see the times were edited. Download the list for the form, then delete them once it's submitted. Officers can see the times and the type, never patient details.",
+  'Overtime': "Overtime works the same way. The Overtime button shows from thirty minutes before your rostered shift ends until four hours after. Tap it early, and the timer waits and starts by itself when the shift ends. Tap it after, and it asks whether you've been on overtime since the shift ended. When you're done, tap Overtime Complete, and it's the same steps as a callback.",
+  'The fatigue notice': "Then, for ten seconds, a fatigue notice shows the time you shouldn't come back before: ten hours after you finished. If that clashes with your morning shift, let your officer know so they can cover the start.",
+  'Saving a patient detail': "When the callback is recorded, you can note which patient it was for: an MRN, or a last and first name. Tap Download to phone, and it's saved as a small text file on your phone only. The app never stores patient details: officers see the times, never the patient. If you don't need it, tap Skip, and the callback is still recorded.",
+  'The callback timer': "Once it's started, the timer runs at the top of Variation. It's saved on the server, so it keeps going if you close the app or your phone locks. When you're finished, tap Call Complete. If it was under fifteen minutes, it asks whether you want to record it at all. Anything longer is recorded by itself.",
+  'Callbacks while on call': "When you're on call, a green Callback button appears at the top of Variation, one for each on-call slot you're on right now, like obstetrics on call here. If you're on two at once, you get two buttons, so pick the one you were called in for. When you're called in, tap it. That's all: the date and the slot are filled in for you, and the timer starts.",
+  'Variation at a glance': "Variation is the tab for anything that changes your day from the roster, and it runs top to bottom like this. At the top, while you're on call, a Callback button; near the end of a shift, an Overtime button. Then My Variations, your list of those for the payroll form. Then Notify Sick. Then Available Shifts, to volunteer for a gap or take a colleague's swap. And last, Swap a shift, to offer one of yours. Let's go through each.",
   'Your profile': "Settings, Profile, has your phone number and email. Your colleagues see them in the Phone Book and when they search for you, so keep them up to date: it's how the on-call reaches you. Your email is also how you sign in.",
   'Phone Book': "The Phone Book settings hold the numbers staff can tap to call. The Coffee Place number is where the morning coffee order is texted. Add any other useful numbers: switchboard, social work, the other sites. The on-call names in the Phone Book come straight from the roster, so you don't enter those here.",
   'Staff and Availability': "Staff and Availability is each person's record. Pick someone, or Add Staff. Set their rank and FTE: FTE is what their fair share of shifts is worked out from. Their email is how they sign in. Tick their advanced skills. And below, their availability, day by day, or as a pattern, like working every second week.",
@@ -87,7 +95,11 @@ module.exports = [
   {
     base: 'rostar', file: 'Rstar-for-staff.pptx', sub: 'Your roster, on your phone · for staff',
     titleNotes: "Welcome to Rstar, the department roster on your phone. In about ten minutes I'll show you everything you need as a member of staff: your shifts, availability, picking up and swapping shifts, callbacks and overtime, calling in sick, the coffee order, and your settings.",
-    take: ["What's in Rstar", 'Getting started', 'Install it on your phone', 'Your day and week', 'Starred colleagues and Crossover', 'Phone Book and calendar export', 'Set your availability', 'Pick up an extra shift', 'Swap a shift, one for one', 'Callbacks and overtime', 'Calling in sick', 'Coffee, sorted', "What you'll be told", 'Your Settings', 'Your profile', 'Restrictions and skills', 'Security and two-factor'],
+    take: ["What's in Rstar", 'Getting started', 'Install it on your phone', 'Your day and week', 'Starred colleagues and Crossover', 'Phone Book and calendar export',
+      'Variation at a glance', 'Callbacks while on call', 'The callback timer', 'Saving a patient detail', 'The fatigue notice', 'Overtime', 'My Variations',
+      'Calling in sick', 'Pick up an extra shift', 'Swap a shift, one for one',
+      'Coffee, sorted',
+      'Your Settings', 'Your profile', 'Restrictions and skills', 'Coffee preferences', 'Set your availability', "What you'll be told", 'Security and two-factor'],
     notes: ROSTAR_NOTES, closing: CLOSING_STAFF,
   },
   {

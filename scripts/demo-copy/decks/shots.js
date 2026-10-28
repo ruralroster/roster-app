@@ -110,6 +110,68 @@ const bringUp = (locator, offset = 90) => locator.evaluate((el, off) => {
     await d.ctx.close();
   }
 
+  // ---- Rstar, a callback from start to finish (phone). Only when named
+  // (node shots.js r_callback r_timer r_short r_patient r_fatigue). The demo
+  // doctor isn't really on call, so their on-call lookup and the callback
+  // itself are answered in this browser only: nothing is written.
+  const CALLBACK_SHOTS = ['r_callback', 'r_timer', 'r_short', 'r_patient', 'r_fatigue'];
+  if (CALLBACK_SHOTS.some(n => ONLY.includes(n))) {
+    const { ctx, page } = await open(browser, ROSTAR, 'DOCTOR', PHONE);
+    await page.route('**/rest/v1/duty_assignments*', async route => {
+      const url = route.request().url();
+      if (!url.includes('staff_id=eq.')) return route.continue();
+      const typesUrl = url.replace(/duty_assignments\?.*/, 'duty_types?select=key,counts_as_on_call,start_time,end_time&active=eq.true&counts_as_on_call=eq.true');
+      const types = await (await route.fetch({ url: typesUrl })).json();
+      const now = new Date();
+      const hhmm = now.toTimeString().slice(0, 5);
+      const covers = (t) => t.start_time && t.end_time && (t.start_time <= t.end_time
+        ? hhmm >= t.start_time.slice(0, 5) && hhmm < t.end_time.slice(0, 5)
+        : hhmm >= t.start_time.slice(0, 5) || hhmm < t.end_time.slice(0, 5));
+      const type = types.find(covers) || types[0];
+      const day = new Date(now);
+      if (type.start_time > type.end_time && hhmm < type.end_time.slice(0, 5)) day.setDate(day.getDate() - 1);
+      const date = day.toLocaleDateString('en-CA');
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{ date, duty_type: type.key }]) });
+    });
+    // The callback: started 7 minutes ago (so it asks whether to record a
+    // short one), finished when Complete is tapped.
+    let call = null;
+    const reply = (route, row) => {
+      const one = (route.request().headers().accept || '').includes('vnd.pgrst.object');
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(one ? row : [row]) });
+    };
+    await page.route('**/rest/v1/callbacks*', async route => {
+      const req = route.request();
+      if (req.method() === 'POST') {
+        const body = JSON.parse(req.postData() || '[]');
+        const row = Array.isArray(body) ? body[0] : body;
+        call = { ...row, callback_id: '00000000-0000-0000-0000-000000000001', started_at: new Date(Date.now() - 7 * 60000).toISOString(), ended_at: null, edited_at: null, shifts: null };
+        return reply(route, call);
+      }
+      if (req.method() === 'PATCH' && call) {
+        call = { ...call, ...JSON.parse(req.postData() || '{}') };
+        return reply(route, call);
+      }
+      if (req.method() === 'GET' && call && !call.ended_at && req.url().includes('ended_at=is.null')) return reply(route, call);
+      return route.continue();
+    });
+    await tap(page, 'Variation'); await page.waitForTimeout(4000);
+    await shot(page, 'r_callback', () => top(page));
+    await shot(page, 'r_timer', async () => {
+      await page.getByRole('button', { name: /^Callback/ }).first().click(); await page.waitForTimeout(3000);
+      await top(page);
+    });
+    await shot(page, 'r_short', () => page.getByRole('button', { name: /Complete$/ }).first().click());
+    await shot(page, 'r_patient', async () => {
+      await page.getByRole('button', { name: 'Record it' }).click(); await page.waitForTimeout(1500);
+      await page.locator('input[inputmode="numeric"]').fill('123456');
+    });
+    await shot(page, 'r_fatigue', async () => {
+      await page.getByRole('button', { name: 'Skip', exact: true }).click(); await page.waitForTimeout(800);
+    });
+    await ctx.close();
+  }
+
   // ---- Rstar, staff (phone).
   {
     const s = await open(browser, ROSTAR, null, PHONE, { signIn: false });
@@ -143,6 +205,7 @@ const bringUp = (locator, offset = 90) => locator.evaluate((el, off) => {
     await page.goto(ROSTAR, { waitUntil: 'networkidle' }); await page.waitForTimeout(2500);
     await shot(page, 'r_availability', async () => { await tap(page, 'Settings'); await tap(page, 'Availability'); });
     await shot(page, 'r_profile', async () => { await tap(page, 'Settings'); await tap(page, 'Profile'); await top(page); });
+    await shot(page, 'r_coffeeprefs', async () => { await tap(page, 'Settings'); await tap(page, 'Coffee Preferences'); await top(page); });
     await shot(page, 'r_notifications', async () => { await tap(page, 'Settings'); await tap(page, 'Notifications'); });
     await shot(page, 'r_restrictions', async () => { await tap(page, 'Settings'); await tap(page, 'Activity Restrictions'); await top(page); });
     await shot(page, 'r_security', async () => { await tap(page, 'Settings'); await tap(page, 'Security'); await top(page); });

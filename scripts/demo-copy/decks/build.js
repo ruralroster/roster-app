@@ -358,7 +358,7 @@ const rostar = {
     { type: 'twoCol', section: 'Your roster', title: 'Phone Book and calendar export',
       left: { icon: 'MdPhone', h: 'Phone Book', items: ["This week's on-call, by type", 'Tap a name to call or email', 'Useful numbers your officer adds'] },
       right: { icon: 'MdFileDownload', h: 'Export', items: ['Lists weeks with your shifts (up to 26)', 'Tick the weeks you want', 'Open the .ics file to add shifts and on-call to your calendar'] } },
-    { type: 'swatches', section: 'Your roster', title: 'Set your availability', lead: 'Settings → Availability. Tap a day to cycle through the colours.',
+    { type: 'swatches', section: 'Settings', title: 'Set your availability', lead: 'Settings → Availability. Tap a day to cycle through the colours.',
       side: "New accounts start available every day, so you only mark the days you can't work.", sideIcon: 'MdEventAvailable',
       items: [
         { color: 'F3F4F6', border: 'D1D5DB', h: 'Not set', t: 'Tap to start' },
@@ -389,7 +389,7 @@ const rostar = {
       { h: '9:00', t: 'Order emailed to the ED late consultant' },
       { h: '10:25', t: 'Pick up, or delivery at 10:30' },
     ], note: 'Untick anyone not having one, or add a locum or visitor. Changes are shared for today only.' },
-    { type: 'table', section: 'Notifications', title: "What you'll be told", lead: 'Phone alerts: Settings → Notifications → Send me a test. On iPhone, open Rstar from the Home Screen.', head: ['When', 'Who hears'], rows: [
+    { type: 'table', section: 'Settings', title: "What you'll be told", lead: 'Phone alerts: Settings → Notifications → Send me a test. On iPhone, open Rstar from the Home Screen.', head: ['When', 'Who hears'], rows: [
       ['A shift you can do is offered', 'Staff who could take it'],
       ['Someone volunteers', 'Officers'],
       ['Someone calls in sick', 'Officers and the ED on-call (pop-up)'],
@@ -503,6 +503,57 @@ const rostar = {
       { icon: 'MdBalance', h: 'Fairness', t: 'Share of on-call and weekends' },
       { icon: 'MdTimer', h: 'Pay Variations', t: 'Callback and overtime times' },
       { icon: 'MdGavel', h: 'Rule Violations', t: 'ED rules over any dates' },
+    ] },
+    // ----- Staff: Variation, item by item in the order the tab shows them.
+    { type: 'cards', section: 'Variation', title: 'Variation at a glance', lead: 'Everything that changes your day from the roster, top to bottom.', items: [
+      { icon: 'MdPhoneInTalk', h: 'Callback', t: "While you're on call" },
+      { icon: 'MdMoreTime', h: 'Overtime', t: 'When your shift runs over' },
+      { icon: 'MdListAlt', h: 'My Variations', t: 'Your list for the payroll form' },
+      { icon: 'MdHealing', h: 'Notify Sick', t: "Can't make a shift today" },
+      { icon: 'MdCalendarMonth', h: 'Available Shifts', t: 'Volunteer, or take a swap' },
+      { icon: 'MdSwapHoriz', h: 'Swap a shift', t: 'Offer one of yours' },
+    ] },
+    { type: 'steps', section: 'Variation', title: 'Callbacks while on call', icon: 'MdPhoneInTalk', items: [
+      { h: 'A button per on-call slot', t: "Only while you're on call" },
+      { h: 'Tap it when called in', t: 'The timer starts' },
+      { h: 'Two slots at once?', t: 'Two buttons: pick the right one' },
+      { h: 'Nothing to fill in', t: 'Date and slot are set for you' },
+    ] },
+    { type: 'steps', section: 'Variation', title: 'The callback timer', icon: 'MdTimer', items: [
+      { h: 'It keeps running', t: 'Saved on the server; close the app' },
+      { h: 'Call Complete', t: "Tap it when you're done" },
+      { h: 'Under 15 minutes?', t: 'It asks: record it or not' },
+      { h: 'Longer', t: 'Recorded by itself' },
+    ] },
+    { type: 'steps', section: 'Variation', title: 'Saving a patient detail', icon: 'MdNoteAdd', items: [
+      { h: 'Optional', t: 'An MRN, or last and first name' },
+      { h: 'Download to phone', t: 'A text file, on your phone only' },
+      { h: 'Never stored', t: 'The app keeps times, not patients' },
+      { h: 'Or Skip', t: 'The callback is still recorded' },
+    ] },
+    { type: 'steps', section: 'Variation', title: 'The fatigue notice', icon: 'MdBedtime', items: [
+      { h: 'Shown for 10 seconds', t: 'After every callback or overtime' },
+      { h: '10 hours after you finished', t: "Don't come back before this time" },
+      { h: 'Plan the morning', t: 'Tell your officer if it clashes' },
+      { h: 'Then it closes', t: 'The callback is in My Variations' },
+    ] },
+    { type: 'steps', section: 'Variation', title: 'Overtime', icon: 'MdMoreTime', items: [
+      { h: 'Overtime button', t: '30 min before your shift ends, to 4 h after' },
+      { h: 'Tapped early?', t: 'It starts by itself at shift end' },
+      { h: 'Tapped late?', t: 'It asks if you have been on since' },
+      { h: 'Overtime Complete', t: 'Then the same steps as a callback' },
+    ] },
+    { type: 'steps', section: 'Variation', title: 'My Variations', icon: 'MdListAlt', items: [
+      { h: 'Your recorded times', t: 'Callbacks and overtime' },
+      { h: 'Wrong time?', t: 'The pencil fixes it; officers see it was edited' },
+      { h: 'Download', t: 'For your payroll variation form' },
+      { h: 'Delete once submitted', t: 'Officers see times, never patients' },
+    ] },
+    { type: 'steps', section: 'Settings', title: 'Coffee preferences', icon: 'MdLocalCafe', items: [
+      { h: 'Settings → Coffee Preferences', t: 'Coffee, milk, extra shot' },
+      { h: 'Set it once', t: "It's on the order each day you work" },
+      { h: 'No Coffee', t: "Pick it if you don't want one" },
+      { h: 'Just for today?', t: 'Change it on the Coffee tab' },
     ] },
     // ----- Officers: setting up jobs, building a week, and one slide per
     // item of each overview.
@@ -806,6 +857,12 @@ const SHOTS = {
     'Calendar coverage colours': 'o_calendar',
     'The Planner in two steps': 'o_planner',
     'Offer a gap, get it filled': 'o_day',
+    'Callbacks while on call': 'r_callback',
+    'The callback timer': 'r_short',
+    'Saving a patient detail': 'r_patient',
+    'The fatigue notice': 'r_fatigue',
+    'My Variations': 'r_myvariations',
+    'Coffee preferences': 'r_coffeeprefs',
     'Locations and activities': 'o_locations',
     'Designing a job': 'o_jobs',
     'Places on a job': 'o_places',
