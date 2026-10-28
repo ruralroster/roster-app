@@ -96,10 +96,10 @@ module.exports = [
     base: 'rostar', file: 'Rstar-for-staff.pptx', sub: 'Your roster, on your phone · for staff',
     titleNotes: "Welcome to Rstar, the department roster on your phone. In about ten minutes I'll show you everything you need as a member of staff: your shifts, availability, picking up and swapping shifts, callbacks and overtime, calling in sick, the coffee order, and your settings.",
     take: ["What's in Rstar", 'Getting started', 'Install it on your phone', 'Your day and week', 'Starred colleagues and Crossover', 'Phone Book and calendar export',
-      'Variation at a glance', 'Callbacks while on call', 'The callback timer', 'Saving a patient detail', 'The fatigue notice', 'Overtime', 'My Variations',
-      'Calling in sick', 'Pick up an extra shift', 'Swap a shift, one for one',
       'Coffee, sorted',
-      'Your Settings', 'Your profile', 'Restrictions and skills', 'Coffee preferences', 'Set your availability', "What you'll be told", 'Security and two-factor'],
+      'Your Settings', 'Your profile', 'Restrictions and skills', 'Coffee preferences', 'Set your availability', "What you'll be told", 'Security and two-factor',
+      'Variation at a glance', 'Callbacks while on call', 'The callback timer', 'Saving a patient detail', 'The fatigue notice', 'Overtime', 'My Variations',
+      'Calling in sick', 'Pick up an extra shift', 'Swap a shift, one for one'],
     notes: ROSTAR_NOTES, closing: CLOSING_STAFF,
   },
   {
