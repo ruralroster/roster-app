@@ -142,6 +142,7 @@ const bringUp = (locator, offset = 90) => locator.evaluate((el, off) => {
     await shot(page, 'r_coffee', () => page.getByRole('button', { name: /Coffee/ }).last().click());
     await page.goto(ROSTAR, { waitUntil: 'networkidle' }); await page.waitForTimeout(2500);
     await shot(page, 'r_availability', async () => { await tap(page, 'Settings'); await tap(page, 'Availability'); });
+    await shot(page, 'r_profile', async () => { await tap(page, 'Settings'); await tap(page, 'Profile'); await top(page); });
     await shot(page, 'r_notifications', async () => { await tap(page, 'Settings'); await tap(page, 'Notifications'); });
     await shot(page, 'r_restrictions', async () => { await tap(page, 'Settings'); await tap(page, 'Activity Restrictions'); await top(page); });
     await shot(page, 'r_security', async () => { await tap(page, 'Settings'); await tap(page, 'Security'); await top(page); });
@@ -180,6 +181,93 @@ const bringUp = (locator, offset = 90) => locator.evaluate((el, off) => {
     await shot(page, 'o_accounts', () => section('Staff & Contacts', 'Staff Accounts'));
     await shot(page, 'o_import', () => section('Rostering Tools', 'Excel Roster Import'));
     await shot(page, 'o_reports', () => section('Reports & Compliance', 'On-Call & Weekend Fairness'));
+    await shot(page, 'o_locations', () => section('Locations & Activities', 'Locations'));
+    await shot(page, 'o_activities', () => section('Locations & Activities', 'Activities'));
+    await shot(page, 'o_places', async () => {
+      await section('Locations & Activities', 'Jobs (Planner)');
+      await page.getByRole('button', { name: 'Places', exact: true }).first().click();
+      await page.waitForTimeout(800);
+    });
+    await page.keyboard.press('Escape');
+    await shot(page, 'o_department', () => section('Department', 'Session Times'));
+    await shot(page, 'o_shifts', () => section('Shifts & Rules', 'Shifts'));
+    await shot(page, 'o_patternrules', () => section('Shifts & Rules', 'Shift Pattern Rules'));
+    await shot(page, 'o_duties', () => section('Shifts & Rules', 'Duty Types'));
+    await shot(page, 'o_leave', () => section('Shifts & Rules', 'Leave Types'));
+    await shot(page, 'o_skills', () => section('Shifts & Rules', 'Advanced Skill'));
+    await shot(page, 'o_weektemplates', () => section('Rostering Tools', 'Week Templates'));
+    await shot(page, 'o_export', () => section('Rostering Tools', 'Excel Roster Export'));
+    await shot(page, 'o_staff', () => section('Staff & Contacts', 'Staff and Availability'));
+    await shot(page, 'o_phonebook', () => section('Staff & Contacts', 'Phone Book'));
+    await shot(page, 'o_myaccount', async () => {
+      await page.goto(ROSTAR, { waitUntil: 'networkidle' }); await page.waitForTimeout(2500);
+      if (await page.getByText('View: Staff').count()) await page.getByText('View: Staff').click();
+      await tap(page, 'Settings'); await page.waitForTimeout(800);
+      const head = page.getByText('My Account', { exact: true }).last();
+      await head.click(); await page.waitForTimeout(1500);
+      await bringUp(head, 80);
+    });
+
+    // Calendar: the Volunteering panel, and Copy a week / Export to Payroll.
+    const calendar = async () => {
+      await page.goto(ROSTAR, { waitUntil: 'networkidle' }); await page.waitForTimeout(2500);
+      if (await page.getByText('View: Staff').count()) await page.getByText('View: Staff').click();
+      await page.getByRole('button', { name: /^Calendar/ }).last().click(); await page.waitForTimeout(2500);
+    };
+    await shot(page, 'o_volunteering', async () => {
+      await calendar();
+      await bringUp(page.getByRole('heading', { name: 'Volunteering' }), 80);
+    });
+    await shot(page, 'o_caltools', async () => {
+      await calendar();
+      await bringUp(page.getByRole('button', { name: 'Export to Payroll' }), 420);
+    });
+    await shot(page, 'o_payroll', async () => {
+      await page.getByRole('button', { name: 'Export to Payroll' }).click(); await page.waitForTimeout(800);
+    });
+    await page.keyboard.press('Escape');
+
+    // Planner, step by step. Find a blank week (no jobs) a few weeks out,
+    // lay ED Day on its weekdays, then show filling a week with gaps.
+    const planner = async () => {
+      await page.goto(ROSTAR, { waitUntil: 'networkidle' }); await page.waitForTimeout(2500);
+      if (await page.getByText('View: Staff').count()) await page.getByText('View: Staff').click();
+      await tap(page, 'Planner'); await page.waitForTimeout(2500);
+    };
+    const nextWeek = async () => { await page.getByLabel('Next week').click(); await page.waitForTimeout(2000); };
+    const jobCards = () => page.locator('div.rounded-lg.border.p-1\\.5');
+    await planner();
+    for (let i = 0; i < 6; i++) await nextWeek();
+    for (let i = 0; i < 20 && (await jobCards().count()) > 0; i++) await nextWeek();
+    await shot(page, 'o_blank', () => top(page));
+    // The first palette job (Emergency, first in colour order).
+    await shot(page, 'o_pick', async () => {
+      await page.locator('div.space-y-1\\.5 button').first().click(); await page.waitForTimeout(800);
+    });
+    await shot(page, 'o_layout', async () => {
+      for (let d = 0; d < 5; d++) {
+        await page.getByRole('button', { name: /^\+ / }).nth(d).click(); await page.waitForTimeout(1500);
+      }
+      await page.locator('div.space-y-1\\.5 button').first().click(); // put the job down
+      await page.waitForTimeout(1000);
+    });
+    await shot(page, 'o_template', async () => {
+      const pick = page.getByLabel('Week template');
+      if (await pick.count()) await pick.selectOption({ index: 1 });
+      await bringUp(page.getByText(/^Week of /).first(), 160);
+    });
+    // Fill: three weeks out, where the demo leaves a few gaps.
+    await planner();
+    for (let i = 0; i < 3; i++) await nextWeek();
+    await page.getByText('2 · Fill places').click(); await page.waitForTimeout(1000);
+    await shot(page, 'o_fill', () => top(page));
+    await shot(page, 'o_rank', async () => {
+      // Whoever's most in need of shifts: the first name in the list.
+      await page.locator('div.flex.flex-wrap.gap-1\\.5 button').first().click(); await page.waitForTimeout(1500);
+      // Scroll to their choice 1.
+      const best = page.locator('span[title*="choice 1:"]');
+      if (await best.count()) await bringUp(best.first(), 260); else await top(page);
+    });
     await ctx.close();
   }
 
