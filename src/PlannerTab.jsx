@@ -19,6 +19,7 @@ import {
   createVolunteerOffer,
   setOfferServiceDisruption,
   removeVolunteerOffer,
+  getExposureStats,
 } from './supabaseClient';
 import { offerIsFilled } from './offerEligibility';
 import { getMondayOfWeek } from './payrollExport';
@@ -26,7 +27,7 @@ import { toLocalDateStr } from './dateUtils';
 import { DEFAULT_FTE } from './availabilityUtils';
 import { JOB_COLOURS, jobCategoryFor, jobCategoryRank, jobCardStyle, jobBoxStyle, holdsOnCallDuty } from './jobColours';
 import {
-  hhmm, addDays, firstName, jobForCard, isAdminJob, isSenior, hasAnySkill, placeMismatch, layOutCard, dayConflict, daysWorked,
+  hhmm, addDays, firstName, jobForCard, isAdminJob, isSenior, hasAnySkill, placeMismatch, layOutCard, dayConflict, daysWorked, rankJobsForPerson, withBookings,
 } from './plannerUtils';
 
 // ============================================================
@@ -76,6 +77,8 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
   const [staffFilter, setStaffFilter] = useState('all'); // 'all' | 'senior' | 'junior' | rank name
   const [staffOnly, setStaffOnly] = useState(true); // hide people with 0 FTE (locums, casuals)
   const [templateIdForWeek, setTemplateIdForWeek] = useState({});
+  // Last 12 months of who did what, for ranking jobs in the Fill step.
+  const [exposure, setExposure] = useState(null);
   // Height of the officer view's bottom tab bar, so the people picker can
   // sit just above it.
   const [navHeight, setNavHeight] = useState(64);
@@ -126,6 +129,15 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
     });
     return () => { cancelled = true; };
   }, [departmentId, startStr, numDays, refreshKey]);
+
+  useEffect(() => {
+    if (!departmentId) return;
+    let cancelled = false;
+    getExposureStats(departmentId).then(res => {
+      if (!cancelled && res.data) setExposure(res.data);
+    });
+    return () => { cancelled = true; };
+  }, [departmentId]);
 
   const reload = () => setRefreshKey(k => k + 1);
 
@@ -383,6 +395,32 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
   const cardCategory = (card) => jobCategoryFor(card.locations?.name || locationName(card.location_id), activityName(card.activity_id));
   const jobCategory = (job) => jobCategoryFor(locationName(job.location_id), activityName(job.activity_id));
 
+  // Fill step: with a person picked, number the jobs they could go on —
+  // 1 for the one they've done least (rankJobsForPerson), and so on.
+  const jobRanks = (() => {
+    if (mode !== 'fill' || !selectedStaff || !exposure) return new Map();
+    const candidates = cards
+      .filter(card => card.date >= todayStr && !isAdminCard(card) && !conflictFor(selectedStaff.staff_id, card))
+      .filter(card => {
+        const job = jobForCard(card, jobTypes);
+        const layout = layOutCard(card, job, places, assignments.filter(a => a.theatre_activity_id === card.theatre_activity_id),
+          visitors.filter(v => v.theatre_activity_id === card.theatre_activity_id), staffById, rankRows);
+        return layout.places.some(({ place, slots }) =>
+          place.kind === 'staff' && !placeMismatch(place, selectedStaff, rankRows) && slots.some(slot => !slot.assignment && !slot.visitor));
+      })
+      .map(card => ({ cardId: card.theatre_activity_id, activityId: card.activity_id, date: card.date }));
+    // One per person per day, like the history counts shifts.
+    const seen = new Set();
+    const bookings = assignments.filter(a => {
+      const key = `${a.staff_id}|${a.date}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }).map(a => ({ staffId: a.staff_id, activityId: cardById.get(a.theatre_activity_id)?.activity_id, date: a.date }));
+    const history = withBookings(exposure, bookings, todayStr);
+    return rankJobsForPerson(selectedStaff.staff_id, candidates, history.totalShiftsByStaff, history.statsByStaffActivity);
+  })();
+
   const renderCard = (card) => {
     const job = jobForCard(card, jobTypes);
     const category = cardCategory(card);
@@ -411,9 +449,21 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
       : [];
 
     return (
-      <div key={card.theatre_activity_id} className="rounded-lg border p-1.5 space-y-1" style={jobCardStyle(category)}>
+      <div
+        key={card.theatre_activity_id}
+        className={`rounded-lg border p-1.5 space-y-1 ${jobRanks.get(card.theatre_activity_id) === 1 ? 'ring-2 ring-green-600' : ''}`}
+        style={jobCardStyle(category)}
+      >
         <div className="flex items-start justify-between gap-1">
-          <div className="min-w-0">
+          {jobRanks.has(card.theatre_activity_id) && (
+            <span
+              className={`flex-shrink-0 w-5 h-5 rounded-full text-[11px] font-bold flex items-center justify-center ${jobRanks.get(card.theatre_activity_id) === 1 ? 'bg-green-600 text-white' : 'bg-white text-green-800 border border-green-600'}`}
+              title={`${selectedStaff.name}'s choice ${jobRanks.get(card.theatre_activity_id)}: the job they've done least (for their share of shifts, last 12 months) comes first`}
+            >
+              {jobRanks.get(card.theatre_activity_id)}
+            </span>
+          )}
+          <div className="min-w-0 flex-1">
             <p className="text-xs font-bold text-gray-900 truncate" title={cardTitle(card, job)}>{cardTitle(card, job)}</p>
             <p className="text-[10px] text-gray-600">
               {hhmm(card.start_time)}–{hhmm(card.end_time)}
@@ -562,6 +612,18 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
     return s.rank === staffFilter;
   });
   const targetDays = (s) => (s.fte ?? DEFAULT_FTE) * 5 * weeksShown;
+  // Who to book next: people available on at least one day shown first,
+  // then whoever's furthest under their share (days booked ÷ FTE target),
+  // then by name.
+  const awayAllDays = (s) => days.every(d => unavailable.some(u => u.staff_id === s.staff_id && u.date === d));
+  const shareBooked = (s) => {
+    const target = targetDays(s);
+    return target > 0 ? daysWorked(s.staff_id, startStr, endStr, assignments, duties) / target : Infinity;
+  };
+  const orderedStaff = filteredStaff
+    .map(s => ({ s, away: awayAllDays(s), share: shareBooked(s) }))
+    .sort((a, b) => a.away - b.away || a.share - b.share || a.s.name.localeCompare(b.s.name))
+    .map(x => x.s);
 
   return (
     <div className={`p-4 ${mode === 'fill' ? 'pb-72' : 'pb-24'}`}>
@@ -808,12 +870,12 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
             </label>
             <p className="text-xs text-gray-600">
               {selectedStaff
-                ? <>Booking <span className="font-semibold text-gray-900">{selectedStaff.name}</span> — green places are theirs to take. Tap their name again to stop.</>
-                : 'Pick a person. With nobody picked, tap a name on the grid to remove it, or an amber place to type a visitor.'}
+                ? <>Booking <span className="font-semibold text-gray-900">{selectedStaff.name}</span> — green places are theirs to take; 1 is the job they've done least. Tap their name again to stop.</>
+                : 'Pick a person (most in need of shifts first). With nobody picked, tap a name on the grid to remove it, or an amber place to type a visitor.'}
             </p>
           </div>
           <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto">
-            {filteredStaff.map(s => {
+            {orderedStaff.map(s => {
               const worked = daysWorked(s.staff_id, startStr, endStr, assignments, duties);
               const target = targetDays(s);
               const on = s.staff_id === selectedStaffId;

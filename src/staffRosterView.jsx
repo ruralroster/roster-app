@@ -5,6 +5,7 @@ import ChangePassword from './ChangePassword';
 import NotificationSettings from './NotificationSettings';
 import StaffWalkthrough from './StaffWalkthrough';
 import SwapShiftOffer from './SwapShiftOffer';
+import AvailableShifts from './AvailableShifts';
 import { CallbackBanner, MyCallbacks } from './CallbackPanel';
 import {
   getStaffById,
@@ -24,6 +25,7 @@ import {
   getStaffAssignmentDatesInRange,
   getAvailableShiftsForStaff,
   createVolunteerRequest,
+  withdrawVolunteerRequest,
   getStaffRanks,
   getMySickCallState,
   createSickReport,
@@ -637,6 +639,26 @@ export default function StaffRosterView({ departmentId, staffId }) {
       setVolunteerError(null);
     } catch (err) {
       setVolunteerError(`Failed to send volunteer request: ${err.message}`);
+    } finally {
+      setVolunteeringKey(null);
+    }
+  };
+
+  const handleWithdrawVolunteer = async (opportunity) => {
+    if (!staffId) return;
+    if (!window.confirm('Withdraw your volunteer request for this shift?')) return;
+
+    setVolunteeringKey(opportunity.theatre_activity_id);
+    try {
+      const { error: withdrawErr } = await withdrawVolunteerRequest(opportunity.theatre_activity_id, staffId, opportunity.role_needed);
+      if (withdrawErr) throw withdrawErr;
+
+      setVolunteerOpportunities(prev => prev.map(o =>
+        o.theatre_activity_id === opportunity.theatre_activity_id ? { ...o, already_volunteered: false } : o
+      ));
+      setVolunteerError(null);
+    } catch (err) {
+      setVolunteerError(`Failed to withdraw volunteer request: ${err.message}`);
     } finally {
       setVolunteeringKey(null);
     }
@@ -1779,6 +1801,63 @@ export default function StaffRosterView({ departmentId, staffId }) {
         ? volunteerOpportunities.filter(o => o.role_needed !== 'registrar')
         : volunteerOpportunities;
 
+      const renderOpportunity = (opportunity) => (
+        <div key={`${opportunity.theatre_activity_id}-${opportunity.role_needed}`} className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-purple-500">
+          <div className="flex items-start justify-between mb-3">
+            <div>
+              <p className="text-xs font-semibold text-gray-600 uppercase">Date</p>
+              <p className="text-sm font-medium text-gray-900">
+                {new Date(`${opportunity.date}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'short', month: 'short', day: 'numeric' })}
+              </p>
+            </div>
+            <div className="px-3 py-1 bg-purple-100 text-purple-900 text-xs font-semibold rounded uppercase">
+              {opportunity.required_grade ? GRADE_LABEL[opportunity.required_grade] : opportunity.role_needed} needed
+            </div>
+          </div>
+
+          {opportunity.service_disruption && (
+            <p className="mb-2 px-3 py-2 bg-red-50 border border-red-300 text-red-800 text-sm font-semibold rounded">
+              Service disruption: if nobody takes this shift, the service closes.
+            </p>
+          )}
+          <h3 className="text-lg font-bold text-gray-900 mb-1">{opportunity.location}</h3>
+          {opportunity.activity && <p className="text-sm text-gray-700 mb-1">{opportunity.activity}</p>}
+          {opportunity.shift && (
+            <p className="text-sm text-gray-500 mb-4">
+              {opportunity.shift} ({opportunity.shift_start?.slice(0, 5)} - {opportunity.shift_end?.slice(0, 5)})
+            </p>
+          )}
+
+          {opportunity.already_volunteered ? (
+            <button disabled className="w-full bg-gray-100 text-gray-500 font-medium py-2 rounded-lg cursor-default">
+              Request Sent
+            </button>
+          ) : (
+            <button
+              onClick={() => handleVolunteer(opportunity)}
+              disabled={volunteeringKey === opportunity.theatre_activity_id}
+              className="w-full bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white font-medium py-2 rounded-lg transition"
+            >
+              {volunteeringKey === opportunity.theatre_activity_id ? 'Sending…' : 'Volunteer'}
+            </button>
+          )}
+          {opportunity.already_volunteered && (
+            <>
+              <p className="text-xs text-gray-500 text-center mt-2">
+                Your volunteer request has been sent to officers for approval.
+              </p>
+              <button
+                onClick={() => handleWithdrawVolunteer(opportunity)}
+                disabled={volunteeringKey === opportunity.theatre_activity_id}
+                className="w-full mt-2 text-sm text-gray-600 hover:text-red-700 disabled:opacity-50 font-medium py-1"
+              >
+                {volunteeringKey === opportunity.theatre_activity_id ? 'Withdrawing…' : 'Withdraw request'}
+              </button>
+            </>
+          )}
+        </div>
+      );
+
       return (
         <div className="p-4 pb-24">
           <div className="max-w-2xl mx-auto">
@@ -1837,7 +1916,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
 
             <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
               <h1 className="text-2xl font-bold text-gray-900">Available Shifts</h1>
-              <p className="text-sm text-gray-500">Shifts your officers have opened up for volunteering</p>
+              <p className="text-sm text-gray-500">Shifts your officers have opened up for volunteering, and colleagues’ shifts you could swap for</p>
               {isSeniorStaff && (
                 <label className="flex items-center gap-2 mt-3 text-sm text-gray-700 cursor-pointer select-none">
                   <input
@@ -1855,64 +1934,15 @@ export default function StaffRosterView({ departmentId, staffId }) {
                 <Loader size={32} className="text-blue-600 animate-spin mx-auto mb-2" />
                 <p className="text-gray-600 text-sm">Loading available shifts...</p>
               </div>
-            ) : visibleOpportunities.length === 0 ? (
-              <div className="bg-white rounded-lg shadow-sm p-6 text-center">
-                <p className="text-gray-600">
-                  {volunteerOpportunities.length === 0
-                    ? 'No shifts have been opened up for volunteering right now.'
-                    : 'No shifts to show — try unchecking "Hide registrar shifts".'}
-                </p>
-              </div>
             ) : (
-              <div className="space-y-4">
-                {visibleOpportunities.map(opportunity => (
-                  <div key={`${opportunity.theatre_activity_id}-${opportunity.role_needed}`} className="bg-white rounded-lg shadow-sm p-6 border-l-4 border-purple-500">
-                    <div className="flex items-start justify-between mb-3">
-                      <div>
-                        <p className="text-xs font-semibold text-gray-600 uppercase">Date</p>
-                        <p className="text-sm font-medium text-gray-900">
-                          {new Date(`${opportunity.date}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'short', month: 'short', day: 'numeric' })}
-                        </p>
-                      </div>
-                      <div className="px-3 py-1 bg-purple-100 text-purple-900 text-xs font-semibold rounded uppercase">
-                        {opportunity.required_grade ? GRADE_LABEL[opportunity.required_grade] : opportunity.role_needed} needed
-                      </div>
-                    </div>
-
-                    {opportunity.service_disruption && (
-                      <p className="mb-2 px-3 py-2 bg-red-50 border border-red-300 text-red-800 text-sm font-semibold rounded">
-                        Service disruption: if nobody takes this shift, the service closes.
-                      </p>
-                    )}
-                    <h3 className="text-lg font-bold text-gray-900 mb-1">{opportunity.location}</h3>
-                    {opportunity.activity && <p className="text-sm text-gray-700 mb-1">{opportunity.activity}</p>}
-                    {opportunity.shift && (
-                      <p className="text-sm text-gray-500 mb-4">
-                        {opportunity.shift} ({opportunity.shift_start?.slice(0, 5)} - {opportunity.shift_end?.slice(0, 5)})
-                      </p>
-                    )}
-
-                    {opportunity.already_volunteered ? (
-                      <button disabled className="w-full bg-gray-100 text-gray-500 font-medium py-2 rounded-lg cursor-default">
-                        Request Sent
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() => handleVolunteer(opportunity)}
-                        disabled={volunteeringKey === opportunity.theatre_activity_id}
-                        className="w-full bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white font-medium py-2 rounded-lg transition"
-                      >
-                        {volunteeringKey === opportunity.theatre_activity_id ? 'Sending…' : 'Volunteer'}
-                      </button>
-                    )}
-                    {opportunity.already_volunteered && (
-                      <p className="text-xs text-gray-500 text-center mt-2">
-                        Your volunteer request has been sent to officers for approval.
-                      </p>
-                    )}
-                  </div>
-                ))}
-              </div>
+              <AvailableShifts
+                departmentId={departmentId}
+                opportunities={visibleOpportunities}
+                renderOpportunity={renderOpportunity}
+                emptyMessage={volunteerOpportunities.length > 0 && visibleOpportunities.length === 0
+                  ? 'No shifts to show — try unchecking "Hide registrar shifts".'
+                  : 'No shifts have been opened up for volunteering right now.'}
+              />
             )}
 
             {/* Only for DR Roster doctors at a linked department; otherwise empty. */}

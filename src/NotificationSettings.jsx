@@ -152,7 +152,7 @@ export default function NotificationSettings({ staffId, departmentId, email, isO
   };
 
   const pushHelp = {
-    'ios-install': 'On iPhone, phone notifications only work once Roster is on your Home Screen: tap Share → Add to Home Screen, then open Roster from there and come back here.',
+    'ios-install': 'On iPhone, phone notifications only work once Rstar is on your Home Screen: tap Share → Add to Home Screen, then open Roster from there and come back here.',
     unsupported: "This browser can't show phone notifications.",
     'not-configured': "Phone notifications aren't set up for this app yet.",
     'no-worker': 'Phone notifications only work in the installed app, not this preview.',

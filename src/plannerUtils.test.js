@@ -1,4 +1,4 @@
-import { jobForCard, placeMismatch, layOutCard, dayConflict, isAdminJob, daysWorked, intervalOn, intervalsOverlap, groupUnconverted, bestJobForNewCard, jobForImportedShift } from './plannerUtils';
+import { jobForCard, placeMismatch, layOutCard, dayConflict, isAdminJob, daysWorked, intervalOn, intervalsOverlap, groupUnconverted, bestJobForNewCard, jobForImportedShift, rankJobsForPerson, withBookings } from './plannerUtils';
 
 const ranks = [
   { rank: 'SMO', requires_supervision: false },
@@ -225,5 +225,70 @@ describe('bestJobForNewCard', () => {
   it('never crosses to another location or activity, and ignores no-overlap', () => {
     expect(bestJobForNewCard(card('08:00', '12:00', 'w1'), jobs)).toBeNull();
     expect(bestJobForNewCard(card('13:00', '17:00', 'th', 'endo'), jobs)).toBeNull();
+  });
+});
+
+describe('rankJobsForPerson', () => {
+  // Ward is common (half of everyone's shifts), dental rare (a tenth).
+  const totals = new Map([['me', 20], ['other', 20]]);
+  const stats = new Map([
+    ['me|ward', { count: 10, lastDate: '2026-10-20' }],
+    ['other|ward', { count: 10, lastDate: '2026-10-21' }],
+    ['me|dental', { count: 4, lastDate: '2026-10-01' }],
+    ['other|dental', { count: 0, lastDate: '0000-00-00' }],
+  ]);
+  const cands = [
+    { cardId: 'w', activityId: 'ward', date: '2026-11-02' },
+    { cardId: 'd', activityId: 'dental', date: '2026-11-03' },
+  ];
+
+  it('puts the job furthest under their fair share first, not just the rarest', () => {
+    // Dental: 4/20 = 0.2 against a fair 4/40 = 0.1, so double their share.
+    // Ward: 0.5 against 0.5, exactly their share. Ward comes first.
+    const ranks = rankJobsForPerson('me', cands, totals, stats);
+    expect(ranks.get('w')).toBe(1);
+    expect(ranks.get('d')).toBe(2);
+  });
+
+  it('gives the rare job to whoever is behind on it', () => {
+    const ranks = rankJobsForPerson('other', cands, totals, stats);
+    expect(ranks.get('d')).toBe(1);
+  });
+
+  it('judges a specialist job against the people who do it', () => {
+    // Only anaesthetists do anaes, so it is a big share for them; this one
+    // is behind the other anaesthetist, so it comes first.
+    const t = new Map([['a1', 10], ['a2', 10]]);
+    const st = new Map([
+      ['a1|anaes', { count: 6, lastDate: '2026-10-01' }], ['a1|ward', { count: 4, lastDate: '2026-10-02' }],
+      ['a2|anaes', { count: 8, lastDate: '2026-10-01' }], ['a2|ward', { count: 2, lastDate: '2026-10-02' }],
+    ]);
+    const ranks = rankJobsForPerson('a1', [
+      { cardId: 'x', activityId: 'anaes', date: '2026-11-02' },
+      { cardId: 'y', activityId: 'ward', date: '2026-11-02' },
+    ], t, st);
+    expect(ranks.get('x')).toBe(1);
+  });
+
+  it('breaks ties by the one done longest ago, never done first', () => {
+    const ranks = rankJobsForPerson('new-person', [
+      { cardId: 'b', activityId: 'ward', date: '2026-11-03' },
+      { cardId: 'a', activityId: 'ward', date: '2026-11-02' },
+    ], totals, stats);
+    expect(ranks.get('a')).toBe(1);
+  });
+});
+
+describe('withBookings', () => {
+  it('adds bookings after today to the history', () => {
+    const base = { totalShiftsByStaff: new Map([['me', 2]]), statsByStaffActivity: new Map() };
+    const out = withBookings(base, [
+      { staffId: 'me', activityId: 'dental', date: '2026-11-05' },
+      { staffId: 'me', activityId: 'ward', date: '2026-10-01' }, // already in the history
+    ], '2026-10-28');
+    expect(out.totalShiftsByStaff.get('me')).toBe(3);
+    expect(out.statsByStaffActivity.get('me|dental').count).toBe(1);
+    expect(out.statsByStaffActivity.has('me|ward')).toBe(false);
+    expect(base.totalShiftsByStaff.get('me')).toBe(2);
   });
 });

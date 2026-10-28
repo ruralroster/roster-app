@@ -2333,6 +2333,19 @@ async function getCaseMixRawData(departmentId, asOfDate) {
   };
 }
 
+// The Planner's "best job for this person" numbers: each person's shifts
+// over the last 12 months, and how many were on each activity.
+export async function getExposureStats(departmentId) {
+  console.log('getExposureStats called', departmentId);
+  try {
+    const { totalShiftsByStaff, statsByStaffActivity } = await getCaseMixRawData(departmentId, new Date());
+    return { data: { totalShiftsByStaff, statsByStaffActivity }, error: null };
+  } catch (err) {
+    console.error('getExposureStats error:', err);
+    return { data: null, error: err };
+  }
+}
+
 function computeExposureRate(timesWorked, totalShifts) {
   if (!totalShifts) return 0;
   return Math.round((timesWorked / totalShifts) * 1000) / 10; // 1 decimal place
@@ -3591,6 +3604,26 @@ export async function createVolunteerRequest(departmentId, theatreActivityId, st
     return { data, error };
   } catch (err) {
     return { data: null, error: err };
+  }
+}
+
+// Takes back a volunteer request the officer hasn't acted on yet. Approval
+// assigns the person and clears the request, so one that still exists is
+// still waiting; RLS (volunteer_requests_self) only lets staff delete their own.
+export async function withdrawVolunteerRequest(theatreActivityId, staffId, role) {
+  console.log('withdrawVolunteerRequest called', theatreActivityId, staffId, role);
+
+  try {
+    const { error } = await supabase
+      .from('volunteer_requests')
+      .delete()
+      .eq('theatre_activity_id', theatreActivityId)
+      .eq('staff_id', staffId)
+      .eq('role', role);
+
+    return { error };
+  } catch (err) {
+    return { error: err };
   }
 }
 
