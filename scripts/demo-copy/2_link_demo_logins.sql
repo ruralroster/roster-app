@@ -1,5 +1,5 @@
 -- Links two demo logins to people in the demo copy, so they can sign in to
--- Rostar and DR Roster for screenshots.
+-- Rstar and DR Roster for screenshots.
 --
 -- First, in Supabase: Authentication → Users → Add user → Create new user,
 -- twice (tick Auto Confirm User). One is the officer, one is a doctor.

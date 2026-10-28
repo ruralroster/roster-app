@@ -2,7 +2,7 @@
 
 Screenshots of the demo (Wattle Creek Hospital / Demo District, all made-up
 people) and the four recorded feature decks built from them:
-`Rostar-for-staff`, `Rostar-for-officers`, `DR-Roster-for-doctors`,
+`Rstar-for-staff`, `Rstar-for-officers`, `DR-Roster-for-doctors`,
 `DR-Roster-for-officers` (.pptx, speaker notes are the spoken script).
 
 ## Refreshing after the apps change

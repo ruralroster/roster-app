@@ -26,7 +26,7 @@ DELETE FROM site_officer_pending WHERE site_id IN (SELECT site_id FROM sites, ct
 DELETE FROM sites USING ctx WHERE district_id = ctx.district;
 DELETE FROM districts USING ctx WHERE district_id = ctx.district;
 
--- Rostar: children first, then the department.
+-- Rstar: children first, then the department.
 DELETE FROM sick_call_alerts USING ctx WHERE department_id = ctx.dept;
 DELETE FROM sick_reports USING ctx WHERE department_id = ctx.dept;
 DELETE FROM volunteer_requests WHERE theatre_activity_id IN (SELECT theatre_activity_id FROM theatre_activities, ctx WHERE department_id = ctx.dept);

@@ -57,7 +57,7 @@ END $$;
 
 -- Clear the last run.
 -- Clear the last run: every swap, application and posted shift in the
--- Demo District (shifts passed up from Rostar stay).
+-- Demo District (shifts passed up from Rstar stay).
 DELETE FROM district_swap_offers o USING district_swap_listings l, dx WHERE o.listing_id = l.listing_id AND l.district_id = dx.district;
 DELETE FROM district_swap_listings l USING dx WHERE l.district_id = dx.district;
 DELETE FROM district_applications a USING district_notices n, dx
@@ -74,7 +74,7 @@ CREATE TEMP TABLE bd ON COMMIT DROP AS
 SELECT doctor_id, level, (row_number() OVER (ORDER BY name))::int AS k
 FROM district_doctors, dx WHERE district_id = dx.district AND home_site_id = dx.banksia AND active;
 
--- The demo doctor's free days (no Rostar shift) in the next 3 weeks.
+-- The demo doctor's free days (no Rstar shift) in the next 3 weeks.
 CREATE TEMP TABLE free_days ON COMMIT DROP AS
 SELECT g::date AS d, (row_number() OVER (ORDER BY g))::int AS k
 FROM generate_series(current_date + 2, current_date + 21, interval '1 day') g
