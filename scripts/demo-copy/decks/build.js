@@ -803,8 +803,8 @@ const dr = {
       left: { icon: 'MdStorefront', h: 'Up for swap', items: ['Only listings you could close', 'Swap for one of mine'] },
       right: { icon: 'MdSearch', h: 'Find a swap (n)', items: ['On each of your own shifts', 'Lists every listing you could trade it for', 'Offer swap: no need to list yours first'] } },
     { type: 'flow', section: 'Swaps', title: 'Swapping across sites', items: [
-      { icon: 'MdPostAdd', h: 'Innisfail doctor lists', t: "Ticks I'd take a shift at another site" },
-      { icon: 'MdTravelExplore', h: 'Atherton doctor finds it', t: 'Ticks Look across sites' },
+      { icon: 'MdPostAdd', h: 'Wattle Creek doctor lists', t: "Ticks I'd take a shift at another site" },
+      { icon: 'MdTravelExplore', h: 'Banksia Bay doctor finds it', t: 'Ticks Look across sites' },
       { icon: 'MdGroups', h: 'Both officers approve', t: 'Each site is getting a different doctor' },
       { icon: 'MdSwapHoriz', h: 'Swap happens', t: 'On the second approval' },
     ], note: "Both doctors pass every rule, at sites each has ticked under Sites I'd work at." },
