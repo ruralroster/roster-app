@@ -69,6 +69,7 @@ const ROSTAR_NOTES = {
 };
 
 const DR_NOTES = {
+  'How a swap works': "Here's a swap from your side. Doctor 1 can't do a shift, so they list it, and tick the days or nights that pay fortnight they could work instead. Anything they couldn't work is greyed out: a day they're already rostered, or one that would break ten hours' rest, like a day straight after a night. Doctor 2 only ever sees the listing if it really works: they can do the shift, they hold a shift on one of Doctor 1's ticked days to give in return, and both of them keep their rest once the two shifts are traded. Doctor 2 offers that shift, and you're told. You approve, and the bookings swap over, in Rstar too; or decline with a reason. Same-day swaps work as well: someone giving away a day can tick the night of that same date, and swap with whoever has it.",
   'How it fits with Rstar': "DR Roster is the district's shift board, and it works alongside Rstar. When a site has a gap, it's offered to local staff first. If nobody local takes it within 72 hours, it comes up on DR Roster automatically. District doctors who can do it apply, the site's officer approves one, and that doctor appears on the Rstar card at the site. Sites can also post shifts straight to DR Roster. It uses the same login as Rstar.",
   'Getting started': "You'll get an invite email; tap the link and set a password. If you already use Rstar, it's the same login. Install it like an app: on an iPhone, Safari, Share, Add to Home Screen; on Android, Install app. Two-factor is optional, and it's the same setting as Rstar, so turning it on in one turns it on in both. If you forget your password, use Forgot password on the sign-in page.",
   'The tabs': "There are a handful of tabs. Calendar is where you find and apply for shifts. Swaps has your own shifts and the swap marketplace. My profile is your level, skills, sites and notification settings. And Help explains everything for your role. Officers also see Sites and Doctors, and super admins see Admin.",
@@ -126,7 +127,7 @@ module.exports = [
   {
     base: 'dr', file: 'DR-Roster-for-officers.pptx', sub: 'Posting, filling and approving · for site officers',
     titleNotes: "This is DR Roster for site officers and admins. I'll cover how shifts reach DR Roster, how to post and fill them, how swaps are approved, and the alerts that tell you when a gap needs attention.",
-    take: ['How it fits with Rstar', 'Getting started', 'The tabs', 'Posting shifts', 'Filling shifts and approving swaps', 'Swaps are one for one', 'Swapping across sites', "Gaps you'll hear about"],
+    take: ['How it fits with Rstar', 'Getting started', 'The tabs', 'Posting shifts', 'Filling shifts and approving swaps', 'How a swap works', 'Swapping across sites', "Gaps you'll hear about"],
     notes: DR_NOTES, closing: CLOSING_OFFICER,
     // Officers see the approval side of swaps.
     shots: { 'Swaps are one for one': 'do_swaps' },

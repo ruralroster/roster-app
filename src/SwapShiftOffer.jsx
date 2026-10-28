@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import CollapsibleSection from './CollapsibleSection';
 import { supabase } from './supabaseClient';
 import { toLocalDateStr } from './dateUtils';
+import { blockedSlots } from './swapSlots';
 
 // Variation → "Swap a shift (DR Roster)": put one of your upcoming roster
 // shifts on DR Roster's swap marketplace. Only for people who are DR
@@ -109,6 +110,7 @@ export default function SwapShiftOffer() {
             {listing === s.assignment_id && !s.listing_id && (
               <ListForm
                 shift={s}
+                allShifts={shifts}
                 busy={busy}
                 onCancel={() => setListing(null)}
                 onSubmit={async (args) => {
@@ -128,7 +130,10 @@ export default function SwapShiftOffer() {
 
 // The days/nights of the shift's pay fortnight you could work in return (at least one: a swap never changes anyone's number
 // of shifts).
-function ListForm({ shift, busy, onCancel, onSubmit }) {
+function ListForm({ shift, allShifts, busy, onCancel, onSubmit }) {
+  // Your other roster shifts (DR Roster ones are checked when someone offers).
+  const asShift = (x) => ({ shift_date: x.date, start_time: x.start_time, end_time: x.end_time });
+  const blocked = blockedSlots(allShifts.map(asShift), asShift(shift), fortnightDays(shift.date), toLocalDateStr(new Date()), dayLabel);
   const [slots, setSlots] = useState([]);
   const [note, setNote] = useState('');
   const [otherSites, setOtherSites] = useState(false);
@@ -145,7 +150,8 @@ function ListForm({ shift, busy, onCancel, onSubmit }) {
       <div>
         <p className="text-gray-700">
           Days or nights you could work in return (this pay fortnight): tick at least one. Whoever takes your shift gives you one of
-          theirs on one of them, so neither of you ends up with fewer shifts.
+          theirs on one of them, so neither of you ends up with fewer shifts. Greyed out: you're working then, or too close to
+          another shift for 10 hours' rest. To swap a day for a night (or back) on the same date, tick the other one that day.
         </p>
         <div className="grid gap-x-3 gap-y-1 mt-2 items-center" style={{ gridTemplateColumns: 'auto 3rem 3rem', maxWidth: '20rem' }}>
           <span />
@@ -160,8 +166,10 @@ function ListForm({ shift, busy, onCancel, onSubmit }) {
                   type="checkbox"
                   className="justify-self-center"
                   checked={slots.includes(`${d}:${kind}`)}
+                  disabled={blocked.has(`${d}:${kind}`)}
+                  title={blocked.get(`${d}:${kind}`)}
                   onChange={() => toggle(`${d}:${kind}`)}
-                  aria-label={`${dayLabel(d)} ${kind}`}
+                  aria-label={`${dayLabel(d)} ${kind}${blocked.has(`${d}:${kind}`) ? `: ${blocked.get(`${d}:${kind}`)}` : ''}`}
                 />
               ))}
             </React.Fragment>
