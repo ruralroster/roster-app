@@ -123,6 +123,7 @@ const bringUp = (locator, offset = 90) => locator.evaluate((el, off) => {
     await shot(page, 'r_variation', async () => { await tap(page, 'Variation'); await page.waitForTimeout(5000); await bringUp(page.getByRole('heading', { name: 'Available Shifts' }), 120); });
     await shot(page, 'r_swapform', async () => {
       await tap(page, 'Variation');
+      await page.getByRole('button', { name: /Swap a shift/ }).click(); // collapsed by default
       await page.getByRole('button', { name: 'Offer for swap' }).first().click();
       await bringUp(page.getByText(/could work in return/).first(), 220);
     });

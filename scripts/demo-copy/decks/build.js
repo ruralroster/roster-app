@@ -373,13 +373,13 @@ const rostar = {
       { icon: 'MdCheckCircle', h: 'Officer accepts', t: "You're booked onto the roster" },
     ], note: 'Eligible = senior enough, holding any required skill, not restricted, and marked available that day.' },
     { type: 'statSteps', section: 'Variation', title: 'Swap a shift, one for one', big: '1 for 1', bigLabel: "A swap never lowers anyone's shift count or FTE. Needs a DR Roster account.", items: [
-      { h: 'Offer for swap', t: 'Variation → Swap a shift (DR Roster), beside the shift' },
+      { h: 'Offer for swap', t: 'Variation → Swap a shift, last on the tab (tap to open)' },
       { h: 'Say when you could work', t: 'Tick at least one day or night that pay fortnight' },
       { h: 'Widen the pool (optional)', t: "Tick I'd take a shift in return at another site" },
       { h: 'Officer approves', t: 'Bookings swap over. Until then, you still work it' },
     ] },
     { type: 'steps', section: 'Variation', title: 'Calling in sick', icon: 'MdHealing', items: [
-      { h: 'Notify Sick', t: 'At the bottom of Variation, when you have a shift today' },
+      { h: 'Notify Sick', t: 'Under My Variations, when you have a shift today' },
       { h: 'Check the message', t: 'It is pre-filled; edit it if you like. It shows who will get it' },
       { h: "Who's told", t: "Officers, the ED on-call now, and tomorrow's 08:00 ED consultant" },
       { h: "It's a pop-up, not a text", t: "They see it when they next open the app. Phone the on-call if it's urgent" },
