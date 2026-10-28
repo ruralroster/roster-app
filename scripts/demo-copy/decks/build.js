@@ -791,8 +791,8 @@ const dr = {
       { h: 'Until then', t: 'You still work your shift, so the site never loses cover' },
     ] },
     { type: 'statSteps', section: 'Swaps', title: 'How a swap works', big: '1 for 1', bigLabel: 'Every swap is checked against the rules for both doctors before you see it.', items: [
-      { h: 'Doctor 1 lists a shift', t: "Ticks days or nights that fortnight they could work instead; ones that break 10 hours' rest are greyed out" },
-      { h: 'Doctor 2 only sees it if it works', t: "They can do the shift, hold one on a ticked day, and both keep 10 hours' rest" },
+      { h: 'Doctor 1 lists a shift', t: 'Ticks days they could work; unworkable ones are greyed' },
+      { h: 'Doctor 2: only if valid', t: 'Has a shift on a ticked day; both keep their rest' },
       { h: 'Doctor 2 offers that shift', t: "You're told; they can withdraw until you decide" },
       { h: 'You approve, or decline', t: "Bookings swap over; nobody's count changes" },
     ] },
