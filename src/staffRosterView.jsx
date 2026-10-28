@@ -1784,8 +1784,8 @@ export default function StaffRosterView({ departmentId, staffId }) {
           <div className="max-w-2xl mx-auto">
             {/* Order: Variations (Callback per on-call slot / Overtime
                 buttons — only while on call or near the end of a rostered
-                shift), My Variations, Swap a shift (DR Roster), Notify Sick,
-                then Available Shifts. */}
+                shift), My Variations, Notify Sick, Available Shifts, then
+                Swap a shift (DR Roster), collapsed. */}
             <CallbackBanner
               staffId={staffId}
               departmentId={departmentId}
@@ -1796,9 +1796,6 @@ export default function StaffRosterView({ departmentId, staffId }) {
             <CollapsibleSection title="My Variations">
               <MyCallbacks staffId={staffId} dutyTypes={dutyTypes} refreshKey={callbacksVersion} />
             </CollapsibleSection>
-
-            {/* Only for DR Roster doctors at a linked department; otherwise empty. */}
-            <SwapShiftOffer />
 
             {/* Shared error box for Notify Sick and Volunteer below */}
             {volunteerError && (
@@ -1917,6 +1914,11 @@ export default function StaffRosterView({ departmentId, staffId }) {
                 ))}
               </div>
             )}
+
+            {/* Only for DR Roster doctors at a linked department; otherwise empty. */}
+            <div className="mt-6">
+              <SwapShiftOffer />
+            </div>
 
             {showSickModal && (
               <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">

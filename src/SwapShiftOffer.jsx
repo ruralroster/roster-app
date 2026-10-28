@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import CollapsibleSection from './CollapsibleSection';
 import { supabase } from './supabaseClient';
 import { toLocalDateStr } from './dateUtils';
 
@@ -65,8 +66,8 @@ export default function SwapShiftOffer() {
   if (shifts.length === 0) return null;
 
   return (
-    <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
-      <h2 className="text-lg font-bold text-gray-900 mb-1">Swap a shift (DR Roster)</h2>
+    // Collapsed by default: it sits last on the Variations tab.
+    <CollapsibleSection title="Swap a shift (DR Roster)">
       <p className="text-sm text-gray-500 mb-3">
         Can't do a shift? Put it on DR Roster's swap marketplace. A doctor there swaps one of theirs for it, on a day you can
         work, and your officer approves the swap. You still work it unless a swap is approved.{' '}
@@ -121,7 +122,7 @@ export default function SwapShiftOffer() {
           </li>
         ))}
       </ul>
-    </div>
+    </CollapsibleSection>
   );
 }
 
