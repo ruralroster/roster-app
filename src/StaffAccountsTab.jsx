@@ -22,15 +22,23 @@ function firstNameOf(name) {
 // needs no new infrastructure (no transactional email provider/secret) on
 // top of the temp password the Edge Function already generates.
 function tempPasswordMailto({ name, email, password }) {
-  const subject = 'Rostering app Password reset';
+  const subject = 'Your Rstar one-time password';
   const body = [
     `Dear ${firstNameOf(name)},`,
     '',
-    'please find below your one-time password for the rostering app:',
+    'Please find below your one-time password for Rstar:',
     '',
     password,
     '',
-    `You'll have to reset that as soon as you log in. Use this email address as your username and put it into the website ${ROSTER_APP_URL}`,
+    `Sign in at ${ROSTER_APP_URL} using this email address as your username and the password above.`,
+    '',
+    "The first time you sign in, Rstar will ask you to choose a new password of your own. The one-time password won't work after that.",
+    '',
+    'To put Rstar on your phone like an app:',
+    '',
+    'iPhone: open the link above in Safari (not Chrome or the Gmail browser), tap the Share button (the square with an arrow), then "Add to Home Screen" and "Add". Open Rstar from your Home Screen from then on: phone notifications only work from there.',
+    '',
+    'Android: open the link above in Chrome and tap "Install App" on the sign-in screen. If it isn\'t there, tap the ⋮ menu (top right), then "Install app" or "Add to Home screen".',
   ].join('\n');
   return `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 }
