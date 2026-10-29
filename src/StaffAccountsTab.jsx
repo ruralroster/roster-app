@@ -39,6 +39,11 @@ function tempPasswordMailto({ name, email, password }) {
     'iPhone: open the link above in Safari (not Chrome or the Gmail browser), tap the Share button (the square with an arrow), then "Add to Home Screen" and "Add". Open Rstar from your Home Screen from then on: phone notifications only work from there.',
     '',
     'Android: open the link above in Chrome and tap "Install App" on the sign-in screen. If it isn\'t there, tap the ⋮ menu (top right), then "Install app" or "Add to Home screen".',
+    '',
+    "If there are any issues, or anything you'd like changed or added to the app, please don't hesitate to get in touch at ruralroster@gmail.com.",
+    '',
+    'Cheers,',
+    'Rural Roster Team',
   ].join('\n');
   return `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 }
