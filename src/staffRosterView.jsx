@@ -112,8 +112,8 @@ const toDateStr = toLocalDateStr;
 // getSickCallRecipients in supabaseClient.js.
 const SICK_CALL_REASON_LABEL = {
   officer: 'Rostering officer',
-  on_call: 'On call now',
-  next_day_consultant: 'Consultant tomorrow 08:00',
+  on_call: 'On call now, phone notification now and at 07:30',
+  next_day_consultant: 'Morning consultant that day, phone notification at 07:30',
 };
 
 function formatCrossoverWeekRange(weekStart) {
@@ -203,7 +203,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
   const [hideRegistrarShifts, setHideRegistrarShifts] = useState(false);
   const isSeniorStaff = staffMember && staffRanks.find(r => r.rank === staffMember.rank)?.requires_supervision === false;
   // Notify Sick — enabled while this staff member has a shift under way or
-  // starting within 24 hours (see sickCallShifts.js) that they haven't
+  // starting within 12 hours (see sickCallShifts.js) that they haven't
   // already reported. sickShifts is every such shift; mySickReports their
   // reports for those dates, latest first.
   const [sickShifts, setSickShifts] = useState([]);
@@ -589,7 +589,8 @@ export default function StaffRosterView({ departmentId, staffId }) {
     setSickRecipients([]);
     setShowSickModal(true);
     setLoadingSickRecipients(true);
-    const { data, error: recipientsErr } = await getSickCallRecipients(departmentId, staffId, new Date());
+    const sickDates = unreportedSickShifts.map(s => s.assignment.date);
+    const { data, error: recipientsErr } = await getSickCallRecipients(departmentId, staffId, new Date(), sickDates);
     if (recipientsErr) setVolunteerError(`Failed to work out who to notify: ${recipientsErr.message}`);
     setSickRecipients(data);
     setLoadingSickRecipients(false);
@@ -614,7 +615,11 @@ export default function StaffRosterView({ departmentId, staffId }) {
         // the button live for a second, duplicate report.
         setMySickReports(prev => [data, ...prev]);
         setShowSickModal(false);
-        const { error: alertsErr } = await createSickCallAlerts(departmentId, data.sick_report_id, sickRecipients, message);
+        // The morning consultant is only told about their own day's report.
+        const forThisDate = sickRecipients
+          .map(r => (r.morningDates?.includes(date) ? r : { ...r, reasons: r.reasons.filter(reason => reason !== 'next_day_consultant') }))
+          .filter(r => r.reasons.length > 0);
+        const { error: alertsErr } = await createSickCallAlerts(departmentId, data.sick_report_id, forThisDate, message);
         if (alertsErr) throw new Error(`your report was saved, but the pop-ups didn't go out (${alertsErr.message}) — contact your officer directly`);
         notifyVolunteering('sick', { sickReportId: data.sick_report_id });
       }
@@ -1897,8 +1902,8 @@ export default function StaffRosterView({ departmentId, staffId }) {
               <h2 className="text-lg font-bold text-gray-900 mb-1">Notify Sick</h2>
               <p className="text-sm text-gray-500 mb-4">
                 {sickShifts.length > 0
-                  ? "Let your officer know you can't make a shift in the next 24 hours."
-                  : "You don't have a shift in the next 24 hours."}
+                  ? "Let your officer know you can't make a shift in the next 12 hours."
+                  : "You don't have a shift in the next 12 hours. Notify Sick opens 12 hours before a shift; for anything further ahead, talk to your officer."}
               </p>
               {shownSickReports.map(report => (
                 <p key={report.sick_report_id} className={`text-sm font-medium text-center py-2 px-2 rounded-lg mb-2 ${

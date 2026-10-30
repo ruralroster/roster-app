@@ -3864,7 +3864,7 @@ export async function getDepartmentCallbacks(departmentId, fromDate, toDate) {
 
 // Notify Sick's starting point: this staff member's assignments from
 // yesterday to tomorrow (sickCallShiftsInWindow picks the ones under way
-// or starting within 24 hours — yesterday's for an overnight shift still
+// or starting within 12 hours — yesterday's for an overnight shift still
 // going), and their sick reports for those dates, latest first, so a
 // shift already reported isn't offered again.
 export async function getMySickCallState(staffId, now = new Date()) {
@@ -3962,11 +3962,18 @@ const windowCovers = (start, end, timeStr) => {
 //     window covers `now`. An overnight window (end <= start) means an
 //     early-morning call belongs to YESTERDAY's assignment. A duty type
 //     with no times set covers its whole date.
-//   - next_day_consultant: a consultant rostered tomorrow at a location
-//     flagged notify_on_sick_call whose times cover 08:00 (card times
-//     first, then the shift's; no times at all counts as covering).
-export async function getSickCallRecipients(departmentId, reporterStaffId, now = new Date()) {
-  console.log('getSickCallRecipients called', departmentId, reporterStaffId, now);
+//   - next_day_consultant: the morning consultant on the day of the shift
+//     being missed (sickDates; tomorrow if none given) — a consultant
+//     rostered that day at a location flagged notify_on_sick_call whose
+//     times cover 08:00 (card times first, then the shift's; no times at
+//     all counts as covering). morningDates says which day(s) they're the
+//     morning consultant for, so each report only goes to its own day's.
+//     They get a phone notification at 07:30 that day (or straight away
+//     if that's passed), and so does the on_call person, who was also
+//     pushed at the time of the call: see
+//     migrations/2026-11-01_sick_call_morning_push.sql.
+export async function getSickCallRecipients(departmentId, reporterStaffId, now = new Date(), sickDates = null) {
+  console.log('getSickCallRecipients called', departmentId, reporterStaffId, now, sickDates);
   const todayStr = toLocalDateStr(now);
   const yesterday = new Date(now);
   yesterday.setDate(yesterday.getDate() - 1);
@@ -3974,6 +3981,7 @@ export async function getSickCallRecipients(departmentId, reporterStaffId, now =
   const tomorrow = new Date(now);
   tomorrow.setDate(tomorrow.getDate() + 1);
   const tomorrowStr = toLocalDateStr(tomorrow);
+  const morningDates = sickDates?.length ? [...new Set(sickDates)] : [tomorrowStr];
   const nowTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 
   try {
@@ -4015,9 +4023,9 @@ export async function getSickCallRecipients(departmentId, reporterStaffId, now =
       locationIds.length > 0
         ? supabase
             .from('staff_assignments')
-            .select('staff_id, leave_code, staff(name), shifts(start_time, end_time), theatre_activities(start_time, end_time)')
+            .select('date, staff_id, leave_code, staff(name), shifts(start_time, end_time), theatre_activities(start_time, end_time)')
             .eq('department_id', departmentId)
-            .eq('date', tomorrowStr)
+            .in('date', morningDates)
             .eq('role', 'consultant')
             .in('location_id', locationIds)
         : Promise.resolve({ data: [], error: null }),
@@ -4028,9 +4036,10 @@ export async function getSickCallRecipients(departmentId, reporterStaffId, now =
     const byStaff = new Map();
     const add = (staffId, name, reason) => {
       if (!staffId || staffId === reporterStaffId) return;
-      const entry = byStaff.get(staffId) || { staff_id: staffId, name, reasons: [] };
+      const entry = byStaff.get(staffId) || { staff_id: staffId, name, reasons: [], morningDates: [] };
       if (!entry.reasons.includes(reason)) entry.reasons.push(reason);
       byStaff.set(staffId, entry);
+      return entry;
     };
 
     (officersRes.data || []).forEach(o => add(o.staff_id, o.name, 'officer'));
@@ -4055,7 +4064,10 @@ export async function getSickCallRecipients(departmentId, reporterStaffId, now =
       if (a.leave_code) return;
       const start = hhmm(a.theatre_activities?.start_time) || hhmm(a.shifts?.start_time);
       const end = hhmm(a.theatre_activities?.end_time) || hhmm(a.shifts?.end_time);
-      if (!start || !end || windowCovers(start, end, '08:00')) add(a.staff_id, a.staff?.name, 'next_day_consultant');
+      if (!start || !end || windowCovers(start, end, '08:00')) {
+        const entry = add(a.staff_id, a.staff?.name, 'next_day_consultant');
+        if (entry && !entry.morningDates.includes(a.date)) entry.morningDates.push(a.date);
+      }
     });
 
     return { data: [...byStaff.values()], error: null };

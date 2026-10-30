@@ -1,8 +1,9 @@
 // NOTIFY SICK — WHICH SHIFTS CAN BE CALLED IN SICK FOR
 //
 // The Notify Sick button is live whenever the staff member has a shift
-// that's under way now or starts within the next 24 hours, so someone can
-// call in the evening before an early start. More than one (an AM and a PM
+// that's under way now or starts within the next 12 hours (8pm for an 8am
+// start), so someone can call in the evening before an early start but
+// not days ahead: that's leave, for the officer. More than one (an AM and a PM
 // session, or tonight and tomorrow morning) and they tick which ones.
 //
 // Times come from the card first, then the shift — the same order as
@@ -10,7 +11,7 @@
 // assignment with no times at all counts as its whole date. Leave rows
 // (leave_code set) aren't shifts.
 
-export const SICK_CALL_WINDOW_HOURS = 24;
+export const SICK_CALL_WINDOW_HOURS = 12;
 
 const hhmm = (t) => (t ? t.slice(0, 5) : null);
 
@@ -34,7 +35,7 @@ export function sickCallShiftsInWindow(assignments, now = new Date()) {
   return (assignments || [])
     .filter(a => !a.leave_code)
     .map(a => ({ assignment: a, ...assignmentWindow(a) }))
-    .filter(s => s.end > now && s.start < windowEnd)
+    .filter(s => s.end > now && s.start <= windowEnd)
     .sort((x, y) => x.start - y.start);
 }
 

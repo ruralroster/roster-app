@@ -166,7 +166,7 @@ export default function NotificationSettings({ staffId, departmentId, email, isO
         {isOfficer
           ? "You're told when someone volunteers for a shift you've offered, and when a shift you can do is offered. Sick calls are always emailed to you."
           : "You're told when a shift you can do is offered for volunteering, on a day you've marked yourself available."}
-        {' '}If someone calls in sick while you're on call, it comes to every device you've turned phone notifications on for.
+        {' '}If someone calls in sick while you're on call (straight away, and again at 07:30), or for a day you're the 08:00 consultant (at 07:30 that day), it comes to every device you've turned phone notifications on for.
       </p>
 
       {email ? (

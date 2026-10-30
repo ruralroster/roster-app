@@ -1770,7 +1770,8 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   };
 
   // The two "notify on sick calls" flags — which location is ED (its
-  // consultant at 08:00 next day gets the pop-up) and which duty type is
+  // consultant at 08:00 on the day of a missed shift is told, with a 07:30
+  // phone notification) and which duty type is
   // the ED on-call. See getSickCallRecipients in supabaseClient.js.
   const handleToggleLocationNotifyOnSickCall = async (locationId, notify) => {
     try {

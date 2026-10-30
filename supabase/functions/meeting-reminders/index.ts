@@ -104,10 +104,16 @@ Deno.serve(async (req) => {
   } catch {
   }
   if (body.meetingId && body.preview) return json(await preview(admin, body.meetingId, body.preview));
+  const results = [];
+  try {
+    results.push(...await sendSickMorningPushes(admin));
+  } catch (err) {
+    console.error("meeting-reminders: sick-call pushes failed:", err);
+    results.push({ sickCalls: "failed", error: String(err) });
+  }
   const { date, minutes } = brisbaneNow();
   const { data: meetings, error } = await admin.from("meetings").select("*, locations(name)").eq("date", date);
-  if (error) return json({ error: error.message }, 500);
-  const results = [];
+  if (error) return json({ error: error.message, data: results }, 500);
   for (const meeting of meetings ?? []) {
     const due = dueReminders(meeting, minutes);
     if (due.length === 0) continue;
@@ -163,16 +169,40 @@ function headline(meeting) {
   return `${meeting.name} at ${hhmm(meeting.start_time)}${where}`;
 }
 async function sendPushes(admin, meeting, people) {
-  if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY || people.length === 0) return;
-  webpush.setVapidDetails(`mailto:${GMAIL_USER || "ruralroster@gmail.com"}`, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
-  const { data: subs } = await admin.from("push_subscriptions").select("push_subscription_id, endpoint, p256dh, auth").in("staff_id", people.map((p) => p.staff_id));
   const join = meeting.join_url ? " Tap to join." : meeting.dial_in ? ` Dial in: ${meeting.dial_in}` : "";
-  const payload = JSON.stringify({
+  await pushTo(admin, people.map((p) => p.staff_id), {
     title: headline(meeting),
     body: `Starts at ${hhmm(meeting.start_time)}.${join}`,
     url: meeting.join_url || APP_URL,
     tag: `meeting-${meeting.meeting_id}`
   });
+}
+async function sendSickMorningPushes(admin) {
+  const { data: due, error } = await admin.from("sick_call_alerts").select("sick_call_alert_id, recipient_staff_id, message, sick_reports(status, staff(name))").is("pushed_at", null).not("push_at", "is", null).lte("push_at", (/* @__PURE__ */ new Date()).toISOString());
+  if (error) throw error;
+  const results = [];
+  for (const alert of due ?? []) {
+    const { data: claimed, error: claimError } = await admin.from("sick_call_alerts").update({ pushed_at: (/* @__PURE__ */ new Date()).toISOString() }).eq("sick_call_alert_id", alert.sick_call_alert_id).is("pushed_at", null).select("sick_call_alert_id");
+    if (claimError) throw claimError;
+    if (!claimed?.length) continue;
+    const report = alert.sick_reports;
+    if (report?.status === "denied") continue;
+    const name = report?.staff?.name || "Someone";
+    await pushTo(admin, [alert.recipient_staff_id], {
+      title: `${name} is off sick today`,
+      body: alert.message || `${name} has called in sick for their shift today.`,
+      url: APP_URL,
+      tag: `sick-morning-${alert.sick_call_alert_id}`
+    });
+    results.push({ sickCall: name });
+  }
+  return results;
+}
+async function pushTo(admin, staffIds, message) {
+  if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY || staffIds.length === 0) return;
+  webpush.setVapidDetails(`mailto:${GMAIL_USER || "ruralroster@gmail.com"}`, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+  const { data: subs } = await admin.from("push_subscriptions").select("push_subscription_id, endpoint, p256dh, auth").in("staff_id", staffIds);
+  const payload = JSON.stringify(message);
   for (const sub of subs ?? []) {
     try {
       await webpush.sendNotification({ endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } }, payload);
@@ -181,7 +211,7 @@ async function sendPushes(admin, meeting, people) {
       if (status === 404 || status === 410) {
         await admin.from("push_subscriptions").delete().eq("push_subscription_id", sub.push_subscription_id);
       } else {
-        console.error("Meeting push failed:", err);
+        console.error("Push failed:", err);
       }
     }
   }

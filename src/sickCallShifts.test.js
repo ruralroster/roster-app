@@ -16,8 +16,13 @@ describe('sickCallShiftsInWindow', () => {
     expect(result.map(s => s.assignment.date)).toEqual(['2026-10-23']);
   });
 
-  it('leaves out a shift starting more than 24 hours away', () => {
+  it('leaves out a shift starting more than 12 hours away', () => {
+    expect(sickCallShiftsInWindow([shift('2026-10-23', '08:30', '17:00')], now)).toEqual([]);
     expect(sickCallShiftsInWindow([shift('2026-10-23', '21:00', '23:00')], now)).toEqual([]);
+  });
+
+  it('includes a shift exactly 12 hours away (8pm for an 8am start)', () => {
+    expect(sickCallShiftsInWindow([shift('2026-10-23', '08:00', '17:00')], now)).toHaveLength(1);
   });
 
   it("leaves out a shift that's already finished", () => {
@@ -43,11 +48,11 @@ describe('sickCallShiftsInWindow', () => {
 
   it('skips leave and sorts soonest first', () => {
     const result = sickCallShiftsInWindow([
-      shift('2026-10-23', '13:00', '17:00'),
-      shift('2026-10-23', '08:00', '12:30'),
-      shift('2026-10-23', '08:00', '12:30', { leave_code: 'AL', assignment_id: 'leave' }),
+      shift('2026-10-23', '06:00', '07:30'),
+      shift('2026-10-22', '22:00', '23:30'),
+      shift('2026-10-23', '06:00', '07:30', { leave_code: 'AL', assignment_id: 'leave' }),
     ], now);
-    expect(result.map(s => s.startTime)).toEqual(['08:00', '13:00']);
+    expect(result.map(s => s.startTime)).toEqual(['22:00', '06:00']);
   });
 });
 
