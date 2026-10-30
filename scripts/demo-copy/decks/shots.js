@@ -172,6 +172,30 @@ const bringUp = (locator, offset = 90) => locator.evaluate((el, off) => {
     await ctx.close();
   }
 
+  // ---- Rstar, the Overtime button (phone). Only when named (node shots.js
+  // r_overtime). The demo doctor's own shifts are answered in this browser
+  // with one that ended 20 minutes ago, and no on-call: nothing is written.
+  if (ONLY.includes('r_overtime')) {
+    const { ctx, page } = await open(browser, ROSTAR, 'DOCTOR', PHONE);
+    await page.route('**/rest/v1/duty_assignments*', route =>
+      route.request().url().includes('staff_id=eq.')
+        ? route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })
+        : route.continue());
+    await page.route('**/rest/v1/staff_assignments*', async route => {
+      const url = route.request().url();
+      if (!url.includes('staff_id=eq.') || !url.includes('on_call')) return route.continue();
+      const end = new Date(Date.now() - 20 * 60000);
+      const start = new Date(end.getTime() - 8 * 3600000);
+      const hm = (d) => d.toTimeString().slice(0, 8);
+      const row = { date: start.toLocaleDateString('en-CA'), shift_id: '00000000-0000-0000-0000-000000000002', on_call: false,
+        shifts: { name: 'ED Day', start_time: hm(start), end_time: hm(end) } };
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([row]) });
+    });
+    await tap(page, 'Variation'); await page.waitForTimeout(4000);
+    await shot(page, 'r_overtime', () => top(page));
+    await ctx.close();
+  }
+
   // ---- Rstar, staff (phone).
   {
     const s = await open(browser, ROSTAR, null, PHONE, { signIn: false });

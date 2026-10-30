@@ -100,6 +100,10 @@ CREATE TABLE IF NOT EXISTS week_template_meetings (
 );
 CREATE INDEX IF NOT EXISTS week_template_meetings_template_idx ON week_template_meetings(week_template_id);
 
+-- New tables need explicit Data API grants since 30 October 2026
+-- (see 2026-11-01b_meetings_grants.sql).
+GRANT SELECT, INSERT, UPDATE, DELETE ON meeting_types, meetings, meeting_sends, week_template_meetings TO authenticated, service_role;
+
 ALTER TABLE meeting_types ENABLE ROW LEVEL SECURITY;
 ALTER TABLE meetings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE meeting_sends ENABLE ROW LEVEL SECURITY;
