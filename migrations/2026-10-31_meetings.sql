@@ -35,8 +35,8 @@
 --
 -- The cron job reuses the coffee job's secret (coffee_cron_secret in
 -- Vault, checked by coffee_cron_secret_ok), so there's nothing new to set
--- up there. Deploy the meeting-reminders function first (see
--- supabase/functions-src/meeting-reminders.ts).
+-- up there. Deploy the function first, named meeting-reminder (singular,
+-- the name it's live under); see supabase/functions-src/meeting-reminders.ts.
 --
 -- Same "read = member, write = officer" RLS as job_types.
 --
@@ -189,7 +189,7 @@ SELECT cron.schedule(
   '* * * * *',
   $$
   SELECT net.http_post(
-    url := 'https://cmchorwjojvihlahknxk.supabase.co/functions/v1/meeting-reminders',
+    url := 'https://cmchorwjojvihlahknxk.supabase.co/functions/v1/meeting-reminder',
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
       'x-cron-secret', (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'coffee_cron_secret')

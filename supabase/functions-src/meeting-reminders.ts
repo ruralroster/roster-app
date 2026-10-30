@@ -22,9 +22,9 @@
 // This is the source. supabase/functions/meeting-reminders/index.ts is
 // generated from it by `npm run build:functions`.
 //
-// Deploy: `supabase functions deploy meeting-reminders --no-verify-jwt`, or
-// paste the generated index.ts into the web editor and turn off JWT
-// verification in the function's Details.
+// Deployed as meeting-reminder (singular), the name the cron job calls:
+// paste the generated index.ts into the web editor under that name and
+// turn off JWT verification in the function's Details.
 // Uses the same GMAIL_USER, GMAIL_APP_PASSWORD, VAPID_PUBLIC_KEY,
 // VAPID_PRIVATE_KEY and APP_URL secrets as notify-volunteering.
 
