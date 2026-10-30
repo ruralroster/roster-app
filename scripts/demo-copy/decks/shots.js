@@ -209,6 +209,11 @@ const bringUp = (locator, offset = 90) => locator.evaluate((el, off) => {
     await shot(page, 'r_notifications', async () => { await tap(page, 'Settings'); await tap(page, 'Notifications'); });
     await shot(page, 'r_restrictions', async () => { await tap(page, 'Settings'); await tap(page, 'Activity Restrictions'); await top(page); });
     await shot(page, 'r_security', async () => { await tap(page, 'Settings'); await tap(page, 'Security'); await top(page); });
+    // Where staff find help: Settings → Walkthrough (the video decks' last slide).
+    await shot(page, 'r_help', async () => {
+      await page.goto(ROSTAR, { waitUntil: 'networkidle' }); await page.waitForTimeout(2500);
+      await tap(page, 'Settings'); await tap(page, 'Walkthrough'); await top(page);
+    });
     await ctx.close();
   }
 
@@ -229,6 +234,14 @@ const bringUp = (locator, offset = 90) => locator.evaluate((el, off) => {
     // Close the dialog without offering.
     if (await page.getByRole('button', { name: 'Cancel', exact: true }).count()) await page.getByRole('button', { name: 'Cancel', exact: true }).click();
     await shot(page, 'o_settings', async () => { await tap(page, 'Settings'); await top(page); });
+    // Where officers find help: the Help button in the header.
+    await shot(page, 'o_help', async () => {
+      await top(page);
+      await page.getByRole('button', { name: 'Help' }).click();
+    });
+    if (await page.getByText('How-To Guide').count()) await page.keyboard.press('Escape');
+    await page.goto(ROSTAR, { waitUntil: 'networkidle' }); await page.waitForTimeout(2500);
+    if (await page.getByText('View: Staff').count()) await page.getByText('View: Staff').click();
     // One Settings section open at a time: open its group, then the section.
     const section = async (group, title) => {
       await page.goto(ROSTAR, { waitUntil: 'networkidle' }); await page.waitForTimeout(2500);

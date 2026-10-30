@@ -938,6 +938,11 @@ function variant(v) {
   };
 }
 
-(async () => {
-  for (const v of require('./variants')) await build(variant(v), v.file);
-})().catch(e => { console.error(e); process.exit(1); });
+// videos.js builds the short single-feature decks with the same look.
+module.exports = { build, LAYOUTS, tb, X0, Y0, YMAX, GREY, INK, MUTED, iconCircle, cw: () => CW };
+
+if (require.main === module) {
+  (async () => {
+    for (const v of require('./variants')) await build(variant(v), v.file);
+  })().catch(e => { console.error(e); process.exit(1); });
+}
