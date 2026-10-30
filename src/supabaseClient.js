@@ -6704,3 +6704,188 @@ export async function clearMustResetPassword() {
     return { error: err };
   }
 }
+
+// ============================================================
+// MEETINGS
+// ============================================================
+//
+// Named, timed sessions on a day (Junior teaching, ID meeting) that only
+// remind the people they apply to: a phone notification shortly before
+// and/or an email that morning, sent by the meeting-reminders Edge
+// Function. See migrations/2026-10-31_meetings.sql and meetingAudience.js.
+
+const MEETING_FIELDS = ['name', 'location_id', 'start_time', 'end_time', 'audience', 'push_minutes_before', 'email_morning', 'join_url', 'dial_in'];
+
+// { meetingTypes, missing, error } — missing until the migration is run.
+export async function getMeetingTypes(departmentId) {
+  try {
+    const { data, error } = await supabase
+      .from('meeting_types')
+      .select('*')
+      .eq('department_id', departmentId)
+      .order('sort_order')
+      .order('name');
+    if (error) return { meetingTypes: [], missing: isMissingTableError(error), error: isMissingTableError(error) ? null : error };
+    return { meetingTypes: data || [], missing: false, error: null };
+  } catch (err) {
+    console.error('getMeetingTypes error:', err);
+    return { meetingTypes: [], missing: false, error: err };
+  }
+}
+
+export async function createMeetingType(departmentId, fields) {
+  try {
+    const { data, error } = await supabase
+      .from('meeting_types')
+      .insert([{ department_id: departmentId, ...pickFields(fields, [...MEETING_FIELDS, 'sort_order']) }])
+      .select()
+      .single();
+    return { data, error };
+  } catch (err) {
+    console.error('createMeetingType error:', err);
+    return { data: null, error: err };
+  }
+}
+
+export async function updateMeetingType(meetingTypeId, fields) {
+  try {
+    const { data, error } = await supabase
+      .from('meeting_types')
+      .update(pickFields(fields, [...MEETING_FIELDS, 'sort_order', 'active']))
+      .eq('meeting_type_id', meetingTypeId)
+      .select()
+      .single();
+    return { data, error };
+  } catch (err) {
+    console.error('updateMeetingType error:', err);
+    return { data: null, error: err };
+  }
+}
+
+// Meetings already on the Planner keep their own copy, so they stay.
+export async function deleteMeetingType(meetingTypeId) {
+  try {
+    const { error } = await supabase.from('meeting_types').delete().eq('meeting_type_id', meetingTypeId);
+    return { error };
+  } catch (err) {
+    console.error('deleteMeetingType error:', err);
+    return { error: err };
+  }
+}
+
+// Meetings between two dates (inclusive), with their location's name.
+// Empty, not an error, until the migration is run.
+export async function getMeetings(departmentId, fromStr, toStr) {
+  try {
+    const { data, error } = await supabase
+      .from('meetings')
+      .select('*, locations(name)')
+      .eq('department_id', departmentId)
+      .gte('date', fromStr)
+      .lte('date', toStr)
+      .order('date')
+      .order('start_time');
+    if (error && isMissingTableError(error)) return { data: [], error: null };
+    return { data: data || [], error };
+  } catch (err) {
+    console.error('getMeetings error:', err);
+    return { data: [], error: err };
+  }
+}
+
+// A meeting on one day, copying its type's settings (its time can be
+// overridden, as a template does).
+export async function createMeetingFromType(departmentId, dateStr, meetingType, times = null) {
+  try {
+    const { data, error } = await supabase
+      .from('meetings')
+      .insert([{
+        department_id: departmentId,
+        meeting_type_id: meetingType.meeting_type_id,
+        date: dateStr,
+        ...pickFields(meetingType, MEETING_FIELDS),
+        ...(times || {}),
+      }])
+      .select()
+      .single();
+    return { data, error };
+  } catch (err) {
+    console.error('createMeetingFromType error:', err);
+    return { data: null, error: err };
+  }
+}
+
+export async function updateMeeting(meetingId, fields) {
+  try {
+    const { data, error } = await supabase
+      .from('meetings')
+      .update(pickFields(fields, MEETING_FIELDS))
+      .eq('meeting_id', meetingId)
+      .select()
+      .single();
+    return { data, error };
+  } catch (err) {
+    console.error('updateMeeting error:', err);
+    return { data: null, error: err };
+  }
+}
+
+export async function deleteMeeting(meetingId) {
+  try {
+    const { error } = await supabase.from('meetings').delete().eq('meeting_id', meetingId);
+    return { error };
+  } catch (err) {
+    console.error('deleteMeeting error:', err);
+    return { error: err };
+  }
+}
+
+// The week's meetings into a template saved from the Planner. Meetings
+// with no type (their type was deleted) can't be laid out again, so
+// they're left out.
+export async function saveWeekMeetingsToTemplate(weekTemplateId, weekStartDate, meetings) {
+  const monday = new Date(`${toLocalDateStr(weekStartDate)}T00:00:00`);
+  const rows = meetings.filter(m => m.meeting_type_id).map(m => ({
+    week_template_id: weekTemplateId,
+    day_of_week: Math.round((new Date(`${m.date}T00:00:00`) - monday) / 86400000),
+    meeting_type_id: m.meeting_type_id,
+    start_time: m.start_time,
+    end_time: m.end_time,
+  }));
+  if (rows.length === 0) return { error: null };
+  const { error } = await supabase.from('week_template_meetings').insert(rows);
+  return { error: error && isMissingTableError(error) ? null : error };
+}
+
+// A template's meetings onto a week, skipping any already there (same
+// type and start time that day). Settings come from the type as it is now.
+export async function applyTemplateMeetings(departmentId, weekStartDate, weekTemplateId) {
+  try {
+    const { data: rows, error } = await supabase.from('week_template_meetings').select('*').eq('week_template_id', weekTemplateId);
+    if (error) return { error: isMissingTableError(error) ? null : error };
+    if (!rows?.length) return { error: null };
+    const weekStartStr = toLocalDateStr(weekStartDate);
+    const dateFor = (dow) => {
+      const d = new Date(`${weekStartStr}T00:00:00`);
+      d.setDate(d.getDate() + dow);
+      return toLocalDateStr(d);
+    };
+    const [{ meetingTypes, error: typesError }, { data: existing, error: existingError }] = await Promise.all([
+      getMeetingTypes(departmentId),
+      getMeetings(departmentId, weekStartStr, dateFor(6)),
+    ]);
+    if (typesError || existingError) return { error: typesError || existingError };
+    for (const row of rows) {
+      const type = meetingTypes.find(t => t.meeting_type_id === row.meeting_type_id);
+      const date = dateFor(row.day_of_week);
+      if (!type) continue;
+      if (existing.some(m => m.date === date && m.meeting_type_id === row.meeting_type_id && m.start_time?.slice(0, 5) === row.start_time?.slice(0, 5))) continue;
+      const res = await createMeetingFromType(departmentId, date, type, { start_time: row.start_time, end_time: row.end_time });
+      if (res.error) return { error: res.error };
+    }
+    return { error: null };
+  } catch (err) {
+    console.error('applyTemplateMeetings error:', err);
+    return { error: err };
+  }
+}

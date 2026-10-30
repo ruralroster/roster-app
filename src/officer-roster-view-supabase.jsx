@@ -17,6 +17,7 @@ import ChangePassword from './ChangePassword';
 import TwoFactorSettings from './TwoFactorSettings';
 import NotificationSettings from './NotificationSettings';
 import PlannerJobsSettings from './PlannerJobsSettings';
+import MeetingTypesSettings from './MeetingTypesSettings';
 import PlannerTab from './PlannerTab';
 import { toLocalDateStr } from './dateUtils';
 import { jobCategoryFor, jobCardStyle, jobBoxStyle, holdsOnCallDuty, shortOnCallLabel } from './jobColours';
@@ -4853,6 +4854,17 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                 activities={refData.activities}
                 activitiesAllowedAtLocation={activitiesAllowedAtLocation}
                 advancedSkills={refData.advancedSkills}
+              />
+            </CollapsibleSection>
+
+            {/* Meetings Section — teaching and the like: reminders only,
+                laid out on a day in the Planner. */}
+            <CollapsibleSection title="Meetings">
+              <MeetingTypesSettings
+                departmentId={departmentId}
+                locations={refData.locations}
+                staff={refData.staff}
+                rankRows={refData.staffRanks}
               />
             </CollapsibleSection>
             </CollapsibleSection>

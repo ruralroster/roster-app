@@ -20,7 +20,16 @@ import {
   setOfferServiceDisruption,
   removeVolunteerOffer,
   getExposureStats,
+  getMeetingTypes,
+  getMeetings,
+  createMeetingFromType,
+  updateMeeting,
+  deleteMeeting,
+  saveWeekMeetingsToTemplate,
+  applyTemplateMeetings,
 } from './supabaseClient';
+import { MeetingForm, meetingDraft, meetingFields, meetingProblem, remindersLabel } from './MeetingEditor';
+import { audienceLabel } from './meetingAudience';
 import { offerIsFilled } from './offerEligibility';
 import { getMondayOfWeek } from './payrollExport';
 import { toLocalDateStr } from './dateUtils';
@@ -77,6 +86,10 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
   const [staffFilter, setStaffFilter] = useState('all'); // 'all' | 'senior' | 'junior' | rank name
   const [staffOnly, setStaffOnly] = useState(true); // hide people with 0 FTE (locums, casuals)
   const [templateIdForWeek, setTemplateIdForWeek] = useState({});
+  const [meetingTypes, setMeetingTypes] = useState([]);
+  const [meetings, setMeetings] = useState([]);
+  const [selectedMeetingTypeId, setSelectedMeetingTypeId] = useState(null);
+  const [meetingPick, setMeetingPick] = useState(null); // the meeting dialog: { meeting, draft }
   // Last 12 months of who did what, for ranking jobs in the Fill step.
   const [exposure, setExposure] = useState(null);
   // Height of the officer view's bottom tab bar, so the people picker can
@@ -106,6 +119,9 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
       if (res.error) setError(`Failed to load jobs: ${res.error.message}`);
       setJobsData({ jobTypes: res.jobTypes, places: res.places, missing: res.missing, loaded: true });
     });
+    getMeetingTypes(departmentId).then(res => {
+      if (!cancelled) setMeetingTypes((res.meetingTypes || []).filter(t => t.active !== false));
+    });
     return () => { cancelled = true; };
   }, [departmentId]);
 
@@ -118,6 +134,11 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
       setLoading(false);
       if (res.error) { setError(`Failed to load the planner: ${res.error.message}`); return; }
       setRange(res.data);
+      getMeetings(departmentId, startStr, endStr).then(meetingsRes => {
+        if (cancelled) return;
+        if (meetingsRes.error) setError(`Failed to load meetings: ${meetingsRes.error.message}`);
+        setMeetings(meetingsRes.data || []);
+      });
       const cardIds = (res.data?.cards || []).map(c => c.theatre_activity_id);
       Promise.all([getVolunteerOffersForActivities(cardIds), getVolunteerRequestsForActivities(cardIds)]).then(([offersRes, requestsRes]) => {
         if (cancelled) return;
@@ -128,7 +149,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
       });
     });
     return () => { cancelled = true; };
-  }, [departmentId, startStr, numDays, refreshKey]);
+  }, [departmentId, startStr, endStr, numDays, refreshKey]);
 
   useEffect(() => {
     if (!departmentId) return;
@@ -192,6 +213,30 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
     run(`Couldn't add ${selectedJob.name}`, () => createPlannerCard(departmentId, dateStr, selectedJob));
   };
 
+  const selectedMeetingType = meetingTypes.find(t => t.meeting_type_id === selectedMeetingTypeId) || null;
+  const addMeetingToDay = (dateStr) => {
+    if (!selectedMeetingType) return;
+    run(`Couldn't add ${selectedMeetingType.name}`, () => createMeetingFromType(departmentId, dateStr, selectedMeetingType));
+  };
+
+  // One palette pick at a time: a job or a meeting.
+  const pickJob = (id) => { setSelectedJobId(id); setSelectedMeetingTypeId(null); };
+  const pickMeetingType = (id) => { setSelectedMeetingTypeId(id); setSelectedJobId(null); };
+
+  const saveMeetingPick = () => {
+    const problem = meetingProblem(meetingPick.draft);
+    if (problem) { setError(problem); return; }
+    const { meeting, draft } = meetingPick;
+    setMeetingPick(null);
+    run("Couldn't save the meeting", () => updateMeeting(meeting.meeting_id, meetingFields(draft)));
+  };
+
+  const removeMeeting = (meeting) => {
+    if (!window.confirm(`Remove ${meeting.name} on ${new Date(`${meeting.date}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })}? Nobody will be reminded.`)) return;
+    setMeetingPick(null);
+    run("Couldn't remove the meeting", () => deleteMeeting(meeting.meeting_id));
+  };
+
   const removeCard = (card, job, bookedCount) => {
     const when = new Date(`${card.date}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' });
     const msg = bookedCount
@@ -241,18 +286,25 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
   const applyTemplate = (weekDays) => {
     const templateId = templateIdForWeek[weekDays[0]];
     if (!templateId) return;
-    run("Couldn't apply the template", () => applyWeekTemplate(departmentId, new Date(`${weekDays[0]}T00:00:00`), templateId));
+    run("Couldn't apply the template", async () => {
+      const res = await applyWeekTemplate(departmentId, new Date(`${weekDays[0]}T00:00:00`), templateId);
+      if (res.error) return res;
+      return applyTemplateMeetings(departmentId, new Date(`${weekDays[0]}T00:00:00`), templateId);
+    });
   };
 
   const saveTemplate = async (weekDays) => {
     const weekCards = cards.filter(c => c.date >= weekDays[0] && c.date <= weekDays[6]);
-    if (weekCards.length === 0) { setError('That week has no jobs to save.'); return; }
+    const weekMeetings = meetings.filter(m => m.date >= weekDays[0] && m.date <= weekDays[6]);
+    if (weekCards.length === 0 && weekMeetings.length === 0) { setError('That week has no jobs or meetings to save.'); return; }
     const name = window.prompt('Name for the new week template:');
     if (!name || !name.trim()) return;
     await run("Couldn't save the template", async () => {
       const res = await saveWeekAsTemplate(departmentId, name, new Date(`${weekDays[0]}T00:00:00`),
         weekCards.map(c => ({ ...c, jobTypeId: jobForCard(c, jobTypes)?.job_type_id || null })));
       if (!res.error) {
+        const meetingsRes = await saveWeekMeetingsToTemplate(res.data.week_template_id, new Date(`${weekDays[0]}T00:00:00`), weekMeetings);
+        if (meetingsRes.error) return meetingsRes;
         const list = await getWeekTemplates(departmentId);
         if (!list.error) onWeekTemplatesChange?.(list.data);
       }
@@ -591,6 +643,29 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
     );
   };
 
+  // Meetings float on the day like on-call: tap one to change that day's
+  // time, audience or link, or to remove it.
+  const renderMeetings = (dateStr) => {
+    const dayMeetings = meetings.filter(m => m.date === dateStr);
+    if (dayMeetings.length === 0) return null;
+    return (
+      <div className="space-y-0.5">
+        {dayMeetings.map(m => (
+          <button
+            key={m.meeting_id}
+            onClick={() => setMeetingPick({ meeting: m, draft: meetingDraft(m) })}
+            disabled={busy}
+            title={`${m.name} · ${audienceLabel(m.audience)} · ${remindersLabel(m)}`}
+            className="w-full flex items-center gap-1 text-left text-[11px] rounded px-1.5 py-0.5 bg-indigo-50 border border-indigo-300 text-indigo-900 hover:bg-indigo-100"
+          >
+            <span className="font-semibold">{hhmm(m.start_time)}</span>
+            <span className="truncate">{m.name}</span>
+          </button>
+        ))}
+      </div>
+    );
+  };
+
   // ---------- page ----------
 
   if (jobsData.loaded && jobsData.missing) {
@@ -731,7 +806,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
                       return (
                         <button
                           key={job.job_type_id}
-                          onClick={() => setSelectedJobId(on ? null : job.job_type_id)}
+                          onClick={() => pickJob(on ? null : job.job_type_id)}
                           aria-pressed={on}
                           className={`px-3 py-1.5 rounded-lg border text-sm transition ${on ? 'ring-2 ring-blue-600 font-semibold' : ''}`}
                           style={jobCardStyle(category)}
@@ -743,6 +818,26 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
                     })}
                   </div>
                 ))}
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="w-20 text-[11px] font-semibold text-gray-500 uppercase">Meetings</span>
+                  {meetingTypes.length === 0 ? (
+                    <span className="text-xs text-gray-500">Add teaching and other meetings in Settings → Locations &amp; Activities → Meetings.</span>
+                  ) : meetingTypes.map(t => {
+                    const on = t.meeting_type_id === selectedMeetingTypeId;
+                    return (
+                      <button
+                        key={t.meeting_type_id}
+                        onClick={() => pickMeetingType(on ? null : t.meeting_type_id)}
+                        aria-pressed={on}
+                        className={`px-3 py-1.5 rounded-lg border text-sm transition bg-indigo-50 border-indigo-300 text-indigo-900 ${on ? 'ring-2 ring-blue-600 font-semibold' : ''}`}
+                        title={`${audienceLabel(t.audience)} · ${remindersLabel(t)}`}
+                      >
+                        {t.name}
+                        <span className="ml-1 text-xs text-indigo-700">{hhmm(t.start_time)}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             </>
           )}
@@ -764,8 +859,20 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
               + {selectedJob.name}
             </button>
           )}
+          {mode === 'layout' && selectedMeetingType && (
+            <button
+              onClick={() => addMeetingToDay(startStr)}
+              disabled={busy}
+              className="w-full py-2 border-2 border-dashed border-indigo-400 text-indigo-700 rounded-lg text-sm font-semibold hover:bg-indigo-50"
+            >
+              + {selectedMeetingType.name}
+            </button>
+          )}
           {dutyTypes.length > 0 && (
             <div className="max-w-sm">{renderDuties(startStr)}</div>
+          )}
+          {meetings.some(m => m.date === startStr) && (
+            <div className="max-w-sm">{renderMeetings(startStr)}</div>
           )}
           {cards.filter(c => c.date === startStr).length === 0 ? (
             <p className="text-sm text-gray-500 italic bg-white rounded-lg shadow-sm p-4">No jobs on this day. Use 1 · Lay out jobs to add some.</p>
@@ -842,8 +949,18 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
                           + {selectedJob.name}
                         </button>
                       )}
+                      {mode === 'layout' && selectedMeetingType && (
+                        <button
+                          onClick={() => addMeetingToDay(dateStr)}
+                          disabled={busy}
+                          className="w-full py-1 border-2 border-dashed border-indigo-400 text-indigo-700 rounded-lg text-xs font-semibold hover:bg-indigo-50 truncate"
+                        >
+                          + {selectedMeetingType.name}
+                        </button>
+                      )}
                       {dayCards.map(renderCard)}
                       {renderDuties(dateStr)}
+                      {renderMeetings(dateStr)}
                     </div>
                   );
                 })}
@@ -896,6 +1013,36 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
                 </button>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {meetingPick && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg shadow-lg p-5 w-full max-w-lg max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-start mb-3">
+              <div>
+                <h2 className="text-lg font-bold text-gray-900">{meetingPick.meeting.name}</h2>
+                <p className="text-sm text-gray-600">
+                  {new Date(`${meetingPick.meeting.date}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long' })}
+                  {' · '}changes are for this day only
+                </p>
+              </div>
+              <button onClick={() => setMeetingPick(null)} className="p-1 hover:bg-gray-100 rounded-lg" aria-label="Close"><X size={20} /></button>
+            </div>
+            <MeetingForm
+              value={meetingPick.draft}
+              onChange={(draft) => setMeetingPick(p => ({ ...p, draft }))}
+              locations={refData.locations.filter(l => l.active !== false)}
+              staff={refData.staff.filter(s => s.active !== false)}
+              rankRows={rankRows}
+              showName={false}
+            />
+            <div className="flex gap-2 mt-4">
+              <button onClick={() => removeMeeting(meetingPick.meeting)} disabled={busy} className="px-3 py-2 bg-red-100 hover:bg-red-200 text-red-900 text-sm font-medium rounded-lg">Remove</button>
+              <button onClick={() => setMeetingPick(null)} className="flex-1 px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-800 text-sm font-medium rounded-lg">Cancel</button>
+              <button onClick={saveMeetingPick} disabled={busy} className="flex-1 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg">Save</button>
+            </div>
           </div>
         </div>
       )}

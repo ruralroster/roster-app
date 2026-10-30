@@ -6,6 +6,7 @@ import NotificationSettings from './NotificationSettings';
 import StaffWalkthrough from './StaffWalkthrough';
 import SwapShiftOffer from './SwapShiftOffer';
 import AvailableShifts from './AvailableShifts';
+import MyMeetings from './MyMeetings';
 import { CallbackBanner, MyCallbacks } from './CallbackPanel';
 import {
   getStaffById,
@@ -1318,6 +1319,14 @@ export default function StaffRosterView({ departmentId, staffId }) {
                     groupedAssignments, the same department-wide data the
                     sections below use, narrowed to this assignment's own
                     location_id). */}
+                <MyMeetings
+                  departmentId={departmentId}
+                  staffMember={staffMember}
+                  staffRanks={staffRanks}
+                  dateStr={toDateStr(dayViewDate)}
+                  working={todayAssignments.length > 0 || todayOnCallRows.some(d => d.staff_id === staffId)}
+                />
+
                 <div className="bg-white rounded-lg shadow-xl p-6 mb-6">
                   <h2 className="font-bold mb-3" style={{ fontFamily: "'Comic Neue', cursive", color: '#f97316', fontSize: '1.75rem' }}>My allocations for today</h2>
                   {todayAssignments.length === 0 ? (

@@ -72,6 +72,12 @@ self.addEventListener('push', (event) => {
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const url = event.notification.data?.url || self.registration.scope;
+  // A meeting's join link (Teams, Zoom) opens on its own, leaving the app
+  // where it was.
+  if (!url.startsWith(self.registration.scope)) {
+    event.waitUntil(self.clients.openWindow(url));
+    return;
+  }
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windows) => {
       const existing = windows.find(w => w.url.startsWith(self.registration.scope));
