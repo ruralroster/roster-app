@@ -10,10 +10,13 @@
 //   9:00-10:30  'daily' (once): "Daily Coffee Order" email to the
 //               consultant on today's ED late, laid out like the old Apps
 //               Script email.
-//   9:00-17:00  'update': once the daily email has gone, if the order now
+//   9:00-10:15  'update': once the daily email has gone, if the order now
 //               differs from the last email, a "Coffee order update" email
 //               to the same person: what changed, then the full order.
-//               Several edits between two runs arrive as one email.
+//               Several edits between two runs arrive as one email. None
+//               once someone has texted the order to the coffee place from
+//               the app (a 'texted' row, see migrations/
+//               2026-11-01c_coffee_order_texted.sql): it's gone by then.
 //
 // The order is worked out by _shared/coffeeDay.js, the same code as the
 // app's Coffee popup, so the email and the popup always agree.
@@ -54,7 +57,7 @@ const COFFEE_URL = `${APP_URL}?coffee=1`;
 const REMINDER_AT = 8 * 60 + 15;
 const DAILY_AT = 9 * 60;
 const FIRST_EMAILS_UNTIL = 10 * 60 + 30; // coffee is ordered at 10:30
-const UPDATES_UNTIL = 17 * 60;
+const UPDATES_UNTIL = 10 * 60 + 15;
 
 type Row = { name: string; coffee: string };
 type Snapshot = { rows: Row[]; lines: string[]; total: number; sentTo?: string };
@@ -148,8 +151,8 @@ async function runDepartment(admin: SupabaseClient, department: any, preview?: s
     return { done };
   }
 
-  if (hasSent('daily') && minutes < UPDATES_UNTIL) {
-    const last = sent.filter((s) => s.kind !== 'reminder').at(-1)?.snapshot as Snapshot | undefined;
+  if (hasSent('daily') && !hasSent('texted') && minutes < UPDATES_UNTIL) {
+    const last = sent.filter((s) => s.kind === 'daily' || s.kind === 'update').at(-1)?.snapshot as Snapshot | undefined;
     const changes = last ? describeChanges(last, snapshot) : [];
     if (changes.length > 0) {
       const recipients = await recipientsFor(admin, department, day);

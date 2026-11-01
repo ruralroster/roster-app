@@ -233,10 +233,113 @@ const bringUp = (locator, offset = 90) => locator.evaluate((el, off) => {
     await shot(page, 'r_notifications', async () => { await tap(page, 'Settings'); await tap(page, 'Notifications'); });
     await shot(page, 'r_restrictions', async () => { await tap(page, 'Settings'); await tap(page, 'Activity Restrictions'); await top(page); });
     await shot(page, 'r_security', async () => { await tap(page, 'Settings'); await tap(page, 'Security'); await top(page); });
+    await shot(page, 'r_twofactor', async () => {
+      await tap(page, 'Settings'); await tap(page, 'Security');
+      await bringUp(page.getByText(/Two-Factor Authentication/i).first(), 120);
+    });
+    await shot(page, 'r_export', async () => {
+      await page.goto(ROSTAR, { waitUntil: 'networkidle' }); await page.waitForTimeout(2500);
+      await tap(page, 'Export'); await page.waitForTimeout(2500); await top(page);
+    });
     // Where staff find help: Settings → Walkthrough (the video decks' last slide).
     await shot(page, 'r_help', async () => {
       await page.goto(ROSTAR, { waitUntil: 'networkidle' }); await page.waitForTimeout(2500);
       await tap(page, 'Settings'); await tap(page, 'Walkthrough'); await top(page);
+    });
+    await ctx.close();
+  }
+
+  // ---- Rstar, staff screens that need something the demo doesn't have:
+  // stars, recorded variations, a meeting, a swap. Only when named. The
+  // extra rows are answered in this browser only: nothing is written.
+  const EXTRA_SHOTS = ['r_setpassword', 'r_installios', 'r_search', 'r_person', 'r_starred', 'r_crossover', 'r_myvariations_full', 'r_meeting', 'r_takeswap'];
+  if (EXTRA_SHOTS.some(n => ONLY.includes(n))) {
+    // Invite links land on Set your password (?type=invite); don't save it.
+    if (['r_setpassword', 'r_installios'].some(n => ONLY.includes(n))) {
+      const s = await open(browser, ROSTAR, null, PHONE, { signIn: false });
+      await shot(s.page, 'r_installios', () => tap(s.page, 'Install App'));
+      await s.ctx.close();
+      const p = await open(browser, `${ROSTAR}?type=invite`, 'DOCTOR', PHONE);
+      await shot(p.page, 'r_setpassword');
+      await p.ctx.close();
+    }
+
+    const { ctx, page } = await open(browser, ROSTAR, 'DOCTOR', PHONE, { signIn: false });
+    const rest = (route, table, query) => route.request().url().replace(/\/rest\/v1\/.*/, `/rest/v1/${table}?${query}`);
+    const json = (route, body) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Brisbane' });
+    const plus = (n) => { const d = new Date(`${today}T12:00:00`); d.setDate(d.getDate() + n); return d.toLocaleDateString('en-CA'); };
+    // Three colleagues from the demo department (RLS keeps it to theirs).
+    let colleagues = null;
+    const others = async (route) => colleagues || (colleagues = (await (await route.fetch({ url: rest(route, 'staff', 'select=staff_id,name&active=eq.true&order=name&limit=6') })).json())
+      .filter(x => x.name !== 'Aisha Achebe').slice(0, 3));
+    await page.route('**/rest/v1/staff_favorites?*', async route => {
+      if (route.request().method() !== 'GET' || !ONLY.some(n => ['r_starred', 'r_crossover'].includes(n))) return route.continue();
+      json(route, (await others(route)).slice(0, 2).map((c, i) => ({ favorite_id: `demo-fav-${i}`, starred_staff_id: c.staff_id })));
+    });
+    await page.route('**/rest/v1/callbacks?*', async route => {
+      if (route.request().method() !== 'GET' || !route.request().url().includes('ended_at=not.is.null')) return route.continue();
+      const types = await (await route.fetch({ url: rest(route, 'duty_types', 'select=key&active=eq.true&counts_as_on_call=eq.true') })).json();
+      const at = (date, t) => new Date(`${date}T${t}:00+10:00`).toISOString();
+      const row = (id, kind, date, s, e, extra) => ({ callback_id: id, kind, duty_date: date, started_at: at(date, s), ended_at: at(date, e), edited_at: null, ...extra });
+      json(route, [
+        row('demo-cb-1', 'callback', plus(-1), '02:10', '03:25', { duty_type: types[0]?.key, shifts: null }),
+        row('demo-cb-2', 'overtime', plus(-3), '18:00', '19:05', { shifts: { name: 'ED Day' } }),
+        row('demo-cb-3', 'callback', plus(-6), '22:40', '23:15', { duty_type: types[0]?.key, shifts: null }),
+      ]);
+    });
+    await page.route('**/rest/v1/meetings?*', route => {
+      if (route.request().method() !== 'GET') return route.continue();
+      const u = new URL(route.request().url());
+      json(route, [{ meeting_id: 'demo-meeting', department_id: u.searchParams.get('department_id')?.slice(3), name: 'Junior teaching', date: today,
+        start_time: '12:30:00', end_time: '13:30:00', audience: { mode: 'everyone' }, push_minutes_before: 10, email_morning: true,
+        join_url: 'https://example.com/teams', dial_in: '07 5550 0199', locations: { name: 'Education Centre' } }]);
+    });
+    await page.route('**/rest/v1/rpc/my_department_swaps', async route => {
+      const [c] = await others(route);
+      json(route, [{ listing_id: 'demo-swap', shift_date: plus(3), start_time: '08:00:00', end_time: '18:00:00', lister: c?.name || 'A colleague',
+        shift_label: 'ED Day', note: 'Family wedding', my_offer_id: null,
+        swap_options: [{ assignment_id: 'demo-a1', label: `${new Date(`${plus(9)}T12:00:00`).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })} ED Evening 13:00-23:00 (Rstar)` }] }]);
+    });
+    await page.fill('input[type="email"]', env.DEMO_DOCTOR_EMAIL);
+    await page.fill('input[type="password"]', env.DEMO_DOCTOR_PASSWORD);
+    await page.keyboard.press('Enter');
+    await page.waitForLoadState('networkidle');
+    await page.waitForTimeout(3000);
+
+    const searchBtn = () => page.getByRole('button', { name: /Coffee/ }).last().locator('xpath=following-sibling::button[1]');
+    await shot(page, 'r_meeting', () => bringUp(page.getByText('Meetings for you').first(), 160));
+    await shot(page, 'r_search', async () => {
+      await searchBtn().click();
+      await page.getByPlaceholder('Search staff...').fill('a');
+      await page.getByRole('button', { name: 'Search', exact: true }).click();
+    });
+    await shot(page, 'r_person', async () => {
+      if (!(await page.getByPlaceholder('Search staff...').count())) {
+        await searchBtn().click();
+        await page.getByPlaceholder('Search staff...').fill('a');
+        await page.getByRole('button', { name: 'Search', exact: true }).click();
+        await page.waitForTimeout(1500);
+      }
+      await page.locator('.max-h-96 button').nth(1).click();
+    });
+    await page.goto(ROSTAR, { waitUntil: 'networkidle' }); await page.waitForTimeout(2500);
+    await shot(page, 'r_starred', async () => { await tap(page, 'Week'); await page.waitForTimeout(2000); await top(page); });
+    await shot(page, 'r_crossover', async () => {
+      await tap(page, 'Week'); await page.waitForTimeout(2000);
+      await page.getByRole('button', { name: /Crossover/ }).nth(1).click();
+    });
+    await page.goto(ROSTAR, { waitUntil: 'networkidle' }); await page.waitForTimeout(2500);
+    await shot(page, 'r_myvariations_full', async () => {
+      await tap(page, 'Variation');
+      const head = page.getByText('My Variations', { exact: true }).first();
+      await head.click();
+      await bringUp(head, 120);
+    });
+    await shot(page, 'r_takeswap', async () => {
+      await tap(page, 'Variation'); await page.waitForTimeout(4000);
+      await page.getByRole('button', { name: 'List', exact: true }).click();
+      await bringUp(page.getByText('Swaps you could take').first(), 120);
     });
     await ctx.close();
   }
@@ -316,6 +419,12 @@ const bringUp = (locator, offset = 90) => locator.evaluate((el, off) => {
     };
     await shot(page, 'o_volunteering', async () => {
       await calendar();
+      await bringUp(page.getByRole('heading', { name: 'Volunteering' }), 80);
+    });
+    // The panel's Unfilled, not offered yet list, opened (nothing offered).
+    await shot(page, 'o_unfilled', async () => {
+      await calendar();
+      await page.getByText(/Unfilled, not offered yet/).click(); await page.waitForTimeout(800);
       await bringUp(page.getByRole('heading', { name: 'Volunteering' }), 80);
     });
     await shot(page, 'o_caltools', async () => {

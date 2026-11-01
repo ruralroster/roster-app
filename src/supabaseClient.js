@@ -2050,6 +2050,18 @@ export async function removeCoffeeOrderExtra(extraId) {
   }
 }
 
+// Someone has texted today's order to the coffee place: the coffee-order
+// Edge Function stops sending "Coffee order update" emails. See
+// migrations/2026-11-01c_coffee_order_texted.sql.
+export async function markCoffeeOrderTexted(departmentId, date) {
+  try {
+    const { error } = await supabase.rpc('mark_coffee_order_texted', { p_department_id: departmentId, p_date: toLocalDateStr(date) });
+    return { error };
+  } catch (err) {
+    return { error: err };
+  }
+}
+
 export async function updateStaffFTE(staffId, fte) {
   console.log('updateStaffFTE called', staffId, fte);
 

@@ -48,6 +48,7 @@ import {
   restoreCoffeeOrderStaff,
   addCoffeeOrderExtra,
   removeCoffeeOrderExtra,
+  markCoffeeOrderTexted,
 } from './supabaseClient';
 import CollapsibleSection from './CollapsibleSection';
 import CoffeePicker from './CoffeePicker';
@@ -2448,7 +2449,11 @@ export default function StaffRosterView({ departmentId, staffId }) {
                               <a
                                 key={handover}
                                 href={coffeePlaceSmsHref(handover)}
-                                onClick={() => setCoffeeChoosingHandover(false)}
+                                onClick={() => {
+                                  setCoffeeChoosingHandover(false);
+                                  // Stops the update emails: the order's gone.
+                                  markCoffeeOrderTexted(departmentId, new Date());
+                                }}
                                 className="block text-center px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white text-sm font-medium rounded-lg transition"
                               >
                                 {label}

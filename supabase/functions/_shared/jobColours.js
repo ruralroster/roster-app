@@ -10,8 +10,9 @@
 //   Theatre    — 00B0F0 (OT, Dental, Endo, LSCS, Anaes clinic)
 //   Maternity  — FF6161 ("Day 0800 - 1800 Maternity")
 // Read off the 2026-10-12 and 2026-12-07 DRAFT files' cell fills.
-// Clinic/Admin cells are left white on the sheet, so they get no colour
-// here either.
+// Clinic cells are left white on the sheet, so they get no colour here
+// either. Admin (and non-clinical) cells are white on the sheet too, but
+// are yellow here so admin time stands out from clinical work.
 //
 // Each job type has two shades: `card` (pale, the location card's
 // background) and `box` (the roster colour itself, the background of a
@@ -31,6 +32,7 @@ export const JOB_COLOURS = {
   ward: { label: 'Ward', card: '#F0F4FB', border: '#6F8FC9', box: '#B4C7E7' },
   theatre: { label: 'Theatre', card: '#E0F6FE', border: '#0091C7', box: '#7FD7F7' },
   maternity: { label: 'Maternity', card: '#FFEFEF', border: '#E04848', box: '#FFA6A6' },
+  admin: { label: 'Admin', card: '#FFFBE0', border: '#D4A800', box: '#FFE873' },
 };
 
 // Order job types are grouped in (the Planner's job palette and day
@@ -47,7 +49,7 @@ const NEUTRAL_CARD = { card: '#FFFFFF', border: '#D1D5DB', box: '#F3F4F6' };
 
 function categoryForText(text) {
   if (!text) return null;
-  if (/non.?clinical|\badmin\b/i.test(text)) return 'none';
+  if (/non.?clinical|\badmin\b/i.test(text)) return 'admin';
   if (/\bed\b|emergency/i.test(text)) return 'emergency';
   if (/theatre|theater|\bot\b|endo|dental|surg|anaes|lscs|procedur/i.test(text)) return 'theatre';
   if (/maternity|obstet|\bobs\b|birth|labour/i.test(text)) return 'maternity';
@@ -55,12 +57,9 @@ function categoryForText(text) {
   return null;
 }
 
-// 'emergency' | 'ward' | 'theatre' | 'maternity' | null
+// 'emergency' | 'ward' | 'theatre' | 'maternity' | 'admin' | null
 export function jobCategoryFor(locationName, activityName) {
-  const fromLocation = categoryForText(locationName);
-  if (fromLocation) return fromLocation === 'none' ? null : fromLocation;
-  const fromActivity = categoryForText(activityName);
-  return fromActivity && fromActivity !== 'none' ? fromActivity : null;
+  return categoryForText(locationName) || categoryForText(activityName);
 }
 
 // Inline styles (not Tailwind classes) since the colours are the roster's

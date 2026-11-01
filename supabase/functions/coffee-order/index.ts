@@ -101,12 +101,13 @@ var JOB_COLOURS = {
   emergency: { label: "Emergency", card: "#ECF8EC", border: "#5FAF61", box: "#A1DBA2" },
   ward: { label: "Ward", card: "#F0F4FB", border: "#6F8FC9", box: "#B4C7E7" },
   theatre: { label: "Theatre", card: "#E0F6FE", border: "#0091C7", box: "#7FD7F7" },
-  maternity: { label: "Maternity", card: "#FFEFEF", border: "#E04848", box: "#FFA6A6" }
+  maternity: { label: "Maternity", card: "#FFEFEF", border: "#E04848", box: "#FFA6A6" },
+  admin: { label: "Admin", card: "#FFFBE0", border: "#D4A800", box: "#FFE873" }
 };
 var CATEGORY_ORDER = Object.keys(JOB_COLOURS);
 function categoryForText(text) {
   if (!text) return null;
-  if (/non.?clinical|\badmin\b/i.test(text)) return "none";
+  if (/non.?clinical|\badmin\b/i.test(text)) return "admin";
   if (/\bed\b|emergency/i.test(text)) return "emergency";
   if (/theatre|theater|\bot\b|endo|dental|surg|anaes|lscs|procedur/i.test(text)) return "theatre";
   if (/maternity|obstet|\bobs\b|birth|labour/i.test(text)) return "maternity";
@@ -114,10 +115,7 @@ function categoryForText(text) {
   return null;
 }
 function jobCategoryFor(locationName, activityName) {
-  const fromLocation = categoryForText(locationName);
-  if (fromLocation) return fromLocation === "none" ? null : fromLocation;
-  const fromActivity = categoryForText(activityName);
-  return fromActivity && fromActivity !== "none" ? fromActivity : null;
+  return categoryForText(locationName) || categoryForText(activityName);
 }
 
 // supabase/functions/_shared/coffeeDay.js
@@ -220,7 +218,7 @@ var COFFEE_URL = `${APP_URL}?coffee=1`;
 var REMINDER_AT = 8 * 60 + 15;
 var DAILY_AT = 9 * 60;
 var FIRST_EMAILS_UNTIL = 10 * 60 + 30;
-var UPDATES_UNTIL = 17 * 60;
+var UPDATES_UNTIL = 10 * 60 + 15;
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
@@ -280,8 +278,8 @@ async function runDepartment(admin, department, preview) {
     }
     return { done };
   }
-  if (hasSent("daily") && minutes2 < UPDATES_UNTIL) {
-    const last = sent.filter((s) => s.kind !== "reminder").at(-1)?.snapshot;
+  if (hasSent("daily") && !hasSent("texted") && minutes2 < UPDATES_UNTIL) {
+    const last = sent.filter((s) => s.kind === "daily" || s.kind === "update").at(-1)?.snapshot;
     const changes = last ? describeChanges(last, snapshot) : [];
     if (changes.length > 0) {
       const recipients = await recipientsFor(admin, department, day);

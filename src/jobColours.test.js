@@ -10,7 +10,9 @@ describe('jobCategoryFor', () => {
     ['Maternity', 'Ward Care Cover', 'maternity'],
     ['Clinic', 'Anaesthetics', 'theatre'],
     ['Clinic', 'Medical Clinic', null],
-    ['Non-clinical', 'Admin', null],
+    ['Non-clinical', 'Admin', 'admin'],
+    ['Clinic', 'Admin', 'admin'],
+    ['Emergency', 'Admin', 'emergency'],
   ])('%s / %s -> %s', (location, activity, expected) => {
     expect(jobCategoryFor(location, activity)).toBe(expected);
   });
@@ -54,7 +56,7 @@ describe('shortOnCallLabel', () => {
 
 describe('jobCategoryRank', () => {
   test('follows JOB_COLOURS order, uncoloured last', () => {
-    const sorted = [null, 'maternity', 'theatre', 'emergency', 'ward'].sort((a, b) => jobCategoryRank(a) - jobCategoryRank(b));
-    expect(sorted).toEqual(['emergency', 'ward', 'theatre', 'maternity', null]);
+    const sorted = [null, 'admin', 'maternity', 'theatre', 'emergency', 'ward'].sort((a, b) => jobCategoryRank(a) - jobCategoryRank(b));
+    expect(sorted).toEqual(['emergency', 'ward', 'theatre', 'maternity', 'admin', null]);
   });
 });
