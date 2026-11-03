@@ -220,9 +220,28 @@ const bringUp = (locator, offset = 90) => locator.evaluate((el, off) => {
       await bringUp(head, 120);
     });
     await shot(page, 'r_sick', async () => {
-      await tap(page, 'Variation');
+      // Notify Sick only opens within 12 hours of a shift: the demo doctor
+      // is given one starting in 6 hours, in this browser only.
+      await page.route('**/rest/v1/staff_assignments*', async route => {
+        const url = route.request().url();
+        if (!url.includes('leave_code') || !url.includes('staff_id=eq.')) return route.continue();
+        // The next 08:00 in Brisbane (UTC+10) if that's within 12 hours,
+        // else the next hour after now plus 6.
+        const bne = new Date(Date.now() + 10 * 3600000); // Brisbane wall clock, read as UTC
+        const next8 = new Date(Date.UTC(bne.getUTCFullYear(), bne.getUTCMonth(), bne.getUTCDate(), 8));
+        if (next8 <= bne) next8.setUTCDate(next8.getUTCDate() + 1);
+        const start = next8 - bne <= 12 * 3600000 ? next8 : new Date(Math.ceil((bne.getTime() + 6 * 3600000) / 3600000) * 3600000);
+        const end = new Date(start.getTime() + 10 * 3600000);
+        const hm = (d) => d.toISOString().slice(11, 19);
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{
+          assignment_id: 'demo-sick-shift', date: start.toISOString().slice(0, 10), leave_code: null,
+          locations: { name: 'Emergency' }, shifts: { name: 'Day', start_time: hm(start), end_time: hm(end) }, theatre_activities: null }]) });
+      });
+      await page.goto(ROSTAR, { waitUntil: 'networkidle' }); await page.waitForTimeout(2500);
+      await tap(page, 'Variation'); await page.waitForTimeout(3000);
       await page.getByRole('button', { name: 'Notify Sick' }).click();
     });
+    await page.unroute('**/rest/v1/staff_assignments*');
     await page.keyboard.press('Escape');
     await page.goto(ROSTAR, { waitUntil: 'networkidle' }); await page.waitForTimeout(2500);
     await shot(page, 'r_coffee', () => page.getByRole('button', { name: /Coffee/ }).last().click());
