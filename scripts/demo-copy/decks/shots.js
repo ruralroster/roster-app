@@ -229,9 +229,9 @@ const bringUp = (locator, offset = 90) => locator.evaluate((el, off) => {
     await page.goto(ROSTAR, { waitUntil: 'networkidle' }); await page.waitForTimeout(2500);
     await shot(page, 'r_availability', async () => { await tap(page, 'Settings'); await tap(page, 'Availability'); });
     await shot(page, 'r_profile', async () => { await tap(page, 'Settings'); await tap(page, 'Profile'); await top(page); });
-    await shot(page, 'r_coffeeprefs', async () => { await tap(page, 'Settings'); await tap(page, 'Coffee Preferences'); await top(page); });
+    await shot(page, 'r_coffeeprefs', async () => { await tap(page, 'Settings'); await page.locator('div.flex-wrap > button', { hasText: /^Coffee$/ }).click(); await top(page); });
     await shot(page, 'r_notifications', async () => { await tap(page, 'Settings'); await tap(page, 'Notifications'); });
-    await shot(page, 'r_restrictions', async () => { await tap(page, 'Settings'); await tap(page, 'Activity Restrictions'); await top(page); });
+    await shot(page, 'r_restrictions', async () => { await tap(page, 'Settings'); await tap(page, 'Restrictions'); await top(page); });
     await shot(page, 'r_security', async () => { await tap(page, 'Settings'); await tap(page, 'Security'); await top(page); });
     await shot(page, 'r_twofactor', async () => {
       await tap(page, 'Settings'); await tap(page, 'Security');

@@ -286,13 +286,13 @@ const VIDEOS = [
       notes: "Set your usual order once and it's on the morning coffee list every day you're working. No Coffee is an option too, so nobody chases you for an order.",
     },
     steps: [
-      { h: 'Settings, then Coffee Preferences', t: 'Your Coffee Order' },
+      { h: 'Settings, then Coffee', t: 'Your Coffee Order' },
       { h: 'Choose the coffee', t: 'Or No Coffee' },
       { h: 'Choose the milk', t: 'Espresso and long black are black' },
       { h: 'Xtra shot?', t: 'Tick it. Every change saves straight away' },
     ],
     stepsShot: 'r_coffeeprefs',
-    stepsNotes: "Settings, Coffee Preferences. Pick your coffee, then your milk, and tick Xtra shot if you like. There's no save button: it's saved as you change it. Not a coffee drinker? Choose No Coffee, and you won't show up as needing an order.",
+    stepsNotes: "Settings, Coffee. Pick your coffee, then your milk, and tick Xtra shot if you like. There's no save button: it's saved as you change it. Not a coffee drinker? Choose No Coffee, and you won't show up as needing an order.",
   },
   {
     id: 'coffee-order',
@@ -344,13 +344,13 @@ const VIDEOS = [
       notes: "Activity Restrictions let you opt out of activities you can't or won't do. You won't be offered those shifts, and officers are warned if they book you onto one. Advanced skills are different: your officer sets those.",
     },
     steps: [
-      { h: 'Settings, then Activity Restrictions', t: 'Every activity in your department' },
+      { h: 'Settings, then Restrictions', t: 'Every activity in your department' },
       { h: "Tick I can't do…", t: 'It saves straight away' },
       { h: 'Untick to undo', t: 'Any time' },
       { h: "Missing a shift you'd expect?", t: 'It may need a skill: ask your officer' },
     ],
     stepsShot: 'r_restrictions',
-    stepsNotes: "Settings, Activity Restrictions. Tick anything you can't do; it saves as you tick, and untick to undo. You won't be offered those shifts. If you're not seeing a shift you'd expect, it may need an advanced skill, which your officer sets, so ask them.",
+    stepsNotes: "Settings, Restrictions. Tick anything you can't do; it saves as you tick, and untick to undo. You won't be offered those shifts. If you're not seeing a shift you'd expect, it may need an advanced skill, which your officer sets, so ask them.",
   },
   {
     id: 'two-factor',

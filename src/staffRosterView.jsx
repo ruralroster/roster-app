@@ -38,7 +38,6 @@ import {
   updateMyActivityRestrictions,
   updateMyEmail,
   updateMyPhone,
-  signOut,
   getStarredStaff,
   starStaffMember,
   unstarStaffMember,
@@ -2050,8 +2049,8 @@ export default function StaffRosterView({ departmentId, staffId }) {
     if (activeTab === 'settings') {
       const SETTINGS_SUB_TABS = [
         { key: 'profile', label: 'Profile' },
-        { key: 'restrictions', label: 'Activity Restrictions' },
-        { key: 'coffee', label: 'Coffee Preferences' },
+        { key: 'restrictions', label: 'Restrictions' },
+        { key: 'coffee', label: 'Coffee' },
         { key: 'availability', label: 'Availability' },
         { key: 'notifications', label: 'Notifications' },
         { key: 'security', label: 'Security' },
@@ -2082,15 +2081,18 @@ export default function StaffRosterView({ departmentId, staffId }) {
                 </div>
               )}
 
-              <div className="flex gap-1 mt-4 border-b border-gray-200 -mx-6 px-6 overflow-x-auto">
+              {/* Wraps onto two or three rows rather than scrolling
+                  sideways: a sideways strip hid half the settings off the
+                  edge of a phone screen, and people didn't find them. */}
+              <div className="flex flex-wrap gap-2 mt-4">
                 {SETTINGS_SUB_TABS.map(tab => (
                   <button
                     key={tab.key}
                     onClick={() => setSettingsSubTab(tab.key)}
-                    className={`px-3 py-2 text-sm font-semibold whitespace-nowrap border-b-2 transition ${
+                    className={`px-3 py-1.5 text-sm font-semibold whitespace-nowrap rounded-full border transition ${
                       settingsSubTab === tab.key
-                        ? 'text-blue-600 border-blue-600'
-                        : 'text-gray-500 border-transparent hover:text-gray-700'
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
                     }`}
                   >
                     {tab.label}
@@ -2142,7 +2144,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
 
             {settingsSubTab === 'restrictions' && (
               <div className="bg-white rounded-lg shadow-sm p-6">
-                <p className="text-xs text-gray-600 mb-4">Check any activities you can't do.</p>
+                <p className="text-sm text-gray-600 mb-4">Tick any activities you can't do. You won't be offered those shifts, and officers are warned if they roster you onto one.</p>
                 {loadingActivityTypes ? (
                   <div className="text-center py-8">
                     <Loader size={24} className="text-blue-600 animate-spin mx-auto mb-2" />
@@ -2178,7 +2180,8 @@ export default function StaffRosterView({ departmentId, staffId }) {
 
             {settingsSubTab === 'coffee' && (
               <div className="bg-white rounded-lg shadow-sm p-6">
-                <p className="text-sm font-semibold text-gray-700 mb-3">Your Coffee Order</p>
+                <p className="text-sm font-semibold text-gray-700 mb-1">Your Coffee Order</p>
+                <p className="text-sm text-gray-600 mb-3">Please set your daily coffee order here. It goes on the morning coffee order every day you're working. Not a coffee drinker? Choose No Coffee.</p>
                 <CoffeePicker
                   value={staffMember?.coffee_order}
                   onSave={handleCoffeeOrderChange}
@@ -2914,20 +2917,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
       {renderContent()}
 
       {/* Bottom Tab Navigation */}
-      {/* Logout Button */}
-      <div className="fixed top-4 right-4 z-40 bg-white rounded-lg shadow-md p-3">
-        <button
-          onClick={() => {
-            if (window.confirm('Log out?')) {
-              signOut();
-            }
-          }}
-          className="px-3 py-2 bg-red-600 hover:bg-red-700 text-white font-medium rounded text-sm transition"
-        >
-          Log Out
-        </button>
-      </div>
-      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-lg">
+      <div className="fixed bottom-0 left-0 right-0 z-30 bg-white border-t border-gray-200 shadow-lg">
         <div className="max-w-3xl mx-auto flex justify-around">
           <button
             onClick={() => setActiveTab('day')}

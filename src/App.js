@@ -279,10 +279,10 @@ function App() {
             </button>
           )}
           <button
-            onClick={() => signOut()}
-            className="px-3 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 font-medium rounded text-sm transition"
+            onClick={() => window.confirm('Log out?') && signOut()}
+            className="px-3 py-2 bg-red-600 hover:bg-red-700 text-white font-medium rounded text-sm transition"
           >
-            Sign Out
+            Log Out
           </button>
         </div>
       </div>

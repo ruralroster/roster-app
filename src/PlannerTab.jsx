@@ -731,7 +731,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
             )}
           </div>
         ) : (
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button onClick={() => setWeekStart(d => { const n = new Date(d); n.setDate(n.getDate() - 7); return n; })} className="p-2 hover:bg-gray-100 rounded-lg" aria-label="Previous week">
             <ChevronLeft size={22} />
           </button>

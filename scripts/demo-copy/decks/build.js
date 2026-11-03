@@ -384,7 +384,7 @@ const rostar = {
       { h: "Who's told", t: "Officers, the ED on-call now, and tomorrow's 08:00 ED consultant" },
       { h: "It's a pop-up, not a text", t: "They see it when they next open the app. Phone the on-call if it's urgent" },
     ] },
-    { type: 'stats', section: 'Coffee', title: 'Coffee, sorted', lead: 'Set your order once in Settings → Coffee Preferences. Tap Coffee to check today\'s list, then Text order.', items: [
+    { type: 'stats', section: 'Coffee', title: 'Coffee, sorted', lead: 'Set your order once in Settings → Coffee. Tap Coffee to check today\'s list, then Text order.', items: [
       { h: '8:15', t: 'On-call nudged if anyone has no order' },
       { h: '9:00', t: 'Order emailed to the ED late consultant' },
       { h: '10:25', t: 'Pick up, or delivery at 10:30' },
@@ -411,7 +411,7 @@ const rostar = {
       { icon: 'MdLock', h: 'Security', t: 'Password and two-factor' },
     ] },
     { type: 'twoCol', section: 'Settings', title: 'Restrictions and skills',
-      left: { icon: 'MdBlock', h: 'Restrictions (you)', items: ['Settings → Activity Restrictions', "Opt out of activities you can't or won't do", "You're not offered those shifts"] },
+      left: { icon: 'MdBlock', h: 'Restrictions (you)', items: ['Settings → Restrictions', "Opt out of activities you can't or won't do", "You're not offered those shifts"] },
       right: { icon: 'MdVerifiedUser', h: 'Skills (your officer)', items: ['e.g. Anaesthetics, Obstetrics, Endoscopy', 'Shifts needing one go only to people who hold it', "Missing a shift you'd expect? Ask your officer"] } },
     { type: 'steps', section: 'Settings', title: 'Security and two-factor', icon: 'MdLock', items: [
       { h: 'Change your password', t: 'Settings → Security, any time' },
@@ -550,7 +550,7 @@ const rostar = {
       { h: 'Delete once submitted', t: 'Officers see times, never patients' },
     ] },
     { type: 'steps', section: 'Settings', title: 'Coffee preferences', icon: 'MdLocalCafe', items: [
-      { h: 'Settings → Coffee Preferences', t: 'Coffee, milk, extra shot' },
+      { h: 'Settings → Coffee', t: 'Coffee, milk, extra shot' },
       { h: 'Set it once', t: "It's on the order each day you work" },
       { h: 'No Coffee', t: "Pick it if you don't want one" },
       { h: 'Just for today?', t: 'Change it on the Coffee tab' },

@@ -2945,14 +2945,16 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                 </div>
               </div>
 
-              <div className="flex items-center gap-2 mt-6 pt-4 border-t border-gray-200">
+              {/* Wraps on a phone: on one line it was wider than the
+                  screen, which widened the whole page (bottom bar included). */}
+              <div className="flex flex-wrap items-center gap-2 mt-6 pt-4 border-t border-gray-200">
                 <button
                   onClick={() => setShowPayrollModal(true)}
                   className="px-4 py-2 bg-gray-800 hover:bg-gray-900 text-white font-medium rounded-lg transition text-sm"
                 >
                   Export to Payroll
                 </button>
-                <div className="ml-auto flex items-center gap-2">
+                <div className="ml-auto flex flex-wrap items-center gap-2">
                   <label className="text-xs text-gray-600 whitespace-nowrap">Copy from week starting</label>
                   <input
                     type="date"
@@ -2965,7 +2967,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                   <select
                     value={applyTemplateId}
                     onChange={(e) => setApplyTemplateId(e.target.value)}
-                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                    className="px-3 py-2 border border-gray-300 rounded-lg text-sm max-w-full"
                   >
                     <option value="">— Pick a template to apply —</option>
                     {refData.weekTemplates.map(t => (
@@ -6357,7 +6359,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
       })()}
 
       {/* BOTTOM TAB NAVIGATION */}
-      <div id="officer-bottom-nav" className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-lg">
+      <div id="officer-bottom-nav" className="fixed bottom-0 left-0 right-0 z-30 bg-white border-t border-gray-200 shadow-lg">
         <div className="max-w-3xl mx-auto flex justify-around">
           <button
             onClick={() => setActiveTab('calendar')}
