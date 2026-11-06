@@ -73,6 +73,7 @@ import { GRADE_LABEL } from './staffGrade';
 import { jobCategoryFor, jobCardStyle, jobBoxStyle, holdsOnCallDuty } from './jobColours';
 import { edLateOnCallFor } from './edLateOnCall';
 import { sickCallShiftsInWindow, describeSickCallShift } from './sickCallShifts';
+import HelpVideoLink from './HelpVideoLink';
 
 const SETTINGS_WEEKS_SHOWN = 4;
 const SETTINGS_DAYS_SHOWN = SETTINGS_WEEKS_SHOWN * 7;
@@ -1915,7 +1916,10 @@ export default function StaffRosterView({ departmentId, staffId }) {
             )}
 
             <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
-              <h2 className="text-lg font-bold text-gray-900 mb-1">Notify Sick</h2>
+              <div className="flex flex-wrap items-baseline justify-between gap-x-3 mb-1">
+                <h2 className="text-lg font-bold text-gray-900">Notify Sick</h2>
+                <HelpVideoLink id="notify-sick" label="How it works" />
+              </div>
               <p className="text-sm text-gray-500 mb-4">
                 {sickShifts.length > 0
                   ? "Let your officer know you can't make a shift in the next 12 hours."
@@ -1930,10 +1934,10 @@ export default function StaffRosterView({ departmentId, staffId }) {
                 }`}>
                   <p>
                     {new Date(`${report.date}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })}:{' '}
-                    {report.status === 'approved' && 'Approved by your officer.'}
+                    {report.status === 'approved' && 'Your officer has acknowledged it.'}
                     {report.status === 'denied' && 'Your officer denied this report — get in touch with them directly.'}
                     {report.status === 'cancelled' && "Sick call undone. Everyone it alerted has been told you're no longer off sick."}
-                    {report.status === 'pending' && "Sent — your officers have been emailed and whoever's on call notified. Waiting on your officer's approval."}
+                    {report.status === 'pending' && "Sent — your officers have been emailed and whoever's on call notified. Your officer will acknowledge it here once they've seen it."}
                   </p>
                   {(report.status === 'pending' || report.status === 'approved') && (
                     <button

@@ -440,7 +440,7 @@ const rostar = {
     { type: 'cards', section: 'For officers', title: 'More officer tools', items: [
       { icon: 'MdUploadFile', h: 'Excel import', t: 'Dry run, then write week by week' },
       { icon: 'MdPayments', h: 'Payroll export', t: 'Any fortnight as an Excel file' },
-      { icon: 'MdHealing', h: 'Sick calls', t: 'Approve or deny from Day view' },
+      { icon: 'MdHealing', h: 'Sick calls', t: 'Acknowledge from Calendar or Day view' },
       { icon: 'MdManageAccounts', h: 'Staff accounts', t: 'Invite, resend, one-time passwords' },
       { icon: 'MdVerifiedUser', h: 'Ranks & skills', t: 'Decide who is offered what' },
       { icon: 'MdAssessment', h: 'Reports', t: 'Case mix, fairness, rule violations' },
@@ -452,7 +452,7 @@ const rostar = {
       { h: 'It travels with the shift', t: 'Marked the same in DR Roster' },
     ] },
     { type: 'cards', section: 'For officers', title: 'Day-to-day officer tools', items: [
-      { icon: 'MdHealing', h: 'Sick calls', t: 'Approve or deny from the red banner on Day view' },
+      { icon: 'MdHealing', h: 'Sick calls', t: 'Acknowledge from the red banner on Calendar or Day view' },
       { icon: 'MdPanTool', h: 'Volunteering panel', t: 'Open offers, and unfilled gaps for 30 days' },
       { icon: 'MdPhoneInTalk', h: 'On-call slots', t: 'Pick a name for each, under every day' },
       { icon: 'MdContentCopy', h: 'Copy a week', t: 'Any Monday onto any other' },

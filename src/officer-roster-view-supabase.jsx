@@ -184,8 +184,8 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   const [newEntryStartTime, setNewEntryStartTime] = useState('');
   const [newEntryEndTime, setNewEntryEndTime] = useState('');
   const [newEntrySession, setNewEntrySession] = useState('full');
-  // Pending "Notify Sick" reports awaiting officer approval — see the Day
-  // view's approval banner.
+  // "Notify Sick" reports to acknowledge or undo — see
+  // renderSickReportsBanner.
   const [pendingSickReports, setPendingSickReports] = useState([]);
   const [fortnightStart, setFortnightStart] = useState(() => getMondayOfWeek(new Date()));
   const [fortnightRankFilter, setFortnightRankFilter] = useState('');
@@ -600,12 +600,12 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
 
   const waitingVolunteerCount = volunteeringOverview.offers.reduce((sum, o) => sum + o.volunteers.length, 0);
 
-  // Pending "Notify Sick" reports — the Day view's approval banner.
-  // Department-wide, not scoped to selectedDate, so an officer catches up
-  // on any still-undecided report whenever they're on the Day tab.
+  // "Notify Sick" reports for the sick-call banner on the Calendar and Day
+  // tabs. Department-wide, not scoped to selectedDate, so an officer sees
+  // any not yet acknowledged as soon as they open the app.
   useEffect(() => {
     const loadPendingSickReports = async () => {
-      if (!departmentId || activeTab !== 'day') return;
+      if (!departmentId || (activeTab !== 'day' && activeTab !== 'calendar')) return;
       try {
         const { data, error } = await getPendingSickReports(departmentId);
         if (error) throw error;
@@ -2216,19 +2216,20 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     }
   };
 
-  // Sick Report Handlers (Day view approval banner)
+  // Sick-call banner handlers (Calendar and Day tabs)
   const handleResolveSickReport = async (sickReportId, status) => {
     try {
       const { error } = await resolveSickReport(sickReportId, status, staffId || null);
       if (error) throw error;
 
-      // An approved one stays on the banner, so it can still be undone.
+      // An acknowledged one (status 'approved') stays on the banner, so it
+      // can still be undone.
       setPendingSickReports(prev => status === 'approved'
         ? prev.map(r => (r.sick_report_id === sickReportId ? { ...r, status } : r))
         : prev.filter(r => r.sick_report_id !== sickReportId));
       setError(null);
     } catch (err) {
-      setError(`Failed to ${status === 'approved' ? 'approve' : 'deny'} sick report: ${err.message}`);
+      setError(`Failed to acknowledge sick call: ${err.message}`);
     }
   };
 
@@ -2749,9 +2750,10 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     );
   };
 
-  // Pending sick reports to approve or deny, and recently approved ones to
-  // undo — top of the Day tab, in both the one-day Planner and the classic
-  // view.
+  // Sick calls to acknowledge, and recently acknowledged ones to undo — top
+  // of the Calendar and Day tabs (both the one-day Planner and the classic
+  // view). Acknowledging is stored as status 'approved'; there's no denying
+  // a sick call any more.
   const renderSickReportsBanner = () => {
     if (pendingSickReports.length === 0) return null;
     return (
@@ -2762,7 +2764,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
           }`}>
             <div>
               <p className="text-sm font-bold text-gray-900">
-                {report.staff?.name} {report.status === 'approved' ? 'is off sick (approved)' : 'reported sick'}
+                {report.staff?.name} {report.status === 'approved' ? 'is off sick (acknowledged)' : 'has called in sick'}
               </p>
               <p className="text-xs text-gray-600">
                 {new Date(`${report.date}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'short', month: 'short', day: 'numeric' })}
@@ -2771,20 +2773,12 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
             </div>
             <div className="flex gap-2 flex-shrink-0">
               {report.status === 'pending' && (
-                <>
-                  <button
-                    onClick={() => handleResolveSickReport(report.sick_report_id, 'approved')}
-                    className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded-lg transition"
-                  >
-                    Approve
-                  </button>
-                  <button
-                    onClick={() => handleResolveSickReport(report.sick_report_id, 'denied')}
-                    className="px-3 py-1.5 bg-gray-200 hover:bg-gray-300 text-gray-800 text-sm font-medium rounded-lg transition"
-                  >
-                    Deny
-                  </button>
-                </>
+                <button
+                  onClick={() => handleResolveSickReport(report.sick_report_id, 'approved')}
+                  className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded-lg transition"
+                >
+                  Acknowledge
+                </button>
               )}
               <button
                 onClick={() => handleUndoSickReport(report)}
@@ -2845,6 +2839,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
       return (
         <div className="p-4">
           <div className="max-w-2xl mx-auto">
+            {renderSickReportsBanner()}
             {renderVolunteeringPanel()}
             <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
               <div className="flex items-center justify-between mb-6">

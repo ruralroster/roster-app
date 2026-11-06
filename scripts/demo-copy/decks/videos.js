@@ -110,7 +110,7 @@ const VIDEOS = [
       { h: 'Send, then confirm', t: 'Your officer approves it; the result shows here' },
     ],
     stepsShot: 'r_sick',
-    stepsNotes: "Variation, then Notify Sick, just under My Variations. Tick the shift you'll miss. Here's the message, which you can change, and the list of who's told and how. Send, confirm, done. It shows as pending until your officer approves it.",
+    stepsNotes: "Variation, then Notify Sick, just under My Variations. Tick the shift you'll miss. Here's the message, which you can change, and the list of who's told and how. Send, confirm, done. It shows as sent until your officer acknowledges it.",
   },
   {
     id: 'notifications-test',
