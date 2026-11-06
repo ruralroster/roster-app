@@ -21,20 +21,20 @@ export default function StaffWalkthrough() {
 
       <CollapsibleSection title="Day — today's roster" defaultOpen>
         <ul className="list-disc list-inside space-y-2 text-sm text-gray-700">
-          <li>Shows one date at a time. Use the arrows next to the date to move a day at a time, or the small date field underneath to jump straight to any date.</li>
+          <li>Shows one date at a time. Use the arrows next to the date to move a day at a time, or the small date field underneath to jump straight to any date. <HelpVideoLink id="day-and-week" className="ml-1" /></li>
           <li><span className="font-semibold">On-Call</span> — who's covering each on-call role that day. Yours is highlighted with a "You" tag.</li>
           <li>Visiting surgeons and district doctors booked from DR Roster are listed too, labelled with their role (e.g. "Consultant · DR Roster"). They aren't staff here, so tapping their name doesn't open a profile.</li>
           <li><span className="font-semibold">My allocations for today</span> — a quick list of your own assignments. Tap one to see who else is rostered at that same location for that session.</li>
           <li><span className="font-semibold">Morning / Afternoon / Night</span> — the whole department's roster for that session, grouped by location. Your own rows are highlighted in blue. Tap a section header to expand or collapse it.</li>
-          <li>Tap any colleague's name, anywhere in the app, to open their details — their phone number (if they've added one) and a star button to pin them to your Week tab. This popup is the same one everywhere, so starring works from Day, Phone Book or Search — not just here.</li>
+          <li>Tap any colleague's name, anywhere in the app, to open their details — their phone number (if they've added one) and a star button to pin them to your Week tab. This popup is the same one everywhere, so starring works from Day, Phone Book or Search — not just here. <HelpVideoLink id="tap-a-name" className="ml-1" /></li>
         </ul>
       </CollapsibleSection>
 
       <CollapsibleSection title="Week — your week, and starred colleagues">
         <ul className="list-disc list-inside space-y-2 text-sm text-gray-700">
-          <li>One card per day showing everything you're rostered for that week. Use the arrows, or the date field, to move week to week. Phone Book shares this same week — moving one moves the other.</li>
-          <li><span className="font-semibold">Starred Colleagues</span> — star someone from their detail popup and they'll show up here, up to 10 people. Tap a colleague's name to expand their own week underneath yours.</li>
-          <li><span className="font-semibold">Crossover</span> — tap the purple Crossover button next to a starred colleague to compare your weeks side by side. Each day is marked <span className="font-semibold text-green-700">Work</span> if you're both rostered on, or <span className="font-semibold text-gray-600">Off</span> if neither of you has a shift that day — handy for planning something together. Note "Off" just means no rostered shift, not confirmed leave. Use the arrows inside the Crossover popup to check other weeks; it moves independently of the Week tab's own navigation.</li>
+          <li>One card per day showing everything you're rostered for that week. Use the arrows, or the date field, to move week to week. Phone Book shares this same week — moving one moves the other. <HelpVideoLink id="day-and-week" className="ml-1" /></li>
+          <li><span className="font-semibold">Starred Colleagues</span> — star someone from their detail popup and they'll show up here, up to 10 people. Tap a colleague's name to expand their own week underneath yours. <HelpVideoLink id="tap-a-name" className="ml-1" /></li>
+          <li><span className="font-semibold">Crossover</span> — tap the purple Crossover button next to a starred colleague to compare your weeks side by side. Each day is marked <span className="font-semibold text-green-700">Work</span> if you're both rostered on, or <span className="font-semibold text-gray-600">Off</span> if neither of you has a shift that day — handy for planning something together. Note "Off" just means no rostered shift, not confirmed leave. Use the arrows inside the Crossover popup to check other weeks; it moves independently of the Week tab's own navigation. <HelpVideoLink id="tap-a-name" className="ml-1" /></li>
         </ul>
       </CollapsibleSection>
 
@@ -60,7 +60,7 @@ export default function StaffWalkthrough() {
 
       <CollapsibleSection title="Search, Coffee & Export — the bottom-bar shortcuts">
         <ul className="list-disc list-inside space-y-2 text-sm text-gray-700">
-          <li><span className="font-semibold">Search</span> finds any staff member by name — opens the same detail popup used everywhere else, so you can call or star them from there.</li>
+          <li><span className="font-semibold">Search</span> finds any staff member by name — opens the same detail popup used everywhere else, so you can call or star them from there. <HelpVideoLink id="tap-a-name" className="ml-1" /></li>
           <li><span className="font-semibold">Coffee</span> shows everyone rostered today who's set a coffee preference (see Settings below), grouped into one order you can copy or text straight to your department's coffee place, if one's configured. Tap <span className="font-semibold">Text order</span>, then choose <span className="font-semibold">Pick up 10:25</span> or <span className="font-semibold">Delivery 10:30</span>, and the message is written to match. Filter by Morning/Afternoon/Night with the checkboxes at the top. Untick someone's row to leave them off today's order, or use "Add someone not on the roster" at the bottom for a locum or visitor's coffee. Both stick for the rest of the day — anyone else who opens Coffee today sees the same adjusted list — but reset the next day.</li>
           <li><span className="font-semibold">Export</span> lists every upcoming week (up to 26 ahead) that has something rostered for you, all ticked to start with. Untick any you don't want, then export to download one calendar file (.ics) with your shifts and on-call duties. Open it on your phone to add them to your calendar app.</li>
         </ul>
@@ -72,6 +72,7 @@ export default function StaffWalkthrough() {
           <li><span className="font-semibold">Restrictions</span> — tick anything you're not able to do, so officers don't roster you onto it by mistake. This also filters which Available Shifts you're offered in Variation.</li>
           <li><span className="font-semibold">Coffee</span> — set your standing coffee and milk order once; it's used whenever the Coffee shortcut compiles an order for a day you're working, not something you re-enter each time. Tick <span className="font-semibold">Xtra shot</span> if you want one. Espresso and Long Black are locked to no milk automatically.</li>
           <li><span className="font-semibold">Availability</span> — tap a date to cycle it: grey (not set) → green (available) → red (unavailable) → dark grey (unavailable, working elsewhere) → back to grey. Changes save immediately. To this app red and dark grey both mean unavailable. In DR Roster, the district app, a red day (leave, a day off) is still open to district shifts in case you'd like to pick one up, but a dark grey day isn't. New accounts start out available every day, so you mostly just need to mark the days you can't work. If you haven't marked enough available days for your FTE, a banner here will tell you.</li>
+          <li><span className="font-semibold">Notifications</span> — turn on phone notifications for this device (on iPhone, add Rstar to your Home Screen first), choose whether you're emailed, and tap <span className="font-semibold">Send me a test</span> to check it works. <HelpVideoLink id="notifications-test" className="ml-1" /></li>
           <li><span className="font-semibold">Security</span> — change your password any time, and optionally turn on two-factor authentication (a 6-digit code from an authenticator app) for extra protection at sign-in.</li>
         </ul>
       </CollapsibleSection>
