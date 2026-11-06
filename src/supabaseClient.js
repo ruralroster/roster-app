@@ -6932,3 +6932,51 @@ export async function applyTemplateMeetings(departmentId, weekStartDate, weekTem
     return { error: err };
   }
 }
+
+// ============================================================
+// BIRTHDAYS — see migrations/2026-11-06b_birthdays.sql. Opt-in day and
+// month (no year), private to the person; the coffee run and the person
+// themselves hear about it on the day.
+// ============================================================
+
+// { day, month, dairy_free, gluten_free } or null if they haven't opted in.
+export async function getMyBirthday(staffId) {
+  try {
+    const { data, error } = await supabase
+      .from('staff_birthdays')
+      .select('day, month, dairy_free, gluten_free')
+      .eq('staff_id', staffId)
+      .maybeSingle();
+    return { data: data || null, error };
+  } catch (err) {
+    return { data: null, error: err };
+  }
+}
+
+// birthday: { day, month, dairy_free, gluten_free } to opt in or change
+// it, null to opt out.
+export async function setMyBirthday(staffId, birthday) {
+  console.log('setMyBirthday called', staffId, birthday);
+  try {
+    const { error } = birthday
+      ? await supabase.from('staff_birthdays').upsert({
+        staff_id: staffId, day: birthday.day, month: birthday.month,
+        dairy_free: !!birthday.dairy_free, gluten_free: !!birthday.gluten_free,
+      })
+      : await supabase.from('staff_birthdays').delete().eq('staff_id', staffId);
+    return { error };
+  } catch (err) {
+    return { error: err };
+  }
+}
+
+// [{ staff_id, name, dairy_free, gluten_free }] whose birthday it is
+// today in this department.
+export async function getBirthdaysToday(departmentId) {
+  try {
+    const { data, error } = await supabase.rpc('birthdays_today', { p_department_id: departmentId });
+    return { data: data || [], error };
+  } catch (err) {
+    return { data: [], error: err };
+  }
+}

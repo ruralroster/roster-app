@@ -49,6 +49,7 @@ import {
   addCoffeeOrderExtra,
   removeCoffeeOrderExtra,
   markCoffeeOrderTexted,
+  getBirthdaysToday,
 } from './supabaseClient';
 import CollapsibleSection from './CollapsibleSection';
 import CoffeePicker from './CoffeePicker';
@@ -74,6 +75,8 @@ import { jobCategoryFor, jobCardStyle, jobBoxStyle, holdsOnCallDuty } from './jo
 import { edLateOnCallFor } from './edLateOnCall';
 import { sickCallShiftsInWindow, describeSickCallShift } from './sickCallShifts';
 import HelpVideoLink from './HelpVideoLink';
+import BirthdaySetting from './BirthdaySetting';
+import { birthdayFirstNames, birthdayDietNotes } from './birthdays';
 
 const SETTINGS_WEEKS_SHOWN = 4;
 const SETTINGS_DAYS_SHOWN = SETTINGS_WEEKS_SHOWN * 7;
@@ -238,6 +241,12 @@ export default function StaffRosterView({ departmentId, staffId }) {
 
   // Coffee Orders modal state
   const [showCoffeeModal, setShowCoffeeModal] = useState(false);
+  // People on today's coffee order whose birthday it is (BirthdaySetting,
+  // with their dairy/gluten free ticks),
+  // shown at the top of the Coffee popup, and as a pop-up over it the
+  // first time it's opened that day on this device.
+  const [coffeeBirthdays, setCoffeeBirthdays] = useState([]);
+  const [showCoffeeBirthdayPopup, setShowCoffeeBirthdayPopup] = useState(false);
   const [loadingCoffeeModal, setLoadingCoffeeModal] = useState(false);
   const [coffeeModalError, setCoffeeModalError] = useState(null);
   const [coffeeModalStaff, setCoffeeModalStaff] = useState([]); // [{ staff_id, name, rank, coffee_order, sessionGroups }]
@@ -1041,9 +1050,10 @@ export default function StaffRosterView({ departmentId, staffId }) {
     setCoffeeSessionFilters({ morning: true, afternoon: false, night: false });
     setShowAddCoffeeExtra(false);
     try {
-      const [{ data, error: fetchError }, { data: adjustments, error: adjustmentsError }] = await Promise.all([
+      const [{ data, error: fetchError }, { data: adjustments, error: adjustmentsError }, { data: birthdays }] = await Promise.all([
         getStaffAssignmentsForDate(departmentId, new Date()),
         getCoffeeOrderAdjustments(departmentId, new Date()),
+        getBirthdaysToday(departmentId),
       ]);
       if (fetchError) throw fetchError;
       if (adjustmentsError) throw adjustmentsError;
@@ -1075,6 +1085,17 @@ export default function StaffRosterView({ departmentId, staffId }) {
         .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
       setCoffeeModalStaff(list);
       setCoffeeModalError(null);
+
+      // Only people here for the morning coffee run.
+      const birthdayPeople = birthdays
+        .filter(b => list.some(p => p.staff_id === b.staff_id && p.sessionGroups.includes('morning')));
+      setCoffeeBirthdays(birthdayPeople);
+      if (birthdayPeople.length > 0) {
+        const seenKey = `rstar-coffee-birthday-${departmentId}-${toLocalDateStr(new Date())}`;
+        let seen = false;
+        try { seen = !!localStorage.getItem(seenKey); localStorage.setItem(seenKey, '1'); } catch { /* show it */ }
+        if (!seen) setShowCoffeeBirthdayPopup(true);
+      }
     } catch (err) {
       setCoffeeModalError(`Failed to load coffee orders: ${err.message}`);
     } finally {
@@ -2171,6 +2192,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
                       />
                     </dd>
                   </div>
+                  <BirthdaySetting staffId={staffId} />
                 </dl>
               </div>
             )}
@@ -2426,6 +2448,28 @@ export default function StaffRosterView({ departmentId, staffId }) {
         </div>
       )}
 
+      {showCoffeeModal && showCoffeeBirthdayPopup && coffeeBirthdays.length > 0 && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-[60]" onClick={() => setShowCoffeeBirthdayPopup(false)}>
+          <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-sm text-center" onClick={e => e.stopPropagation()}>
+            <p className="text-5xl mb-3">🎂</p>
+            <h2 className="text-xl font-bold text-gray-900 mb-2">
+              It's {birthdayFirstNames(coffeeBirthdays.map(b => b.name))}'s birthday today!
+            </h2>
+            <p className="text-sm text-gray-600 mb-2">Maybe a cake with the coffees?</p>
+            {birthdayDietNotes(coffeeBirthdays).map(note => (
+              <p key={note} className="text-sm font-semibold text-pink-800">Cake for {note}</p>
+            ))}
+            <div className="mb-5" />
+            <button
+              onClick={() => setShowCoffeeBirthdayPopup(false)}
+              className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg"
+            >
+              On to the coffees
+            </button>
+          </div>
+        </div>
+      )}
+
       {showCoffeeModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-lg max-h-[85vh] flex flex-col">
@@ -2461,6 +2505,13 @@ export default function StaffRosterView({ departmentId, staffId }) {
                 <AlertCircle size={18} className="text-red-600 flex-shrink-0 mt-0.5" />
                 <p className="text-sm text-red-700">{coffeeModalError}</p>
               </div>
+            )}
+
+            {!loadingCoffeeModal && coffeeBirthdays.length > 0 && (
+              <p className="mb-4 p-3 bg-pink-50 border border-pink-200 rounded-lg text-sm font-medium text-pink-900">
+                🎂 It's {birthdayFirstNames(coffeeBirthdays.map(b => b.name))}'s birthday today!
+                {birthdayDietNotes(coffeeBirthdays).map(note => <span key={note} className="block text-xs font-normal mt-1">Cake for {note}</span>)}
+              </p>
             )}
 
             {loadingCoffeeModal ? (
