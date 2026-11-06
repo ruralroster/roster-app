@@ -30,6 +30,7 @@ import {
   getStaffRanks,
   getMySickCallState,
   createSickReport,
+  undoSickReport,
   getSickCallRecipients,
   createSickCallAlerts,
   notifyVolunteering,
@@ -555,8 +556,8 @@ export default function StaffRosterView({ departmentId, staffId }) {
   }, [activeTab, staffId, departmentId]);
 
   // A report covers its whole date, so a shift on a date that's already
-  // been reported isn't offered again.
-  const reportedSickDates = new Set(mySickReports.map(r => r.date));
+  // been reported isn't offered again, unless that report was undone.
+  const reportedSickDates = new Set(mySickReports.filter(r => r.status !== 'cancelled').map(r => r.date));
   const unreportedSickShifts = sickShifts.filter(s => !reportedSickDates.has(s.assignment.date));
   const sickShiftDates = new Set(sickShifts.map(s => s.assignment.date));
   const shownSickReports = mySickReports.filter((r, i) =>
@@ -626,6 +627,21 @@ export default function StaffRosterView({ departmentId, staffId }) {
       setVolunteerError(null);
     } catch (err) {
       setVolunteerError(`Failed to send sick report: ${err.message}`);
+    } finally {
+      setSubmittingSickReport(false);
+    }
+  };
+
+  const handleUndoSick = async (report) => {
+    if (!window.confirm("Undo your sick call? Everyone it alerted will be told you're no longer off sick.")) return;
+    setSubmittingSickReport(true);
+    try {
+      const { error: undoErr } = await undoSickReport(report.sick_report_id);
+      if (undoErr) throw undoErr;
+      setMySickReports(prev => prev.map(r => (r.sick_report_id === report.sick_report_id ? { ...r, status: 'cancelled' } : r)));
+      setVolunteerError(null);
+    } catch (err) {
+      setVolunteerError(`Failed to undo sick call: ${err.message}`);
     } finally {
       setSubmittingSickReport(false);
     }
@@ -1906,16 +1922,29 @@ export default function StaffRosterView({ departmentId, staffId }) {
                   : "You don't have a shift in the next 12 hours. Notify Sick opens 12 hours before a shift; for anything further ahead, talk to your officer."}
               </p>
               {shownSickReports.map(report => (
-                <p key={report.sick_report_id} className={`text-sm font-medium text-center py-2 px-2 rounded-lg mb-2 ${
+                <div key={report.sick_report_id} className={`text-sm font-medium text-center py-2 px-2 rounded-lg mb-2 ${
                   report.status === 'approved' ? 'bg-green-50 text-green-800'
                   : report.status === 'denied' ? 'bg-red-50 text-red-800'
+                  : report.status === 'cancelled' ? 'bg-gray-50 text-gray-700'
                   : 'bg-orange-50 text-orange-800'
                 }`}>
-                  {new Date(`${report.date}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })}:{' '}
-                  {report.status === 'approved' && 'Approved by your officer.'}
-                  {report.status === 'denied' && 'Your officer denied this report — get in touch with them directly.'}
-                  {report.status === 'pending' && "Sent — your officers have been emailed and whoever's on call notified. Waiting on your officer's approval."}
-                </p>
+                  <p>
+                    {new Date(`${report.date}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })}:{' '}
+                    {report.status === 'approved' && 'Approved by your officer.'}
+                    {report.status === 'denied' && 'Your officer denied this report — get in touch with them directly.'}
+                    {report.status === 'cancelled' && "Sick call undone. Everyone it alerted has been told you're no longer off sick."}
+                    {report.status === 'pending' && "Sent — your officers have been emailed and whoever's on call notified. Waiting on your officer's approval."}
+                  </p>
+                  {(report.status === 'pending' || report.status === 'approved') && (
+                    <button
+                      onClick={() => handleUndoSick(report)}
+                      disabled={submittingSickReport}
+                      className="mt-2 px-3 py-1 bg-white border border-gray-300 hover:bg-gray-100 disabled:opacity-40 text-gray-800 font-medium rounded-lg text-xs transition"
+                    >
+                      Undo sick call
+                    </button>
+                  )}
+                </div>
               ))}
               {(unreportedSickShifts.length > 0 || shownSickReports.length === 0) && (
                 <button

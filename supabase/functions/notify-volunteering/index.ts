@@ -16,6 +16,10 @@
 //                       and whoever's on call now gets a phone
 //                       notification. Everyone on the list still gets the
 //                       in-app pop-up too.
+//   event 'sick_cancelled' - that sick call was just undone (by the person
+//                       or an officer, see undo_sick_report). The same
+//                       officers are emailed, and anyone whose phone was
+//                       told is pushed again, that it's off.
 //
 // Each person chooses in Settings → Notifications: email unless they've
 // turned it off (staff.notify_email), and push on each device they've
@@ -277,6 +281,69 @@ Deno.serve(async (req) => {
       });
     }
 
+    if (event === 'sick_cancelled') {
+      if (!sickReportId) return json({ error: 'sickReportId is required' }, 400);
+      const { data: report, error } = await admin
+        .from('sick_reports')
+        .select('sick_report_id, department_id, staff_id, status, notified_at')
+        .eq('sick_report_id', sickReportId)
+        .maybeSingle();
+      if (error) throw error;
+      if (!report || report.status !== 'cancelled') return json({ error: 'No cancelled sick call with that id' }, 404);
+      if (!myStaffIds.has(report.staff_id)) {
+        const { data: isOfficer } = await userClient.rpc('is_department_officer', { dept_id: report.department_id });
+        if (!isOfficer) return json({ error: 'Only the person who called in sick or an officer can do that' }, 403);
+      }
+
+      const { data: claimed, error: claimError } = await admin
+        .from('sick_reports')
+        .update({ cancel_notified_at: new Date().toISOString() })
+        .eq('sick_report_id', sickReportId)
+        .is('cancel_notified_at', null)
+        .select('sick_report_id');
+      if (claimError) throw claimError;
+      if (!claimed || claimed.length === 0) return json({ data: { skipped: 'already notified' } });
+
+      const { data: alerts, error: alertsError } = await admin
+        .from('sick_call_alerts')
+        .select('reason, message, pushed_at, staff:recipient_staff_id(staff_id, name, email, notify_email, role, active)')
+        .eq('sick_report_id', sickReportId);
+      if (alertsError) throw alertsError;
+
+      type AlertStaff = Recipient & { role: string; active: boolean };
+      const rows = (alerts || [])
+        .map(a => ({ reasons: (a.reason as string).split(','), pushed: !!a.pushed_at, staff: a.staff as unknown as AlertStaff | null }))
+        .filter(a => a.staff?.active && !myStaffIds.has(a.staff.staff_id));
+      // The same people as the sick call itself: officers by email, and a
+      // phone notification to anyone whose phone was told (the on-call at
+      // the time, or a 07:30 notification that has already gone).
+      const officers = report.notified_at
+        ? rows.filter(a => a.reasons.includes('officer') && a.staff!.role === 'officer').map(a => ({ ...a.staff!, notify_email: true }))
+        : [];
+      const pushed = rows
+        .filter(a => a.pushed || (report.notified_at && a.reasons.includes('on_call')))
+        .map(a => a.staff!);
+
+      const message = {
+        title: 'Sick call cancelled',
+        body: alerts?.[0]?.message || 'A sick call has been cancelled.',
+        path: '',
+        tag: `sick-${sickReportId}`,
+      };
+      const [emailResult, pushResult] = await Promise.all([
+        send(admin, officers, message, { push: false }),
+        send(admin, pushed, message, { email: false }),
+      ]);
+      return json({
+        data: {
+          emailed: emailResult.emailed,
+          pushed: pushResult.pushed,
+          failed: emailResult.failed + pushResult.failed,
+          recipients: officers.length + pushed.length,
+        },
+      });
+    }
+
     if (!theatreActivityId || (role !== 'consultant' && role !== 'registrar')) {
       return json({ error: 'theatreActivityId and role are required' }, 400);
     }
@@ -388,7 +455,7 @@ Deno.serve(async (req) => {
       return json({ data: { ...result, recipients: (officers || []).length } });
     }
 
-    return json({ error: "event must be 'offer', 'volunteer', 'sick' or 'test'" }, 400);
+    return json({ error: "event must be 'offer', 'volunteer', 'sick', 'sick_cancelled' or 'test'" }, 400);
   } catch (err) {
     console.error('notify-volunteering error:', err);
     return json({ error: (err as Error).message || String(err) }, 500);

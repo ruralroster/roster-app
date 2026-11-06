@@ -101,6 +101,7 @@ import { createTheatreActivity,
   applyWeekTemplate,
   getPendingSickReports,
   resolveSickReport,
+  undoSickReport,
   getStaffRanks,
   createStaffRank,
   renameStaffRank,
@@ -2221,10 +2222,25 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
       const { error } = await resolveSickReport(sickReportId, status, staffId || null);
       if (error) throw error;
 
-      setPendingSickReports(prev => prev.filter(r => r.sick_report_id !== sickReportId));
+      // An approved one stays on the banner, so it can still be undone.
+      setPendingSickReports(prev => status === 'approved'
+        ? prev.map(r => (r.sick_report_id === sickReportId ? { ...r, status } : r))
+        : prev.filter(r => r.sick_report_id !== sickReportId));
       setError(null);
     } catch (err) {
       setError(`Failed to ${status === 'approved' ? 'approve' : 'deny'} sick report: ${err.message}`);
+    }
+  };
+
+  const handleUndoSickReport = async (report) => {
+    if (!window.confirm(`Undo ${report.staff?.name || 'this'}'s sick call? Everyone it alerted will be told it's off.`)) return;
+    try {
+      const { error } = await undoSickReport(report.sick_report_id);
+      if (error) throw error;
+      setPendingSickReports(prev => prev.filter(r => r.sick_report_id !== report.sick_report_id));
+      setError(null);
+    } catch (err) {
+      setError(`Failed to undo sick call: ${err.message}`);
     }
   };
 
@@ -2733,33 +2749,48 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     );
   };
 
-  // Pending sick reports to approve or deny — top of the Day tab, in both
-  // the one-day Planner and the classic view.
+  // Pending sick reports to approve or deny, and recently approved ones to
+  // undo — top of the Day tab, in both the one-day Planner and the classic
+  // view.
   const renderSickReportsBanner = () => {
     if (pendingSickReports.length === 0) return null;
     return (
       <div className="mb-6 space-y-2">
         {pendingSickReports.map(report => (
-          <div key={report.sick_report_id} className="p-4 bg-red-50 border border-red-300 rounded-lg flex items-center justify-between gap-3">
+          <div key={report.sick_report_id} className={`p-4 border rounded-lg flex flex-wrap items-center justify-between gap-3 ${
+            report.status === 'approved' ? 'bg-gray-50 border-gray-300' : 'bg-red-50 border-red-300'
+          }`}>
             <div>
-              <p className="text-sm font-bold text-gray-900">{report.staff?.name} reported sick</p>
+              <p className="text-sm font-bold text-gray-900">
+                {report.staff?.name} {report.status === 'approved' ? 'is off sick (approved)' : 'reported sick'}
+              </p>
               <p className="text-xs text-gray-600">
                 {new Date(`${report.date}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'short', month: 'short', day: 'numeric' })}
               </p>
               {report.message && <p className="text-xs text-gray-700 mt-1 whitespace-pre-wrap">"{report.message}"</p>}
             </div>
             <div className="flex gap-2 flex-shrink-0">
+              {report.status === 'pending' && (
+                <>
+                  <button
+                    onClick={() => handleResolveSickReport(report.sick_report_id, 'approved')}
+                    className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded-lg transition"
+                  >
+                    Approve
+                  </button>
+                  <button
+                    onClick={() => handleResolveSickReport(report.sick_report_id, 'denied')}
+                    className="px-3 py-1.5 bg-gray-200 hover:bg-gray-300 text-gray-800 text-sm font-medium rounded-lg transition"
+                  >
+                    Deny
+                  </button>
+                </>
+              )}
               <button
-                onClick={() => handleResolveSickReport(report.sick_report_id, 'approved')}
-                className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded-lg transition"
+                onClick={() => handleUndoSickReport(report)}
+                className="px-3 py-1.5 bg-white border border-gray-300 hover:bg-gray-100 text-gray-800 text-sm font-medium rounded-lg transition"
               >
-                Approve
-              </button>
-              <button
-                onClick={() => handleResolveSickReport(report.sick_report_id, 'denied')}
-                className="px-3 py-1.5 bg-gray-200 hover:bg-gray-300 text-gray-800 text-sm font-medium rounded-lg transition"
-              >
-                Deny
+                Undo sick call
               </button>
             </div>
           </div>

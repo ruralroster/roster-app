@@ -3927,23 +3927,42 @@ export async function createSickReport(departmentId, staffId, dateStr, message =
   }
 }
 
-// Pending sick reports for a department, most recent first — the officer
-// Day view's approval banner.
+// Sick reports for an officer's Day view banner, most recent first:
+// every pending one to approve or deny, and approved ones from yesterday
+// on, so a sick call can still be undone.
 export async function getPendingSickReports(departmentId) {
   console.log('getPendingSickReports called', departmentId);
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
 
   try {
     const { data, error } = await supabase
       .from('sick_reports')
       .select('*, staff(name)')
       .eq('department_id', departmentId)
-      .eq('status', 'pending')
+      .or(`status.eq.pending,and(status.eq.approved,date.gte.${toLocalDateStr(yesterday)})`)
       .order('created_at', { ascending: false });
 
     return { data: data || [], error };
   } catch (err) {
     console.error('getPendingSickReports error:', err);
     return { data: [], error: err };
+  }
+}
+
+// Undo a sick call, as the person who made it or an officer — see
+// migrations/2026-11-06_undo_sick_call.sql. Everyone it alerted is told
+// it's off (pop-up straight away; email and phone via notify-volunteering).
+export async function undoSickReport(sickReportId) {
+  console.log('undoSickReport called', sickReportId);
+
+  try {
+    const { error } = await supabase.rpc('undo_sick_report', { p_sick_report_id: sickReportId });
+    if (error) return { error };
+    notifyVolunteering('sick_cancelled', { sickReportId });
+    return { error: null };
+  } catch (err) {
+    return { error: err };
   }
 }
 

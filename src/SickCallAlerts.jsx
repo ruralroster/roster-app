@@ -6,7 +6,8 @@ import { getMyUndismissedSickCallAlerts, dismissSickCallAlert } from './supabase
 // supabaseClient.js for who gets these. Checked once when the app opens
 // (mounted from App.js above both the officer and staff views), and stays
 // up until every alert in it is dismissed. Not a device push — see
-// push-notifications-deferred in project memory.
+// push-notifications-deferred in project memory. A sick call that's been
+// undone comes back once more, in grey, saying so (cancelled_at).
 export default function SickCallAlerts({ staffId }) {
   const [alerts, setAlerts] = useState([]);
   const [error, setError] = useState(null);
@@ -44,7 +45,9 @@ export default function SickCallAlerts({ staffId }) {
       <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-lg max-h-[85vh] overflow-y-auto">
         <div className="flex justify-between items-start mb-4">
           <h2 className="text-xl font-bold text-gray-900">
-            {alerts.length === 1 ? 'Sick call' : `${alerts.length} sick calls`}
+            {alerts.every(a => a.cancelled_at)
+              ? (alerts.length === 1 ? 'Sick call cancelled' : `${alerts.length} sick calls cancelled`)
+              : (alerts.length === 1 ? 'Sick call' : `${alerts.length} sick calls`)}
           </h2>
           <button onClick={() => handleDismiss(alerts.map(a => a.sick_call_alert_id))} className="p-1 hover:bg-gray-100 rounded-lg">
             <X size={20} />
@@ -60,11 +63,11 @@ export default function SickCallAlerts({ staffId }) {
 
         <div className="space-y-3">
           {alerts.map(alert => (
-            <div key={alert.sick_call_alert_id} className="p-4 bg-red-50 border border-red-300 rounded-lg">
+            <div key={alert.sick_call_alert_id} className={`p-4 border rounded-lg ${alert.cancelled_at ? 'bg-gray-50 border-gray-300' : 'bg-red-50 border-red-300'}`}>
               <p className="text-sm font-medium text-gray-900 whitespace-pre-wrap">{alert.message}</p>
               <div className="flex items-center justify-between gap-3 mt-3">
                 <p className="text-xs text-gray-500">
-                  {new Date(alert.created_at).toLocaleString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                  {new Date(alert.cancelled_at || alert.created_at).toLocaleString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
                 </p>
                 <button
                   onClick={() => handleDismiss([alert.sick_call_alert_id])}
