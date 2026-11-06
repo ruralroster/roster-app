@@ -8,7 +8,7 @@ export const NO_COFFEE = 'No Coffee';
 export const NO_MILK = 'No Milk';
 export const EXTRA_SHOT_SUFFIX = ' + Xtra Shot';
 
-export const COFFEE_TYPES = ['No Coffee', 'Cappuccino', 'Flat White', 'Latte', 'Espresso', 'Long Black', 'Iced Latte'];
+export const COFFEE_TYPES = ['No Coffee', 'Cappuccino', 'Flat White', 'Latte', 'Mocha', 'Espresso', 'Long Black', 'Iced Latte'];
 export const MILK_TYPES = ['Whole Milk', 'Skim Milk', 'Oat Milk', 'Almond Milk', 'Lactose Free Milk'];
 
 // Espresso and Long Black are always taken black.
@@ -26,9 +26,12 @@ export function composeCoffeeOrder(coffeeType, milkType, extraShot) {
 }
 
 // Parses a stored `coffee_order` string back into
-// { coffeeType, milkType, extraShot }. Free-text values that predate this
-// feature (or don't match a known option) fall back to "No Coffee" rather
-// than guessing.
+// { coffeeType, milkType, extraShot }. Anything saved by the picker
+// ("<Coffee Type> - <Milk Type>") is taken as written, even a coffee or
+// milk not in the lists above, so the 9:00 email (which bundles a copy of
+// this file) orders a newly added drink without being redeployed. Free
+// text that predates the picker (no " - ") falls back to "No Coffee"
+// unless it's a known coffee type, rather than guessing.
 export function parseCoffeeOrder(value) {
   if (!value || value === NO_COFFEE) return { coffeeType: NO_COFFEE, milkType: null, extraShot: false };
 
@@ -36,12 +39,13 @@ export function parseCoffeeOrder(value) {
   const withoutSuffix = extraShot ? value.slice(0, -EXTRA_SHOT_SUFFIX.length) : value;
 
   const [rawType, rawMilk] = withoutSuffix.split(' - ').map(s => s?.trim());
-  const coffeeType = COFFEE_TYPES.includes(rawType) ? rawType : NO_COFFEE;
+  const fromPicker = !!rawType && rawMilk !== undefined;
+  const coffeeType = fromPicker || COFFEE_TYPES.includes(rawType) ? rawType : NO_COFFEE;
   if (coffeeType === NO_COFFEE) return { coffeeType: NO_COFFEE, milkType: null, extraShot: false };
 
   if (milkIsFixedForCoffeeType(coffeeType)) return { coffeeType, milkType: NO_MILK, extraShot };
 
-  const milkType = MILK_TYPES.includes(rawMilk) ? rawMilk : MILK_TYPES[0];
+  const milkType = rawMilk || MILK_TYPES[0];
   return { coffeeType, milkType, extraShot };
 }
 

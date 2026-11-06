@@ -1,4 +1,4 @@
-import { coffeeAttention, NO_COFFEE } from './coffeeUtils';
+import { coffeeAttention, parseCoffeeOrder, NO_COFFEE } from './coffeeUtils';
 
 const staff = (id, name, coffee_order) => ({ staff_id: id, name, rank: 'SMO', coffee_order });
 
@@ -30,5 +30,22 @@ describe('coffeeAttention', () => {
   it('leaves out someone taken off today\'s list on purpose', () => {
     const list = coffeeAttention({ rostered: [staff('a', 'Ann', null)], visitorNames: [], removedStaffIds: ['a'] });
     expect(list).toEqual([]);
+  });
+});
+
+describe('parseCoffeeOrder', () => {
+  it('takes a picker-saved order as written, even a drink not in the list', () => {
+    expect(parseCoffeeOrder('Mocha - Oat Milk')).toEqual({ coffeeType: 'Mocha', milkType: 'Oat Milk', extraShot: false });
+    expect(parseCoffeeOrder('Chai Latte - Soy Milk + Xtra Shot')).toEqual({ coffeeType: 'Chai Latte', milkType: 'Soy Milk', extraShot: true });
+  });
+
+  it('keeps black-only coffees black', () => {
+    expect(parseCoffeeOrder('Long Black - No Milk')).toEqual({ coffeeType: 'Long Black', milkType: 'No Milk', extraShot: false });
+  });
+
+  it("doesn't guess at old free text", () => {
+    expect(parseCoffeeOrder('flat white 2 sugars')).toEqual({ coffeeType: 'No Coffee', milkType: null, extraShot: false });
+    expect(parseCoffeeOrder('No Coffee')).toEqual({ coffeeType: 'No Coffee', milkType: null, extraShot: false });
+    expect(parseCoffeeOrder('')).toEqual({ coffeeType: 'No Coffee', milkType: null, extraShot: false });
   });
 });

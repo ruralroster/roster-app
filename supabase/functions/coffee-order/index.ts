@@ -13,7 +13,7 @@ import webpush from "npm:web-push@3.6.7";
 var NO_COFFEE = "No Coffee";
 var NO_MILK = "No Milk";
 var EXTRA_SHOT_SUFFIX = " + Xtra Shot";
-var COFFEE_TYPES = ["No Coffee", "Cappuccino", "Flat White", "Latte", "Espresso", "Long Black", "Iced Latte"];
+var COFFEE_TYPES = ["No Coffee", "Cappuccino", "Flat White", "Latte", "Mocha", "Espresso", "Long Black", "Iced Latte"];
 var MILK_TYPES = ["Whole Milk", "Skim Milk", "Oat Milk", "Almond Milk", "Lactose Free Milk"];
 var BLACK_ONLY_TYPES = /* @__PURE__ */ new Set(["Espresso", "Long Black"]);
 function milkIsFixedForCoffeeType(coffeeType) {
@@ -24,10 +24,11 @@ function parseCoffeeOrder(value) {
   const extraShot = value.endsWith(EXTRA_SHOT_SUFFIX);
   const withoutSuffix = extraShot ? value.slice(0, -EXTRA_SHOT_SUFFIX.length) : value;
   const [rawType, rawMilk] = withoutSuffix.split(" - ").map((s) => s?.trim());
-  const coffeeType = COFFEE_TYPES.includes(rawType) ? rawType : NO_COFFEE;
+  const fromPicker = !!rawType && rawMilk !== void 0;
+  const coffeeType = fromPicker || COFFEE_TYPES.includes(rawType) ? rawType : NO_COFFEE;
   if (coffeeType === NO_COFFEE) return { coffeeType: NO_COFFEE, milkType: null, extraShot: false };
   if (milkIsFixedForCoffeeType(coffeeType)) return { coffeeType, milkType: NO_MILK, extraShot };
-  const milkType = MILK_TYPES.includes(rawMilk) ? rawMilk : MILK_TYPES[0];
+  const milkType = rawMilk || MILK_TYPES[0];
   return { coffeeType, milkType, extraShot };
 }
 function coffeeAttention({ rostered, visitorNames, removedStaffIds = [], extras = [] }) {
