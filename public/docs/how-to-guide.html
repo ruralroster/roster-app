@@ -508,10 +508,17 @@
 
         <h4>2 · Fill places</h4>
         <ol>
-          <li>Pick a person in the bar at the bottom. Use the <strong>Show</strong> filter (Everyone, Seniors, Juniors or a single rank) to narrow the list. Each name shows how many days they've worked this period against their target.</li>
+          <li>Pick a person in the bar at the bottom. Use the <strong>Show</strong> filter (Everyone, Seniors, Juniors or a single rank) to narrow the list. Each name shows how much of their FTE is still to allocate for the weeks shown, as a percentage (44 hours a week is a full-time FTE). It turns amber under 10% left.</li>
           <li>The list puts the people who most need shifts first: anyone available on a day shown, then whoever's furthest under their share for their FTE.</li>
           <li>The places they can fill light up <span class="mark">green</span>. Tap one to book them there.</li>
-          <li>The jobs they could take are numbered <strong>1</strong>, <strong>2</strong>, <strong>3</strong>…, with a green border on 1. Number 1 is the activity they've done least compared with their fair share: their share of it, over the last 12 months and the week being planned, against that activity's share of the shifts of everyone who does it. That keeps a rare list from always coming first, so over time everyone does each activity in proportion to their FTE.</li>
+          <li>The jobs they could take are numbered <strong>1</strong>, <strong>2</strong>, <strong>3</strong>…, with a green border on 1. Number 1 is the job they're furthest behind on against their fair share, over the last 12 months and the week being planned:
+            <ul>
+              <li>A job only they can do (they're the only one with its skill, like a solo endoscopy list) is theirs and comes first. Those shifts don't count against them anywhere else, so they don't fall behind on other work.</li>
+              <li>A job several people have the skill for (anaesthetics, say) is shared among those people.</li>
+              <li>Other jobs (ward work) are shared on the time each person has left after their specialist work, so an anaesthetic AST isn't loaded up with ward jobs.</li>
+            </ul>
+          </li>
+          <li><strong>FTE cap:</strong> once someone has been booked their FTE's hours in a pay fortnight, they can't be booked for more in it: those places stay grey. Full time is 44 hours a week, so 88 a fortnight at 1.0 FTE and 70.4 at 0.8. Hours come from each shift's length; leave counts too (a leave day without a shift counts as 8.8 hours), on-call cards don't. Their name shows <strong>full</strong> in red once there. A volunteer can still be booked past it, with a warning.</li>
           <li>To add someone on top of a job's places, tap <strong>+ extra</strong> on that card. It's shown separately from the places, so the places still read as covered or short.</li>
           <li>For a visiting surgeon or dentist, tap an amber place and type their name. Visitors aren't staff: they're not in payroll or fairness counts. They do show on the Day view card and in the staff app's Day tab, and a card with a visitor on it counts as covered.</li>
           <li>District doctors booked from DR Roster appear as visitors marked <strong>From DR Roster</strong>, in an empty place for their role (or as an extra if there's none). Change or remove them in DR Roster, not here.</li>

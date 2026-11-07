@@ -403,20 +403,32 @@ const VIDEOS = [
     id: 'two-factor',
     audience: 'staff',
     layout: 'side',
-    topic: 'Two-factor sign-in',
-    sub: 'An extra code when you sign in',
+    topic: 'Security',
+    sub: 'Your password and two-factor sign-in',
     purpose: {
-      bullets: ['Want your account extra safe?', 'Have an authenticator app?', "It's optional"],
-      notes: "Two-factor adds a six-digit code from an authenticator app, like Google Authenticator or Authy, to signing in. It's optional and off unless you turn it on. If you lose the phone with the app on it, get in touch and we'll reset it.",
+      bullets: ['Want a new password?', 'Forgotten it?', 'Want your account extra safe?'],
+      notes: "Settings, Security has your password and two-factor sign-in. Change your password any time; if you've forgotten it, the sign-in screen emails you a link to set a new one. Two-factor adds a six-digit code from an authenticator app, like Google Authenticator or Authy, to signing in. It's optional and off unless you turn it on.",
     },
     steps: [
-      { h: 'Settings, then Security', t: 'Two-Factor Authentication, below Password' },
-      { h: 'Tap Turn on', t: 'A QR code appears' },
-      { h: 'Scan it', t: 'In your authenticator app, or type the key' },
-      { h: 'Enter the 6-digit code', t: 'Then Verify & enable' },
+      { h: 'Settings, then Security', t: 'Password is at the top' },
+      { h: 'Type a new password', t: 'At least 8 characters' },
+      { h: 'Type it again', t: 'Then Change password' },
+      { h: 'Forgotten it?', t: 'Sign-in screen: your email, then Forgot password?' },
     ],
-    stepsShot: 'r_twofactor',
-    stepsNotes: "Settings, Security. Under your password is Two-Factor Authentication: tap Turn on. Scan the QR code with your authenticator app, or type in the key below it. Enter the six-digit code it shows and tap Verify and enable. From the next sign-in, the app asks for a code after your password. Turn off is on the same screen. Lose your phone? Email us and we'll reset it.",
+    stepsTitle: 'Your password',
+    stepsShot: 'r_security',
+    stepsNotes: "Settings, Security. Type your new password, at least eight characters, then again to confirm, and Change password. Forgotten it? On the sign-in screen, type your email first, then tap Forgot password, and we'll email you a link to choose a new one.",
+    more: [{
+      title: 'Two-factor sign-in',
+      shot: 'r_twofactor',
+      steps: [
+        { h: 'Settings, then Security', t: 'Two-Factor Authentication, below Password' },
+        { h: 'Tap Turn on', t: 'A QR code appears' },
+        { h: 'Scan it', t: 'In your authenticator app, or type the key' },
+        { h: 'Enter the 6-digit code', t: 'Then Verify & enable' },
+      ],
+      notes: "Settings, Security. Under your password is Two-Factor Authentication: tap Turn on. Scan the QR code with your authenticator app, or type in the key below it. Enter the six-digit code it shows and tap Verify and enable. From the next sign-in, the app asks for a code after your password. Turn off is on the same screen. Lose your phone? Email us and we'll reset it.",
+    }],
   },
   {
     id: 'export-calendar',
@@ -620,10 +632,10 @@ const VIDEOS = [
     audience: 'staff',
     layout: 'side',
     topic: 'Getting started',
-    sub: 'Accepting your invite',
+    sub: 'Accepting your invite and installing Rstar',
     purpose: {
-      bullets: ['Just been invited?', 'Need a password?', "Link not working?"],
-      notes: "Your rostering officer invites you by email. The link in it signs you in once and asks you to choose a password; after that you sign in with your email and that password. If the email never arrives, or the link has stopped working, your officer can resend it or give you a one-time password.",
+      bullets: ['Just been invited?', 'Need a password?', 'Want Rstar on your Home Screen?', 'No App Store?'],
+      notes: "Your rostering officer invites you by email. The link in it signs you in once and asks you to choose a password; after that you sign in with your email and that password. If the email never arrives, or the link has stopped working, your officer can resend it or give you a one-time password. Then add Rstar to your Home Screen: it isn't in the App Store or Play Store, it's a web app, and installed it opens full screen with its own icon. On an iPhone that's also the only way to get phone notifications.",
     },
     steps: [
       { h: 'Open the invite email', t: 'Tap the link in it' },
@@ -634,9 +646,35 @@ const VIDEOS = [
     ],
     stepsShot: 'r_setpassword',
     stepsNotes: "Open the invite email and tap the link. Rstar opens on Set your password: choose one, at least eight characters, type it again, and Save password. That's it, you're in. Next time, sign in with your email and that password. No email, check your junk folder, then ask your officer: they can resend it, or give you a one-time password, and you'll be asked to choose your own the first time you use it.",
+    more: [{
+      title: 'Installing on an iPhone',
+      shot: 'r_installios',
+      steps: [
+        { h: 'Open Rstar in Safari', t: 'It has to be Safari' },
+        { h: 'Tap Install App', t: 'It shows you how' },
+        { h: 'Tap Share', t: 'The square with the arrow' },
+        { h: 'Add to Home Screen', t: 'Then Add, top right' },
+        { h: 'Open it from the icon', t: 'Sign in once more there' },
+      ],
+      notes: "Open Rstar in Safari. Under Sign in there's Install App: tap it and it tells you what to do. Tap the Share button, the square with the arrow, scroll down to Add to Home Screen, then Add. Now open Rstar from the new icon, not Safari, and sign in. From here you can turn on phone notifications, which is its own short video.",
+    }, {
+      title: 'Installing on an Android phone',
+      shot: 'r_signin',
+      steps: [
+        { h: 'Open Rstar in Chrome', t: 'The link from your invite' },
+        { h: 'Tap Install App', t: 'Under Sign in' },
+        { h: 'Tap Install', t: "Chrome asks to confirm" },
+        { h: 'No button?', t: 'Chrome menu ⋮, then Install app or Add to Home screen' },
+        { h: 'Open it from the icon', t: 'Sign in once more there' },
+      ],
+      notes: "Open Rstar in Chrome. Under Sign in there's an Install App button: tap it, and Chrome asks you to confirm, so tap Install. If you don't see the button, Chrome's three-dot menu has Install app, or Add to Home screen. Then open Rstar from its new icon and sign in.",
+    }],
   },
   {
     id: 'install-iphone',
+    // Folded into deck 20 (getting started). Kept so the decks after it keep their
+    // numbers; nothing is built for it.
+    skip: true,
     audience: 'staff',
     layout: 'side',
     topic: 'Installing Rstar',
@@ -657,6 +695,9 @@ const VIDEOS = [
   },
   {
     id: 'install-android',
+    // Folded into deck 20 (getting started). Kept so the decks after it keep their
+    // numbers; nothing is built for it.
+    skip: true,
     audience: 'staff',
     layout: 'side',
     topic: 'Installing Rstar',
@@ -750,6 +791,9 @@ const VIDEOS = [
   },
   {
     id: 'change-password',
+    // Folded into deck 12 (security). Kept so the decks after it keep their
+    // numbers; nothing is built for it.
+    skip: true,
     audience: 'staff',
     layout: 'side',
     topic: 'Your password',

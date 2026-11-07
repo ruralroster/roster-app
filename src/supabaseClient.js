@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import { DEFAULT_FTE, computeFairnessRatio, getDatesInRange } from './availabilityUtils';
+import { DEFAULT_FTE, getDatesInRange } from './availabilityUtils';
 import { toLocalDateStr } from './dateUtils';
 import { getSessionGroups, dedupeAssignmentsByShift, assignmentShiftKey } from './shiftSessionUtils';
 import { getMondayOfWeek } from './payrollExport';
@@ -8,6 +8,7 @@ import { gradeForSection, GRADE_LABEL } from './staffGrade';
 import { isEligibleForOffer, offerIsFilled } from './offerEligibility';
 import { findActiveOnCalls, findOvertimeShifts } from './callbackUtils';
 import { bestJobForNewCard, jobForImportedShift } from './plannerUtils';
+import { buildFairness, activitySkillMap, dutyRankScore } from './fairness';
 import { missingRolesForCard, classifyDayStatus } from './volunteerUtils';
 
 console.log('=== supabaseClient.js LOADING ===');
@@ -2274,7 +2275,7 @@ async function getCaseMixRawData(departmentId, asOfDate) {
       .order('name'),
     supabase
       .from('activity_types')
-      .select('activity_id, name')
+      .select('activity_id, name, required_advanced_skills')
       .eq('department_id', departmentId)
       .order('name'),
     supabase
@@ -2307,6 +2308,7 @@ async function getCaseMixRawData(departmentId, asOfDate) {
   });
 
   const totalShiftsByStaff = new Map();
+  const weekendShiftsByStaff = new Map();
   const statsByStaffActivity = new Map(); // `${staff_id}|${activity_id}` -> { count, lastDate }
 
   // One shift is sometimes several rows — spanning two session cards, or
@@ -2319,6 +2321,7 @@ async function getCaseMixRawData(departmentId, asOfDate) {
     if (!countedShifts.has(shiftKey)) {
       countedShifts.add(shiftKey);
       totalShiftsByStaff.set(a.staff_id, (totalShiftsByStaff.get(a.staff_id) || 0) + 1);
+      if (isWeekendDate(a.date)) weekendShiftsByStaff.set(a.staff_id, (weekendShiftsByStaff.get(a.staff_id) || 0) + 1);
     }
 
     const activityId = activityByKey.get(`${a.date}|${a.location_id}`);
@@ -2341,17 +2344,72 @@ async function getCaseMixRawData(departmentId, asOfDate) {
     staffList: staffRes.data || [],
     activityList: activitiesRes.data || [],
     totalShiftsByStaff,
+    weekendShiftsByStaff,
     statsByStaffActivity,
   };
 }
 
-// The Planner's "best job for this person" numbers: each person's shifts
-// over the last 12 months, and how many were on each activity.
+function isWeekendDate(dateStr) {
+  const day = new Date(`${dateStr}T00:00:00`).getDay();
+  return day === 0 || day === 6;
+}
+
+// Everything buildFairness (fairness.js) needs, as of a date: the case-mix
+// history plus which jobs need which skills, and on-call counts per type.
+// The Day view asks once per activity and once for on call on the same
+// date, so share one load for a few seconds.
+const fairnessInputsCache = new Map(); // `${dept}|${date}` -> { at, promise }
+function getFairnessInputs(departmentId, asOfDate) {
+  const key = `${departmentId}|${toLocalDateStr(asOfDate ? new Date(asOfDate) : new Date())}`;
+  const hit = fairnessInputsCache.get(key);
+  if (hit && Date.now() - hit.at < 10 * 1000) return hit.promise;
+  const promise = loadFairnessInputs(departmentId, asOfDate);
+  fairnessInputsCache.set(key, { at: Date.now(), promise });
+  promise.catch(() => fairnessInputsCache.delete(key));
+  return promise;
+}
+
+async function loadFairnessInputs(departmentId, asOfDate) {
+  const endDate = asOfDate ? new Date(asOfDate) : new Date();
+  const startDate = new Date(endDate);
+  startDate.setFullYear(startDate.getFullYear() - 1);
+  const [raw, jobsRes, placesRes, dutyTypesRes, dutyRes] = await Promise.all([
+    getCaseMixRawData(departmentId, endDate),
+    supabase.from('job_types').select('job_type_id, activity_id').eq('department_id', departmentId),
+    supabase.from('job_places').select('job_type_id, kind, required_advanced_skills').eq('department_id', departmentId),
+    supabase.from('duty_types').select('key, label, required_advanced_skills')
+      .eq('department_id', departmentId).eq('counts_as_on_call', true).eq('active', true),
+    supabase.from('duty_assignments').select('staff_id, date, duty_type')
+      .eq('department_id', departmentId)
+      .gte('date', toLocalDateStr(startDate))
+      .lte('date', toLocalDateStr(endDate)),
+  ]);
+  // Jobs and places are optional (departments before the Planner).
+  for (const res of [dutyTypesRes, dutyRes]) if (res.error) throw res.error;
+  const dutyTypes = dutyTypesRes.data || [];
+  const onCallKeys = new Set(dutyTypes.map(d => d.key));
+  const dutyCounts = new Map();
+  for (const d of dutyRes.data || []) {
+    if (!onCallKeys.has(d.duty_type)) continue;
+    const key = `${d.staff_id}|${d.duty_type}`;
+    dutyCounts.set(key, (dutyCounts.get(key) || 0) + 1);
+  }
+  return {
+    staff: raw.staffList,
+    totalShiftsByStaff: raw.totalShiftsByStaff,
+    weekendShiftsByStaff: raw.weekendShiftsByStaff,
+    statsByStaffActivity: raw.statsByStaffActivity,
+    activitySkills: activitySkillMap(raw.activityList, jobsRes.data || [], placesRes.data || []),
+    dutyTypes,
+    dutyCounts,
+  };
+}
+
+// The Planner's "best job for this person" numbers: the fairness inputs
+// (fairness.js) as of today.
 export async function getExposureStats(departmentId) {
-  console.log('getExposureStats called', departmentId);
   try {
-    const { totalShiftsByStaff, statsByStaffActivity } = await getCaseMixRawData(departmentId, new Date());
-    return { data: { totalShiftsByStaff, statsByStaffActivity }, error: null };
+    return { data: await getFairnessInputs(departmentId, new Date()), error: null };
   } catch (err) {
     console.error('getExposureStats error:', err);
     return { data: null, error: err };
@@ -2396,34 +2454,64 @@ export async function getCaseMixReport(departmentId) {
   }
 }
 
-export async function getSortedStaffForActivity(departmentId, activityId, date) {
-  console.log('getSortedStaffForActivity called', departmentId, activityId, date);
-
+// Everyone's bookings from fromStr to toStr, with shift times, for the FTE
+// cap (fteFortnight.js hoursBooked).
+export async function getDaysBooked(departmentId, fromStr, toStr) {
   try {
-    const { staffList, totalShiftsByStaff, statsByStaffActivity } =
-      await getCaseMixRawData(departmentId, date);
+    const { data, error } = await supabase.from('staff_assignments')
+      .select('staff_id, date, shift_id, on_call, leave_code, shifts(start_time, end_time)')
+      .eq('department_id', departmentId).gte('date', fromStr).lte('date', toStr);
+    if (error) throw error;
+    return { data: data || [], error: null };
+  } catch (err) {
+    console.error('getDaysBooked error:', err);
+    return { data: null, error: err };
+  }
+}
 
-    const enriched = staffList.map(staff => {
-      const totalShifts = totalShiftsByStaff.get(staff.staff_id) || 0;
-      const stats = statsByStaffActivity.get(`${staff.staff_id}|${activityId}`);
-      const timesWorked = stats ? stats.count : 0;
+// The Day view's on-call pickers: dutyKey -> staffId -> rank score
+// (dutyRankScore: half that on-call type among the people who can do it,
+// half all on call across the hospital). Lower = more due.
+export async function getDutyFairness(departmentId, date) {
+  try {
+    const inputs = await getFairnessInputs(departmentId, date);
+    const fairness = buildFairness(inputs);
+    const scores = new Map(inputs.dutyTypes.map(dt => [dt.key,
+      new Map(inputs.staff.map(st => [st.staff_id, dutyRankScore(fairness, st.staff_id, dt.key)]))]));
+    return { data: scores, error: null };
+  } catch (err) {
+    console.error('getDutyFairness error:', err);
+    return { data: new Map(), error: err };
+  }
+}
 
+// The Day view's pickers: staff for one activity on `date`, the fairest
+// pick first (fairness.js). On a weekend, whoever is furthest behind on
+// weekends comes first, then by the job. A job only one person can do is
+// theirs, so they lead. Each row carries fair_score (and weekend_score on a
+// weekend) and exposure_rate for the label.
+export async function getSortedStaffForActivity(departmentId, activityId, date) {
+  try {
+    const inputs = await getFairnessInputs(departmentId, date);
+    const fairness = buildFairness(inputs);
+    const weekend = isWeekendDate(toLocalDateStr(new Date(date)));
+    const enriched = inputs.staff.map(staff => {
+      const totalShifts = inputs.totalShiftsByStaff.get(staff.staff_id) || 0;
+      const stats = inputs.statsByStaffActivity.get(`${staff.staff_id}|${activityId}`);
       return {
         ...staff,
-        exposure_rate: computeExposureRate(timesWorked, totalShifts),
+        exposure_rate: computeExposureRate(stats ? stats.count : 0, totalShifts),
         last_worked_date: stats ? stats.lastDate : null,
+        solo: fairness.soloOwner.get(activityId) === staff.staff_id,
+        fair_score: fairness.activityScore(staff.staff_id, activityId),
+        weekend_score: weekend ? fairness.weekendScore(staff.staff_id) : null,
       };
     });
-
-    // Lowest exposure first (needs experience); ties broken by oldest last-worked date first.
-    // Staff who have never worked the activity (null date) rank as "oldest" and sort first.
-    enriched.sort((a, b) => {
-      if (a.exposure_rate !== b.exposure_rate) return a.exposure_rate - b.exposure_rate;
-      const aDate = a.last_worked_date || '0000-00-00';
-      const bDate = b.last_worked_date || '0000-00-00';
-      return aDate < bDate ? -1 : aDate > bDate ? 1 : 0;
-    });
-
+    const key = (s) => (s.solo ? -1 : s.fair_score ?? Infinity);
+    enriched.sort((a, b) =>
+      (weekend ? a.weekend_score - b.weekend_score : 0)
+      || key(a) - key(b)
+      || (a.last_worked_date || '0000-00-00').localeCompare(b.last_worked_date || '0000-00-00'));
     return { data: enriched, error: null };
   } catch (err) {
     console.error('getSortedStaffForActivity error:', err);
@@ -2440,96 +2528,32 @@ export async function getSortedStaffForActivity(departmentId, activityId, date) 
 // FTE as a fraction of total department FTE. Lets an officer see if one
 // person is carrying more nights/weekends than their FTE would suggest.
 export async function getFairnessReport(departmentId) {
-  console.log('getFairnessReport called', departmentId);
-
   try {
-    const endDate = new Date();
-    const endStr = toLocalDateStr(endDate);
-    const startDate = new Date(endDate);
-    startDate.setFullYear(startDate.getFullYear() - 1);
-    const startStr = toLocalDateStr(startDate);
-
-    const [staffRes, assignmentsRes, dutyRes, dutyTypesRes] = await Promise.all([
-      supabase
-        .from('staff')
-        .select('staff_id, name, fte')
-        .eq('department_id', departmentId)
-        .eq('active', true)
-        .order('name'),
-      supabase
-        .from('staff_assignments')
-        .select('staff_id, date, location_id, shift_id, leave_code')
-        .eq('department_id', departmentId)
-        .gte('date', startStr)
-        .lte('date', endStr),
-      supabase
-        .from('duty_assignments')
-        .select('staff_id, date, duty_type')
-        .eq('department_id', departmentId)
-        .gte('date', startStr)
-        .lte('date', endStr),
-      supabase
-        .from('duty_types')
-        .select('key')
-        .eq('department_id', departmentId)
-        .eq('counts_as_on_call', true),
-    ]);
-
-    if (staffRes.error) throw staffRes.error;
-    if (assignmentsRes.error) throw assignmentsRes.error;
-    if (dutyRes.error) throw dutyRes.error;
-    if (dutyTypesRes.error) throw dutyTypesRes.error;
-
-    const staffList = staffRes.data || [];
-    // Which duty types count as "on call" is department-configurable (see
-    // migrations/2026-08-22_duty_types.sql) rather than the fixed
-    // first_on_call/second_on_call pair this used to hardcode.
-    const onCallKeys = new Set((dutyTypesRes.data || []).map(d => d.key));
-    const onCallDuties = (dutyRes.data || []).filter(d => onCallKeys.has(d.duty_type));
-
-    const totalShiftsByStaff = new Map();
-    const weekendShiftsByStaff = new Map();
-    // One shift spanning two session cards, or covering two locations at
-    // once, is more than one row — count it once.
-    dedupeAssignmentsByShift(assignmentsRes.data, { ignoreLocation: true }).forEach(a => {
-      totalShiftsByStaff.set(a.staff_id, (totalShiftsByStaff.get(a.staff_id) || 0) + 1);
-      const dayOfWeek = new Date(`${a.date}T00:00:00`).getDay();
-      if (dayOfWeek === 0 || dayOfWeek === 6) {
-        weekendShiftsByStaff.set(a.staff_id, (weekendShiftsByStaff.get(a.staff_id) || 0) + 1);
-      }
-    });
-
-    const onCallShiftsByStaff = new Map();
-    onCallDuties.forEach(d => {
-      onCallShiftsByStaff.set(d.staff_id, (onCallShiftsByStaff.get(d.staff_id) || 0) + 1);
-    });
-
-    const totalWeekendShifts = Array.from(weekendShiftsByStaff.values()).reduce((sum, n) => sum + n, 0);
-    const totalOnCallShifts = onCallDuties.length;
-    const totalFte = staffList.reduce((sum, s) => sum + (s.fte ?? DEFAULT_FTE), 0);
-
-    const report = staffList.map(staff => {
-      const fte = staff.fte ?? DEFAULT_FTE;
-      const weekendShifts = weekendShiftsByStaff.get(staff.staff_id) || 0;
-      const onCallShifts = onCallShiftsByStaff.get(staff.staff_id) || 0;
-
+    const inputs = await getFairnessInputs(departmentId, new Date());
+    const fairness = buildFairness(inputs);
+    const report = inputs.staff.map(staff => {
+      const id = staff.staff_id;
       return {
-        staff_id: staff.staff_id,
+        staff_id: id,
         staff_name: staff.name,
-        fte,
-        total_shifts: totalShiftsByStaff.get(staff.staff_id) || 0,
-        weekend_shifts: weekendShifts,
-        weekend_fairness_ratio: computeFairnessRatio(weekendShifts, totalWeekendShifts, fte, totalFte),
-        oncall_shifts: onCallShifts,
-        oncall_fairness_ratio: computeFairnessRatio(onCallShifts, totalOnCallShifts, fte, totalFte),
+        fte: staff.fte ?? DEFAULT_FTE,
+        effective_fte: fairness.effectiveFte(id),
+        total_shifts: inputs.totalShiftsByStaff.get(id) || 0,
+        weekend_shifts: inputs.weekendShiftsByStaff.get(id) || 0,
+        weekend_fairness_ratio: fairness.weekendScore(id),
+        oncall_shifts: inputs.dutyTypes.reduce((n, dt) => n + (inputs.dutyCounts.get(`${id}|${dt.key}`) || 0), 0),
+        oncall_fairness_ratio: fairness.onCallScore(id),
+        // Per on-call type: { count, ratio } (ratio null = can't do it, or theirs alone).
+        by_duty: Object.fromEntries(inputs.dutyTypes.map(dt => [dt.key, {
+          count: inputs.dutyCounts.get(`${id}|${dt.key}`) || 0,
+          ratio: fairness.dutyScore(id, dt.key),
+        }])),
       };
     });
-
-    console.log('Fairness report rows:', report.length);
-    return { data: report, error: null };
+    return { data: report, dutyTypes: inputs.dutyTypes, error: null };
   } catch (err) {
     console.error('getFairnessReport error:', err);
-    return { data: [], error: err };
+    return { data: [], dutyTypes: [], error: err };
   }
 }
 
@@ -4164,6 +4188,23 @@ export async function dismissSickCallAlert(sickCallAlertId) {
 
 // Settings tick-boxes marking which duty type is the ED on-call and which
 // location is ED, for getSickCallRecipients above.
+// The shifts an on-call type goes with: leadIn (that day, leading into
+// it) and followOn (the next day, after it). See
+// migrations/2026-11-07_on_call_linked_shifts.sql.
+export async function updateDutyTypeLinkedShifts(dutyTypeId, leadIn, followOn) {
+  try {
+    const { data, error } = await supabase
+      .from('duty_types')
+      .update({ lead_in_shift_ids: leadIn, follow_on_shift_ids: followOn })
+      .eq('duty_type_id', dutyTypeId)
+      .select()
+      .single();
+    return { data, error };
+  } catch (err) {
+    return { data: null, error: err };
+  }
+}
+
 export async function updateDutyTypeNotifyOnSickCall(dutyTypeId, notify) {
   try {
     const { data, error } = await supabase

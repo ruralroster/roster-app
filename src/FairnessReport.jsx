@@ -4,16 +4,22 @@ import { getFairnessReport } from './supabaseClient';
 import { formatFte, computeFairnessStatus, FAIRNESS_STYLES } from './availabilityUtils';
 import ExportCsvButton from './ExportCsvButton';
 
-const CSV_COLUMNS = [
-  { header: 'Staff Name', value: r => r.staff_name },
-  { header: 'FTE', value: r => formatFte(r.fte) },
-  { header: 'Weekend Shifts', value: r => r.weekend_shifts },
-  { header: 'Weekend Fairness Ratio', value: r => r.weekend_fairness_ratio.toFixed(2) },
-  { header: 'On-Call Duties', value: r => r.oncall_shifts },
-  { header: 'On-Call Fairness Ratio', value: r => r.oncall_fairness_ratio.toFixed(2) },
+// A column is { key, label, count(row), ratio(row) }: weekends, all on
+// call, then each on-call type. ratio null = can't do it, or theirs alone.
+const columnsFor = (dutyTypes) => [
+  { key: 'weekend', label: 'Weekend Shifts', count: r => r.weekend_shifts, ratio: r => r.weekend_fairness_ratio },
+  { key: 'oncall', label: 'All On Call', count: r => r.oncall_shifts, ratio: r => r.oncall_fairness_ratio },
+  ...dutyTypes.map(dt => ({
+    key: `duty:${dt.key}`, label: dt.label, count: r => r.by_duty[dt.key]?.count || 0, ratio: r => r.by_duty[dt.key]?.ratio ?? null,
+  })),
 ];
 
+const fmtRatio = (ratio) => (ratio === null ? '' : ratio >= 99 ? 'no share yet' : ratio.toFixed(2));
+
 const RatioCell = ({ ratio, count }) => {
+  if (ratio === null) {
+    return <td className="px-3 py-2 border border-gray-300 text-gray-400" title="Can't do it, or theirs alone">{count || '—'}</td>;
+  }
   const status = computeFairnessStatus(ratio);
   const style = FAIRNESS_STYLES[status];
   return (
@@ -21,7 +27,7 @@ const RatioCell = ({ ratio, count }) => {
       <div className="flex items-center gap-2">
         <span className={`w-2 h-2 rounded-full flex-shrink-0 ${style.dot}`} />
         <span className="text-gray-900">{count}</span>
-        <span className={`text-xs ${style.text}`}>({ratio.toFixed(2)}x fair share)</span>
+        <span className={`text-xs ${style.text}`}>({fmtRatio(ratio)}x fair share)</span>
       </div>
     </td>
   );
@@ -29,9 +35,10 @@ const RatioCell = ({ ratio, count }) => {
 
 export default function FairnessReport({ departmentId, refreshKey }) {
   const [rows, setRows] = useState([]);
+  const [dutyTypes, setDutyTypes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [sortBy, setSortBy] = useState('weekend'); // 'weekend' | 'oncall'
+  const [sortBy, setSortBy] = useState('weekend'); // a column key
   const [sortDir, setSortDir] = useState('desc'); // worst-first by default
 
   useEffect(() => {
@@ -39,9 +46,10 @@ export default function FairnessReport({ departmentId, refreshKey }) {
       if (!departmentId) return;
       setLoading(true);
       try {
-        const { data, error: err } = await getFairnessReport(departmentId);
+        const { data, dutyTypes: types, error: err } = await getFairnessReport(departmentId);
         if (err) throw err;
         setRows(data);
+        setDutyTypes(types);
         setError(null);
       } catch (err) {
         setError(`Failed to load fairness report: ${err.message}`);
@@ -52,10 +60,23 @@ export default function FairnessReport({ departmentId, refreshKey }) {
     load();
   }, [departmentId, refreshKey]);
 
+  const columns = useMemo(() => columnsFor(dutyTypes), [dutyTypes]);
+  const csvColumns = useMemo(() => [
+    { header: 'Staff Name', value: r => r.staff_name },
+    { header: 'FTE', value: r => formatFte(r.fte) },
+    { header: 'FTE after solo work', value: r => formatFte(r.effective_fte) },
+    ...columns.flatMap(c => [
+      { header: c.label, value: c.count },
+      { header: `${c.label} Fairness Ratio`, value: r => fmtRatio(c.ratio(r)) },
+    ]),
+  ], [columns]);
+
   const sortedRows = useMemo(() => {
-    const key = sortBy === 'weekend' ? 'weekend_fairness_ratio' : 'oncall_fairness_ratio';
-    return [...rows].sort((a, b) => (sortDir === 'asc' ? a[key] - b[key] : b[key] - a[key]));
-  }, [rows, sortBy, sortDir]);
+    const col = columns.find(c => c.key === sortBy) || columns[0];
+    // Rows with no ratio (can't do it) always go last.
+    const val = r => col.ratio(r) ?? (sortDir === 'asc' ? Infinity : -Infinity);
+    return [...rows].sort((a, b) => (sortDir === 'asc' ? val(a) - val(b) : val(b) - val(a)));
+  }, [rows, columns, sortBy, sortDir]);
 
   const toggleSort = (column) => {
     if (sortBy === column) {
@@ -71,13 +92,13 @@ export default function FairnessReport({ departmentId, refreshKey }) {
   return (
     <>
       <p className="text-xs text-gray-600 mb-4">
-        Each person's share of weekend shifts and on-call duty over the last 12 months, compared to their fair share based on FTE.
-        1.00x means exactly proportional; well above 1.25x means they're carrying more than their share.
+        Each person's weekend shifts and on call over the last 12 months, against their fair share. 1.00x is exactly fair; above 1.25x they're carrying more than their share, below 0.75x less.
+        Fair shares are by FTE, less any work only that person can do (a solo endoscopy list, say). Weekends are shared by everyone; each on-call type by the people who can do it; All On Call across the hospital.
       </p>
 
       {rows.length > 0 && (
         <div className="flex justify-end mb-2">
-          <ExportCsvButton filename="fairness_report.csv" columns={CSV_COLUMNS} rows={sortedRows} />
+          <ExportCsvButton filename="fairness_report.csv" columns={csvColumns} rows={sortedRows} />
         </div>
       )}
 
@@ -99,27 +120,24 @@ export default function FairnessReport({ departmentId, refreshKey }) {
               <tr className="bg-gray-100">
                 <th className="text-left px-3 py-2 border border-gray-300 font-semibold">Staff Name</th>
                 <th className="text-right px-3 py-2 border border-gray-300 font-semibold">FTE</th>
-                <th className="text-left px-3 py-2 border border-gray-300 font-semibold">
-                  <button onClick={() => toggleSort('weekend')} className="flex items-center gap-1 hover:text-blue-700" title="Sort by weekend fairness">
-                    Weekend Shifts
-                    {sortBy === 'weekend' && (sortDir === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}
-                  </button>
-                </th>
-                <th className="text-left px-3 py-2 border border-gray-300 font-semibold">
-                  <button onClick={() => toggleSort('oncall')} className="flex items-center gap-1 hover:text-blue-700" title="Sort by on-call fairness">
-                    On-Call Duties
-                    {sortBy === 'oncall' && (sortDir === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}
-                  </button>
-                </th>
+                {columns.map(c => (
+                  <th key={c.key} className="text-left px-3 py-2 border border-gray-300 font-semibold">
+                    <button onClick={() => toggleSort(c.key)} className="flex items-center gap-1 hover:text-blue-700" title={`Sort by ${c.label}`}>
+                      {c.label}
+                      {sortBy === c.key && (sortDir === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}
+                    </button>
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
               {sortedRows.map(row => (
                 <tr key={row.staff_id} className="hover:bg-gray-50">
                   <td className="px-3 py-2 border border-gray-300 font-medium">{row.staff_name}</td>
-                  <td className="px-3 py-2 border border-gray-300 text-right text-gray-600">{formatFte(row.fte)}</td>
-                  <RatioCell ratio={row.weekend_fairness_ratio} count={row.weekend_shifts} />
-                  <RatioCell ratio={row.oncall_fairness_ratio} count={row.oncall_shifts} />
+                  <td className="px-3 py-2 border border-gray-300 text-right text-gray-600" title="FTE, and in brackets after work only they can do">
+                    {formatFte(row.fte)}{row.effective_fte < row.fte - 0.005 && <span className="text-gray-400"> ({formatFte(row.effective_fte)})</span>}
+                  </td>
+                  {columns.map(c => <RatioCell key={c.key} ratio={c.ratio(row)} count={c.count(row)} />)}
                 </tr>
               ))}
             </tbody>

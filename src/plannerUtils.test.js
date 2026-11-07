@@ -1,4 +1,5 @@
 import { jobForCard, placeMismatch, layOutCard, dayConflict, isAdminJob, daysWorked, intervalOn, intervalsOverlap, groupUnconverted, bestJobForNewCard, jobForImportedShift, rankJobsForPerson, withBookings } from './plannerUtils';
+import { buildFairness } from './fairness';
 
 const ranks = [
   { rank: 'SMO', requires_supervision: false },
@@ -230,6 +231,7 @@ describe('bestJobForNewCard', () => {
 
 describe('rankJobsForPerson', () => {
   // Ward is common (half of everyone's shifts), dental rare (a tenth).
+  const staff = [{ staff_id: 'me', fte: 1 }, { staff_id: 'other', fte: 1 }];
   const totals = new Map([['me', 20], ['other', 20]]);
   const stats = new Map([
     ['me|ward', { count: 10, lastDate: '2026-10-20' }],
@@ -237,44 +239,43 @@ describe('rankJobsForPerson', () => {
     ['me|dental', { count: 4, lastDate: '2026-10-01' }],
     ['other|dental', { count: 0, lastDate: '0000-00-00' }],
   ]);
+  const fair = (st = staff, t = totals, s = stats, skills = new Map()) =>
+    buildFairness({ staff: st, totalShiftsByStaff: t, statsByStaffActivity: s, activitySkills: skills });
   const cands = [
     { cardId: 'w', activityId: 'ward', date: '2026-11-02' },
     { cardId: 'd', activityId: 'dental', date: '2026-11-03' },
   ];
 
   it('puts the job furthest under their fair share first, not just the rarest', () => {
-    // Dental: 4/20 = 0.2 against a fair 4/40 = 0.1, so double their share.
-    // Ward: 0.5 against 0.5, exactly their share. Ward comes first.
-    const ranks = rankJobsForPerson('me', cands, totals, stats);
+    // Dental: 4 of the 4 done, against a fair 2, so double their share.
+    // Ward: 10 against 10, exactly their share. Ward comes first.
+    const ranks = rankJobsForPerson('me', cands, fair(), stats);
     expect(ranks.get('w')).toBe(1);
     expect(ranks.get('d')).toBe(2);
   });
 
   it('gives the rare job to whoever is behind on it', () => {
-    const ranks = rankJobsForPerson('other', cands, totals, stats);
+    const ranks = rankJobsForPerson('other', cands, fair(), stats);
     expect(ranks.get('d')).toBe(1);
   });
 
-  it('judges a specialist job against the people who do it', () => {
-    // Only anaesthetists do anaes, so it is a big share for them; this one
-    // is behind the other anaesthetist, so it comes first.
-    const t = new Map([['a1', 10], ['a2', 10]]);
-    const st = new Map([
-      ['a1|anaes', { count: 6, lastDate: '2026-10-01' }], ['a1|ward', { count: 4, lastDate: '2026-10-02' }],
-      ['a2|anaes', { count: 8, lastDate: '2026-10-01' }], ['a2|ward', { count: 2, lastDate: '2026-10-02' }],
-    ]);
-    const ranks = rankJobsForPerson('a1', [
-      { cardId: 'x', activityId: 'anaes', date: '2026-11-02' },
-      { cardId: 'y', activityId: 'ward', date: '2026-11-02' },
-    ], t, st);
-    expect(ranks.get('x')).toBe(1);
+  it('puts a job only they can do first', () => {
+    const skills = new Map([['endo', ['sk']], ['ward', []]]);
+    const st = [{ staff_id: 'me', fte: 1, advanced_skills: ['sk'] }, { staff_id: 'other', fte: 1 }];
+    const s2 = new Map([['me|endo', { count: 15, lastDate: '2026-10-30' }], ['me|ward', { count: 5, lastDate: '2026-10-01' }]]);
+    const ranks = rankJobsForPerson('me', [
+      { cardId: 'w', activityId: 'ward', date: '2026-11-02' },
+      { cardId: 'e', activityId: 'endo', date: '2026-11-02' },
+    ], fair(st, totals, s2, skills), s2);
+    expect(ranks.get('e')).toBe(1);
   });
 
   it('breaks ties by the one done longest ago, never done first', () => {
+    const st = [...staff, { staff_id: 'new-person', fte: 1 }];
     const ranks = rankJobsForPerson('new-person', [
       { cardId: 'b', activityId: 'ward', date: '2026-11-03' },
       { cardId: 'a', activityId: 'ward', date: '2026-11-02' },
-    ], totals, stats);
+    ], fair(st), stats);
     expect(ranks.get('a')).toBe(1);
   });
 });
@@ -290,5 +291,11 @@ describe('withBookings', () => {
     expect(out.statsByStaffActivity.get('me|dental').count).toBe(1);
     expect(out.statsByStaffActivity.has('me|ward')).toBe(false);
     expect(base.totalShiftsByStaff.get('me')).toBe(2);
+  });
+
+  it('counts weekend bookings', () => {
+    const base = { totalShiftsByStaff: new Map(), statsByStaffActivity: new Map(), weekendShiftsByStaff: new Map([['me', 1]]) };
+    const out = withBookings(base, [{ staffId: 'me', activityId: 'ward', date: '2026-11-07' }], '2026-11-01'); // a Saturday
+    expect(out.weekendShiftsByStaff.get('me')).toBe(2);
   });
 });

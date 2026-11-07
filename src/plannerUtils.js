@@ -307,55 +307,37 @@ export function groupUnconverted(cards, entries, jobTypes, locations, activities
 }
 
 // Fill step, person first: of the jobs this person could be booked onto
-// (candidates: { cardId, activityId, date }), which evens out their
-// exposure best? The aim is that, over time, everyone does each activity
-// in proportion to their FTE. So each activity is scored as their share of
-// it (shifts on it ÷ all their shifts, last 12 months; already in
-// proportion to FTE) over its fair share: the activity's share of all the
-// shifts of the people who do it at all. That keeps a rare job (one list a
-// week) from always coming first, and a specialist one (only anaesthetists
-// do anaesthetics) from always coming last. Lowest score first (0.5 = half
-// their fair share); ties go to the activity they did longest ago (never
-// first), then the earlier date. Returns cardId -> 1, 2, 3...
-export function rankJobsForPerson(staffId, candidates, totalShiftsByStaff, statsByStaffActivity) {
-  const fair = fairShares(totalShiftsByStaff, statsByStaffActivity);
-  const total = totalShiftsByStaff.get(staffId) || 0;
+// (candidates: { cardId, activityId, date }), which is fairest for them?
+// `fairness` is buildFairness(...) (fairness.js): each job's score is what
+// they've done of it ÷ their fair share, among the people who can do it
+// and allowing for work only they can do. A job only they can do comes
+// first (it's theirs); then lowest score; ties go to the activity they did
+// longest ago (never first), then the earlier date. Returns cardId -> 1, 2, 3...
+export function rankJobsForPerson(staffId, candidates, fairness, statsByStaffActivity) {
   const scored = candidates.map(c => {
-    const stats = statsByStaffActivity.get(`${staffId}|${c.activityId}`);
-    const share = total ? (stats?.count || 0) / total : 0;
-    const expected = fair.get(c.activityId) || 0;
+    const score = fairness.activityScore(staffId, c.activityId);
     return {
       ...c,
-      score: expected ? share / expected : 0,
-      last: stats?.lastDate || '0000-00-00',
+      score: fairness.soloOwner.get(c.activityId) === staffId ? -1 : score ?? Infinity,
+      last: statsByStaffActivity.get(`${staffId}|${c.activityId}`)?.lastDate || '0000-00-00',
     };
   });
   scored.sort((a, b) => a.score - b.score || a.last.localeCompare(b.last) || a.date.localeCompare(b.date));
   return new Map(scored.map((c, i) => [c.cardId, i + 1]));
 }
 
-// activityId -> its share of all the shifts of the people who've done it.
-export function fairShares(totalShiftsByStaff, statsByStaffActivity) {
-  const sums = new Map(); // activityId -> { count, shifts }
-  for (const [key, stats] of statsByStaffActivity) {
-    const [staffId, activityId] = key.split('|');
-    const sum = sums.get(activityId) || { count: 0, shifts: 0 };
-    sum.count += stats.count;
-    sum.shifts += totalShiftsByStaff.get(staffId) || 0;
-    sums.set(activityId, sum);
-  }
-  return new Map([...sums].map(([id, { count, shifts }]) => [id, shifts ? count / shifts : 0]));
-}
-
 // The 12-month history plus bookings after today (the week being planned),
 // so booking someone onto a job moves it down their list straight away.
 // bookings: [{ staffId, activityId, date }], one per shift.
-export function withBookings({ totalShiftsByStaff, statsByStaffActivity }, bookings, todayStr) {
+export function withBookings({ totalShiftsByStaff, statsByStaffActivity, weekendShiftsByStaff = new Map() }, bookings, todayStr) {
   const totals = new Map(totalShiftsByStaff);
+  const weekends = new Map(weekendShiftsByStaff);
   const stats = new Map([...statsByStaffActivity].map(([k, v]) => [k, { ...v }]));
   for (const b of bookings) {
     if (b.date <= todayStr) continue;
     totals.set(b.staffId, (totals.get(b.staffId) || 0) + 1);
+    const day = new Date(`${b.date}T00:00:00`).getDay();
+    if (day === 0 || day === 6) weekends.set(b.staffId, (weekends.get(b.staffId) || 0) + 1);
     if (!b.activityId) continue;
     const key = `${b.staffId}|${b.activityId}`;
     const st = stats.get(key) || { count: 0, lastDate: b.date };
@@ -363,5 +345,5 @@ export function withBookings({ totalShiftsByStaff, statsByStaffActivity }, booki
     if (b.date > st.lastDate) st.lastDate = b.date;
     stats.set(key, st);
   }
-  return { totalShiftsByStaff: totals, statsByStaffActivity: stats };
+  return { totalShiftsByStaff: totals, statsByStaffActivity: stats, weekendShiftsByStaff: weekends };
 }

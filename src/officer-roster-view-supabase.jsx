@@ -5,6 +5,9 @@ import StaffAccountsTab from './StaffAccountsTab';
 import StaffAvailabilityTab from './StaffAvailabilityTab';
 import ShiftPatternRulesUI from './ShiftPatternRulesUI';
 import CaseMixReport from './CaseMixReport';
+import { payFortnightRange, fteFull, FTE_FULL_LABEL } from './fteFortnight';
+import { addDays } from './plannerUtils';
+import { formatFairShare, goesWithOnCall } from './fairness';
 import FairnessReport from './FairnessReport';
 import CallbacksReport from './CallbacksReport';
 import RuleViolationsReport, { createDefaultRuleCheckState } from './RuleViolationsReport';
@@ -56,12 +59,15 @@ import { createTheatreActivity,
   updateLocationRequiresBothRoles,
   updateLocationNotifyOnSickCall,
   updateDutyTypeNotifyOnSickCall,
+  updateDutyTypeLinkedShifts,
   deactivateLocation,
   reactivateLocation,
   createActivityType,
   updateActivityTypeName,
   deleteActivityType,
   getSortedStaffForActivity,
+  getDutyFairness,
+  getDaysBooked,
   deleteTheatreActivity,
   getStaffFatigueStatus,
   getStaffList,
@@ -253,6 +259,9 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   const [staffAvailabilityStatus, setStaffAvailabilityStatus] = useState(null); // Map staff_id -> 'available' | 'unavailable' | 'unset'
   const [fatigueStatus, setFatigueStatus] = useState(EMPTY_FATIGUE_STATUS);
   const [sortedStaffByActivity, setSortedStaffByActivity] = useState({});
+  const [dutyFairness, setDutyFairness] = useState(new Map()); // dutyKey -> staffId -> score
+  const [fortnightBookings, setFortnightBookings] = useState([]); // the date's pay fortnight, for the FTE cap
+  const [onCallLinkBookings, setOnCallLinkBookings] = useState([]); // the date and the day after, for on call's linked shifts
   const [volunteerRequests, setVolunteerRequests] = useState([]); // pending volunteer_requests for the visible theatreActivities
   const [volunteerOffers, setVolunteerOffers] = useState([]); // volunteer_offers already opened for the visible theatreActivities
   const [offerPrompt, setOfferPrompt] = useState(null); // the offer dialog: { theatreActivityId, role, disruption }
@@ -371,6 +380,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   // Which activity's / duty type's required-skills modal is open, if any.
   const [editingActivitySkillsId, setEditingActivitySkillsId] = useState(null);
   const [editingDutyTypeSkillsId, setEditingDutyTypeSkillsId] = useState(null);
+  const [editingDutyTypeShiftsId, setEditingDutyTypeShiftsId] = useState(null);
 
   // Department Settings State (Pay Centre Number local edit buffer, kept
   // separate from refData.department so typing doesn't need a round-trip)
@@ -525,6 +535,18 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
 
     loadSortedStaff();
   }, [departmentId, selectedDate, theatreActivities, staffVersion]);
+
+  // On-call pickers list the fairest pick first (getDutyFairness).
+  useEffect(() => {
+    if (!departmentId || !selectedDate) return;
+    let cancelled = false;
+    getDutyFairness(departmentId, selectedDate).then(({ data }) => { if (!cancelled) setDutyFairness(data); });
+    const { from, to } = payFortnightRange(toLocalDateStr(selectedDate));
+    getDaysBooked(departmentId, from, to).then(({ data }) => { if (!cancelled && data) setFortnightBookings(data); });
+    const dateStr = toLocalDateStr(selectedDate);
+    getDaysBooked(departmentId, dateStr, addDays(dateStr, 1)).then(({ data }) => { if (!cancelled && data) setOnCallLinkBookings(data); });
+    return () => { cancelled = true; };
+  }, [departmentId, selectedDate, staffVersion]);
 
   const refreshVolunteerRequests = async () => {
     const activityIds = theatreActivities.map(ta => ta.theatre_activity_id);
@@ -704,6 +726,15 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     return refData.staff.filter(s => s.active !== false).filter(combinedFilter);
   };
 
+  // " — 0.80× fair share" (with the weekend on a weekend), or "only one who can".
+  const fairLabel = (s) => {
+    if (s.solo) return ' — the only one who can';
+    const parts = [];
+    if (typeof s.weekend_score === 'number') parts.push(`weekends ${formatFairShare(s.weekend_score)}`);
+    if (typeof s.fair_score === 'number') parts.push(formatFairShare(s.fair_score));
+    return parts.length ? ` — ${parts.join(', ')}` : '';
+  };
+
   const getVolunteersForActivity = (theatreActivityId, role) => {
     return volunteerRequests
       .filter(v => v.theatre_activity_id === theatreActivityId && v.role === role && v.staff)
@@ -788,16 +819,25 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   // assignment outright, regardless of what they've marked themselves — but
   // unlike an unconfirmed/unavailable day, this specific block can be
   // overridden (with a reason) since it's a soft policy, not a hard fact.
-  const getAssignabilityInfo = (staffId) => {
+  // volunteer: they asked for this shift, so the FTE cap doesn't stop it
+  // (it's an extra shift); the label still says so.
+  const getAssignabilityInfo = (staffId, { volunteer = false } = {}) => {
     const fatigueRisk = fatigueStatus.fatigueRiskStaffIds.has(staffId);
+
+    // Their FTE's hours for this pay fortnight are all allocated (fteFortnight.js).
+    const fullLabel = fteFull(refData.staff.find(s => s.staff_id === staffId), toLocalDateStr(selectedDate), fortnightBookings)
+      ? ` — ${FTE_FULL_LABEL}${volunteer ? ' (volunteered, an extra shift)' : ''}` : '';
+    if (fullLabel && !volunteer) {
+      return { blocked: true, overridable: false, blockType: 'fte_full', label: fullLabel, fatigueRisk };
+    }
 
     if (fatigueStatus.postNightRestStaffIds.has(staffId)) {
       return { blocked: true, overridable: true, blockType: 'post_night_rest', label: ' — Resting after night shift', fatigueRisk };
     }
 
-    if (staffAvailabilityStatus === null) return { blocked: false, overridable: false, blockType: null, label: '', fatigueRisk };
+    if (staffAvailabilityStatus === null) return { blocked: false, overridable: false, blockType: null, label: fullLabel, fatigueRisk };
     const status = staffAvailabilityStatus.get(staffId) || 'unset';
-    if (status === 'available') return { blocked: false, overridable: false, blockType: null, label: '', fatigueRisk };
+    if (status === 'available') return { blocked: false, overridable: false, blockType: null, label: fullLabel, fatigueRisk };
     if (status === 'unavailable') return { blocked: true, overridable: false, blockType: 'unavailable', label: ' — Unavailable', fatigueRisk };
     return { blocked: true, overridable: false, blockType: 'unconfirmed', label: ' — Not Confirmed', fatigueRisk };
   };
@@ -842,7 +882,16 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
       .filter(s => s.staff_id === currentStaffId || (
         s.active !== false && isAvailableForDuty(s.staff_id) && hasRequiredAdvancedSkill(s.staff_id, requiredSkillIds)
       ))
-      .map(s => ({ ...s, unavailable: s.active === false || !isAvailableForDuty(s.staff_id) }));
+      .map(s => ({
+        ...s,
+        unavailable: s.active === false || !isAvailableForDuty(s.staff_id),
+        fair_score: dutyFairness.get(dutyType)?.get(s.staff_id) ?? null,
+        goes_with: goesWithOnCall(dutyTypeRow, s.staff_id, toLocalDateStr(selectedDate), onCallLinkBookings),
+      }))
+      // Whoever's on the shift it goes with first (Settings → Duty Types →
+      // Shifts), then the fairest; anyone with no share (theirs alone, or
+      // new) by name.
+      .sort((a, b) => b.goes_with - a.goes_with || (a.fair_score ?? Infinity) - (b.fair_score ?? Infinity) || a.name.localeCompare(b.name));
   };
 
   // Handlers for staff assignment. skipPatternCheck is set when re-calling
@@ -1783,6 +1832,17 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
       setError(null);
     } catch (err) {
       setError(`Failed to update sick-call setting: ${err.message}`);
+    }
+  };
+
+  const handleUpdateDutyTypeLinkedShifts = async (dutyTypeId, leadIn, followOn) => {
+    try {
+      const { data, error } = await updateDutyTypeLinkedShifts(dutyTypeId, leadIn, followOn);
+      if (error) throw error;
+      setRefData(prev => ({ ...prev, dutyTypes: prev.dutyTypes.map(d => d.duty_type_id === dutyTypeId ? data : d) }));
+      setError(null);
+    } catch (err) {
+      setError(`Failed to save the linked shifts: ${err.message}`);
     }
   };
 
@@ -3832,7 +3892,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                       >
                         <option value="" style={{ color: '#dc2626', fontStyle: 'italic' }}>— Clear Assignment —</option>
                         {getDutyStaffOptions(dutyType.key).map(s => (
-                          <option key={s.staff_id} value={s.staff_id}>{s.name}{s.unavailable ? ' (unavailable)' : ''}</option>
+                          <option key={s.staff_id} value={s.staff_id}>{s.goes_with ? '★ ' : ''}{s.name}{s.goes_with ? ' — on the linked shift' : ''}{s.fair_score !== null ? ` — ${formatFairShare(s.fair_score)}` : ''}{s.unavailable ? ' (unavailable)' : ''}</option>
                         ))}
                       </select>
                       {!getDutyStaffName(dutyType.key) && (edLateOnCall?.dutyKey === dutyType.key ? (
@@ -4247,7 +4307,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                       return (
                         <div className="mt-2 bg-white border border-gray-300 rounded-lg shadow-lg p-2 max-h-48 overflow-y-auto">
                           {volunteers.map(s => {
-                            const { blocked, overridable, blockType, label } = getAssignabilityInfo(s.staff_id);
+                            const { blocked, overridable, blockType, label } = getAssignabilityInfo(s.staff_id, { volunteer: true });
                             const hardBlocked = blocked && !overridable;
                             return (
                               <button
@@ -4272,12 +4332,12 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                                 key={s.staff_id}
                                 onClick={() => selectStaff(s, blocked, overridable, blockType, label)}
                                 disabled={hardBlocked}
-                                title={hardBlocked ? `Not confirmed available for this date${label}` : blocked ? `Requires override${label}` : restricted ? 'Marked themselves as unable to do this activity — can still be assigned' : undefined}
+                                title={hardBlocked ? (blockType === 'fte_full' ? `Their FTE's hours for this pay fortnight are all allocated` : `Not confirmed available for this date${label}`) : blocked ? `Requires override${label}` : restricted ? 'Marked themselves as unable to do this activity — can still be assigned' : undefined}
                                 className={`w-full text-left px-3 py-2 rounded text-sm ${
                                   hardBlocked ? 'text-gray-400 cursor-not-allowed bg-gray-50' : blocked ? 'text-orange-700 hover:bg-orange-50' : restricted ? 'text-red-700 hover:bg-red-50' : 'hover:bg-blue-50'
                                 }`}
                               >
-                                {s.name} ({getConsultantAllocationCount(s.staff_id)}/2){typeof s.exposure_rate === 'number' ? ` — ${s.exposure_rate}% exposure` : ''}{label}
+                                {s.name} ({getConsultantAllocationCount(s.staff_id)}/2){fairLabel(s)}{label}
                                 {blocked && overridable && <span className="font-semibold"> (override required)</span>}
                                 {fatigueRisk && <span className="text-orange-600 font-semibold"> ⚠ Fatigue risk (overnight on-call)</span>}
                                 {restricted && <span className="text-red-600 font-semibold"> ⚠ Can't do this activity (by preference)</span>}
@@ -4377,7 +4437,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                       return (
                         <div className="mt-2 bg-white border border-gray-300 rounded-lg shadow-lg p-2 max-h-48 overflow-y-auto">
                           {volunteers.map(s => {
-                            const { blocked, overridable, blockType, label } = getAssignabilityInfo(s.staff_id);
+                            const { blocked, overridable, blockType, label } = getAssignabilityInfo(s.staff_id, { volunteer: true });
                             const hardBlocked = blocked && !overridable;
                             return (
                               <button
@@ -4402,12 +4462,12 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                                 key={s.staff_id}
                                 onClick={() => selectStaff(s, blocked, overridable, blockType, label)}
                                 disabled={hardBlocked}
-                                title={hardBlocked ? `Not confirmed available for this date${label}` : blocked ? `Requires override${label}` : restricted ? 'Marked themselves as unable to do this activity — can still be assigned' : undefined}
+                                title={hardBlocked ? (blockType === 'fte_full' ? `Their FTE's hours for this pay fortnight are all allocated` : `Not confirmed available for this date${label}`) : blocked ? `Requires override${label}` : restricted ? 'Marked themselves as unable to do this activity — can still be assigned' : undefined}
                                 className={`w-full text-left px-3 py-2 rounded text-sm ${
                                   hardBlocked ? 'text-gray-400 cursor-not-allowed bg-gray-50' : blocked ? 'text-orange-700 hover:bg-orange-50' : restricted ? 'text-red-700 hover:bg-red-50' : 'hover:bg-blue-50'
                                 }`}
                               >
-                                {s.name}{typeof s.exposure_rate === 'number' ? ` — ${s.exposure_rate}% exposure` : ''}{label}
+                                {s.name}{fairLabel(s)}{label}
                                 {blocked && overridable && <span className="font-semibold"> (override required)</span>}
                                 {fatigueRisk && <span className="text-orange-600 font-semibold"> ⚠ Fatigue risk (overnight on-call)</span>}
                                 {restricted && <span className="text-red-600 font-semibold"> ⚠ Can't do this activity (by preference)</span>}
@@ -5209,6 +5269,15 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                           </label>
                         </div>
                         <div className="flex gap-2">
+                          {dutyType.counts_as_on_call && (
+                            <button
+                              onClick={() => setEditingDutyTypeShiftsId(dutyType.duty_type_id)}
+                              title="The shifts this on call goes with: whoever is on one is offered it first"
+                              className="px-3 py-1 bg-indigo-100 hover:bg-indigo-200 text-indigo-900 font-medium rounded text-xs transition"
+                            >
+                              Shifts{(dutyType.lead_in_shift_ids?.length || 0) + (dutyType.follow_on_shift_ids?.length || 0) > 0 ? ` (${(dutyType.lead_in_shift_ids?.length || 0) + (dutyType.follow_on_shift_ids?.length || 0)})` : ''}
+                            </button>
+                          )}
                           <button
                             onClick={() => setEditingDutyTypeSkillsId(dutyType.duty_type_id)}
                             className="px-3 py-1 bg-purple-100 hover:bg-purple-200 text-purple-900 font-medium rounded text-xs transition"
@@ -6311,6 +6380,59 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
 
       {/* Duty Type Required Skills Modal — same as the Activity one above,
           but narrows the Duty Assignments dropdown for this on-call slot. */}
+      {editingDutyTypeShiftsId && (() => {
+        const dutyType = refData.dutyTypes.find(d => d.duty_type_id === editingDutyTypeShiftsId);
+        if (!dutyType) return null;
+        const leadIn = dutyType.lead_in_shift_ids || [];
+        const followOn = dutyType.follow_on_shift_ids || [];
+        const shifts = refData.shifts
+          .filter(sh => sh.active !== false && !/on.?call/i.test(sh.name || ''))
+          .slice()
+          .sort((a, b) => (a.start_time || '').localeCompare(b.start_time || '') || (a.name || '').localeCompare(b.name || ''));
+        const toggle = (list, id) => (list.includes(id) ? list.filter(x => x !== id) : [...list, id]);
+        const column = (title, hint, list, onToggle) => (
+          <div>
+            <p className="text-xs font-semibold text-gray-600 uppercase">{title}</p>
+            <p className="text-xs text-gray-500 mb-2">{hint}</p>
+            <div className="border border-gray-200 rounded-lg divide-y divide-gray-100 max-h-80 overflow-y-auto">
+              {shifts.map(sh => (
+                <label key={sh.shift_id} className="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-gray-50">
+                  <input type="checkbox" checked={list.includes(sh.shift_id)} onChange={() => onToggle(sh.shift_id)} />
+                  {sh.name}{sh.start_time && sh.end_time && <span className="text-gray-500"> {sh.start_time.slice(0, 5)}–{sh.end_time.slice(0, 5)}</span>}
+                </label>
+              ))}
+            </div>
+          </div>
+        );
+        return (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-2xl max-h-[85vh] overflow-y-auto">
+              <div className="flex justify-between items-start mb-4">
+                <div>
+                  <h2 className="text-lg font-bold text-gray-900">{dutyType.label} — Shifts it goes with</h2>
+                  <p className="text-sm text-gray-600">On call follows on from a shift, or comes before one. When you pick who's on this, anyone on a ticked shift is listed first (★), then the fairest pick. Changes save as you tick.</p>
+                </div>
+                <button onClick={() => setEditingDutyTypeShiftsId(null)} className="p-1 hover:bg-gray-100 rounded-lg">
+                  <X size={20} />
+                </button>
+              </div>
+              {error && (
+                <div className="mb-4 p-3 bg-red-50 border border-red-300 rounded-lg flex gap-2 items-start">
+                  <AlertCircle size={18} className="text-red-600 flex-shrink-0 mt-0.5" />
+                  <p className="text-sm text-red-700">{error}</p>
+                </div>
+              )}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {column('Leads into it (same day)', 'e.g. the ED late into ED on call', leadIn,
+                  id => handleUpdateDutyTypeLinkedShifts(dutyType.duty_type_id, toggle(leadIn, id), followOn))}
+                {column('Follows it (next day)', 'e.g. a morning list after the night on call', followOn,
+                  id => handleUpdateDutyTypeLinkedShifts(dutyType.duty_type_id, leadIn, toggle(followOn, id)))}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {editingDutyTypeSkillsId && (() => {
         const dutyType = refData.dutyTypes.find(d => d.duty_type_id === editingDutyTypeSkillsId);
         const requiredIds = dutyType?.required_advanced_skills || [];

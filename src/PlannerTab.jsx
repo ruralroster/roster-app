@@ -3,6 +3,7 @@ import { AlertCircle, ChevronLeft, ChevronRight, Loader, Plus, Minus, X } from '
 import {
   getJobTypesAndPlaces,
   getPlannerRange,
+  getDaysBooked,
   createPlannerCard,
   deleteTheatreActivity,
   bookPlannerPlace,
@@ -36,8 +37,10 @@ import { toLocalDateStr } from './dateUtils';
 import { DEFAULT_FTE } from './availabilityUtils';
 import { JOB_COLOURS, jobCategoryFor, jobCategoryRank, jobCardStyle, jobBoxStyle, holdsOnCallDuty } from './jobColours';
 import {
-  hhmm, addDays, firstName, jobForCard, isAdminJob, isSenior, hasAnySkill, placeMismatch, layOutCard, dayConflict, daysWorked, rankJobsForPerson, withBookings,
+  hhmm, addDays, firstName, jobForCard, isAdminJob, isSenior, hasAnySkill, placeMismatch, layOutCard, dayConflict, rankJobsForPerson, withBookings,
 } from './plannerUtils';
+import { payFortnightRange, fortnightLoad, fteFull, hoursBooked, formatHours, FULL_TIME_HOURS_PER_WEEK, FTE_FULL_LABEL } from './fteFortnight';
+import { buildFairness } from './fairness';
 
 // ============================================================
 // PLANNER — Officer view tab
@@ -88,6 +91,9 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
   const [templateIdForWeek, setTemplateIdForWeek] = useState({});
   const [meetingTypes, setMeetingTypes] = useState([]);
   const [meetings, setMeetings] = useState([]);
+  // Every booking in the pay fortnights the view touches, for the FTE cap
+  // (fteFortnight.js) — the view alone may be half a fortnight.
+  const [fortnightBookings, setFortnightBookings] = useState([]);
   const [selectedMeetingTypeId, setSelectedMeetingTypeId] = useState(null);
   const [meetingPick, setMeetingPick] = useState(null); // the meeting dialog: { meeting, draft }
   // Last 12 months of who did what, for ranking jobs in the Fill step.
@@ -150,6 +156,17 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
     });
     return () => { cancelled = true; };
   }, [departmentId, startStr, endStr, numDays, refreshKey]);
+
+  useEffect(() => {
+    if (!departmentId) return;
+    let cancelled = false;
+    getDaysBooked(departmentId, payFortnightRange(startStr).from, payFortnightRange(endStr).to).then(res => {
+      if (cancelled) return;
+      if (res.error) setError(`Failed to load fortnight totals: ${res.error.message}`);
+      else setFortnightBookings(res.data);
+    });
+    return () => { cancelled = true; };
+  }, [departmentId, startStr, endStr, refreshKey]);
 
   useEffect(() => {
     if (!departmentId) return;
@@ -356,12 +373,14 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
   // ---------- render helpers ----------
 
   const isAdminCard = (card) => isAdminJob(jobForCard(card, jobTypes)?.name, card.locations?.name || locationName(card.location_id), activityName(card.activity_id));
+  // Why staffId can't go on card: a clash, leave, or their FTE for that
+  // pay fortnight already allocated. null = free.
   const conflictFor = (staffId, card) => dayConflict({
     staffId, dateStr: card.date, startTime: card.start_time, endTime: card.end_time,
     cardId: card.theatre_activity_id, assignments, unavailable, cardLabel: assignmentLabel,
     clashFree: isAdminCard(card),
     isClashFree: (a) => { const c = cardById.get(a.theatre_activity_id); return !!c && isAdminCard(c); },
-  });
+  }) || (!isAdminCard(card) && fteFull(staffById.get(staffId), card.date, fortnightBookings) ? FTE_FULL_LABEL : null);
 
   const dutyKeysFor = (staffId, dateStr) => duties.filter(d => d.staff_id === staffId && d.date === dateStr).map(d => d.duty_type);
 
@@ -448,7 +467,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
   const jobCategory = (job) => jobCategoryFor(locationName(job.location_id), activityName(job.activity_id));
 
   // Fill step: with a person picked, number the jobs they could go on —
-  // 1 for the one they've done least (rankJobsForPerson), and so on.
+  // 1 for the fairest for them (rankJobsForPerson, fairness.js), and so on.
   const jobRanks = (() => {
     if (mode !== 'fill' || !selectedStaff || !exposure) return new Map();
     const candidates = cards
@@ -470,7 +489,8 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
       return true;
     }).map(a => ({ staffId: a.staff_id, activityId: cardById.get(a.theatre_activity_id)?.activity_id, date: a.date }));
     const history = withBookings(exposure, bookings, todayStr);
-    return rankJobsForPerson(selectedStaff.staff_id, candidates, history.totalShiftsByStaff, history.statsByStaffActivity);
+    const fairness = buildFairness({ ...exposure, ...history });
+    return rankJobsForPerson(selectedStaff.staff_id, candidates, fairness, history.statsByStaffActivity);
   })();
 
   const renderCard = (card) => {
@@ -510,7 +530,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
           {jobRanks.has(card.theatre_activity_id) && (
             <span
               className={`flex-shrink-0 w-5 h-5 rounded-full text-[11px] font-bold flex items-center justify-center ${jobRanks.get(card.theatre_activity_id) === 1 ? 'bg-green-600 text-white' : 'bg-white text-green-800 border border-green-600'}`}
-              title={`${selectedStaff.name}'s choice ${jobRanks.get(card.theatre_activity_id)}: the job they've done least (for their share of shifts, last 12 months) comes first`}
+              title={`${selectedStaff.name}'s choice ${jobRanks.get(card.theatre_activity_id)}: the job they're furthest behind on, against their fair share (last 12 months, among the people who can do it) comes first`}
             >
               {jobRanks.get(card.theatre_activity_id)}
             </span>
@@ -686,14 +706,15 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
     if (staffFilter === 'junior') return !isSenior(s, rankRows);
     return s.rank === staffFilter;
   });
-  const targetDays = (s) => (s.fte ?? DEFAULT_FTE) * 5 * weeksShown;
+  // Hours for the weeks shown: 44 a week at full time (fteFortnight.js).
+  const targetHours = (s) => (s.fte ?? DEFAULT_FTE) * FULL_TIME_HOURS_PER_WEEK * weeksShown;
   // Who to book next: people available on at least one day shown first,
-  // then whoever's furthest under their share (days booked ÷ FTE target),
+  // then whoever's furthest under their share (hours booked ÷ FTE hours),
   // then by name.
   const awayAllDays = (s) => days.every(d => unavailable.some(u => u.staff_id === s.staff_id && u.date === d));
   const shareBooked = (s) => {
-    const target = targetDays(s);
-    return target > 0 ? daysWorked(s.staff_id, startStr, endStr, assignments, duties) / target : Infinity;
+    const target = targetHours(s);
+    return target > 0 ? hoursBooked(s.staff_id, startStr, endStr, fortnightBookings) / target : Infinity;
   };
   const orderedStaff = filteredStaff
     .map(s => ({ s, away: awayAllDays(s), share: shareBooked(s) }))
@@ -987,27 +1008,35 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
             </label>
             <p className="text-xs text-gray-600">
               {selectedStaff
-                ? <>Booking <span className="font-semibold text-gray-900">{selectedStaff.name}</span> — green places are theirs to take; 1 is the job they've done least. Tap their name again to stop.</>
+                ? <>Booking <span className="font-semibold text-gray-900">{selectedStaff.name}</span> — green places are theirs to take; 1 is the fairest job for them. Once their FTE's hours for a pay fortnight are booked (44 h a week full time), that fortnight's places stay grey. Tap their name again to stop.</>
                 : 'Pick a person (most in need of shifts first). With nobody picked, tap a name on the grid to remove it, or an amber place to type a visitor.'}
             </p>
           </div>
           <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto">
             {orderedStaff.map(s => {
-              const worked = daysWorked(s.staff_id, startStr, endStr, assignments, duties);
-              const target = targetDays(s);
+              const worked = hoursBooked(s.staff_id, startStr, endStr, fortnightBookings);
+              const target = targetHours(s);
               const on = s.staff_id === selectedStaffId;
+              // The fullest pay fortnight in view: "full" in red once their
+              // FTE's hours there are all allocated (they can't be booked).
+              const loads = [...new Set(days.map(d => payFortnightRange(d).from))]
+                .map(from => fortnightLoad(s, from, fortnightBookings));
+              const fullest = loads.reduce((a, b) => (b.target - b.hours < a.target - a.hours ? b : a));
+              const left = fullest.target - fullest.hours;
+              const fortnightNote = ` — ${formatHours(fullest.hours)} of ${formatHours(fullest.target)} h this pay fortnight${left <= 0.01 ? `, ${FTE_FULL_LABEL}` : ''}`;
               return (
                 <button
                   key={s.staff_id}
                   onClick={() => setSelectedStaffId(on ? null : s.staff_id)}
                   aria-pressed={on}
                   className={`px-2.5 py-1 rounded-full border text-xs transition ${on ? 'bg-gray-900 text-white border-gray-900' : 'bg-white border-gray-300 text-gray-800 hover:border-gray-500'}`}
-                  title={`${s.name} (${s.rank || 'no rank'}) — ${worked} of ${target.toFixed(1)} days`}
+                  title={`${s.name} (${s.rank || 'no rank'}) — ${formatHours(worked)} of ${formatHours(target)} h in the weeks shown${fortnightNote}`}
                 >
                   {s.name}
+                  {left <= 0.01 && <span className={`ml-1 font-semibold ${on ? 'text-red-300' : 'text-red-600'}`}>full</span>}
                   {!singleDay && (
-                    <span className={`ml-1 ${on ? 'text-gray-300' : worked > target ? 'text-orange-600 font-semibold' : 'text-gray-500'}`}>
-                      {worked}/{Number.isInteger(target) ? target : target.toFixed(1)}
+                    <span className={`ml-1 ${on ? 'text-gray-300' : worked >= target ? 'text-orange-600 font-semibold' : worked >= target * 0.9 ? 'text-amber-600 font-semibold' : 'text-gray-500'}`}>
+                      {target > 0 ? Math.max(0, Math.round((1 - worked / target) * 100)) : 0}% left
                     </span>
                   )}
                 </button>
