@@ -5,9 +5,9 @@ import StaffAccountsTab from './StaffAccountsTab';
 import StaffAvailabilityTab from './StaffAvailabilityTab';
 import ShiftPatternRulesUI from './ShiftPatternRulesUI';
 import CaseMixReport from './CaseMixReport';
-import { payFortnightRange, fteFull, FTE_FULL_LABEL } from './fteFortnight';
-import { addDays } from './plannerUtils';
-import { formatFairShare, goesWithOnCall } from './fairness';
+import { payFortnightRange, fteFull, hoursBooked, fortnightTargetHours, formatHours, FTE_FULL_LABEL } from './fteFortnight';
+import { addDays, withBookings } from './plannerUtils';
+import { formatFairShare, goesWithOnCall, buildFairness } from './fairness';
 import FairnessReport from './FairnessReport';
 import CallbacksReport from './CallbacksReport';
 import RuleViolationsReport, { createDefaultRuleCheckState } from './RuleViolationsReport';
@@ -67,6 +67,7 @@ import { createTheatreActivity,
   deleteActivityType,
   getSortedStaffForActivity,
   getDutyFairness,
+  getExposureStats,
   getDaysBooked,
   deleteTheatreActivity,
   getStaffFatigueStatus,
@@ -193,7 +194,10 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   // "Notify Sick" reports to acknowledge or undo — see
   // renderSickReportsBanner.
   const [pendingSickReports, setPendingSickReports] = useState([]);
-  const [fortnightStart, setFortnightStart] = useState(() => getMondayOfWeek(new Date()));
+  // The tab shows a pay fortnight (fteFortnight.js), so its FTE count and
+  // cap line up with pay.
+  const [fortnightStart, setFortnightStart] = useState(() => new Date(`${payFortnightRange(toLocalDateStr(new Date())).from}T00:00:00`));
+  const [fortnightExposure, setFortnightExposure] = useState(null); // fairness inputs, for ranking the wizard's choices
   const [fortnightRankFilter, setFortnightRankFilter] = useState('');
   const [fortnightSelectedStaffId, setFortnightSelectedStaffId] = useState('');
   const [fortnightAllocations, setFortnightAllocations] = useState([]);
@@ -700,6 +704,13 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
 
     loadFortnightAllocations();
   }, [departmentId, fortnightStart, activeTab, fortnightRefreshKey]);
+
+  useEffect(() => {
+    if (!departmentId || activeTab !== 'fortnight') return;
+    let cancelled = false;
+    getExposureStats(departmentId).then(res => { if (!cancelled && res.data) setFortnightExposure(res.data); });
+    return () => { cancelled = true; };
+  }, [departmentId, activeTab]);
 
   // Advanced Skills are a hard filter, unlike activity_restrictions below
   // (a staff preference that only warns) — a slot with a non-empty
@@ -3305,16 +3316,48 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
       const selectedStaff = refData.staff.find(s => s.staff_id === fortnightSelectedStaffId);
       const selectedStaffAllocations = fortnightAllocations.filter(a => a.staff_id === fortnightSelectedStaffId);
       const selectedStaffDutyAssignments = fortnightDutyAssignments.filter(d => d.staff_id === fortnightSelectedStaffId);
-      // Shifts, not assignment rows: a day where someone covers two
-      // activities (e.g. AM Endoscopy then PM Anaesthetics) is one day off
-      // their FTE count, not two, so this counts distinct dates — on-call
-      // duty days count too, alongside regular activity days.
-      const selectedStaffDatesCovered = new Set([
-        ...selectedStaffAllocations.map(a => a.date),
-        ...selectedStaffDutyAssignments.map(d => d.date),
-      ]).size;
-      const expectedShifts = selectedStaff ? (selectedStaff.fte ?? DEFAULT_FTE) * 10 : 0;
-      const remainingShifts = expectedShifts - selectedStaffDatesCovered;
+      // FTE in hours (fteFortnight.js): 44 a week is full time, so 88 for
+      // this pay fortnight at 1.0 FTE. Once it's all allocated, no more days.
+      const fnFromStr = toLocalDateStr(days[0]);
+      const fnToStr = toLocalDateStr(days[13]);
+      const fnLoad = (s) => {
+        const hours = hoursBooked(s.staff_id, fnFromStr, fnToStr, fortnightAllocations);
+        const target = fortnightTargetHours(s.fte);
+        return { hours, target, left: target > 0 ? Math.max(0, 1 - hours / target) : 0, full: hours >= target - 0.01 };
+      };
+      const selectedLoad = selectedStaff ? fnLoad(selectedStaff) : null;
+      const fullOn = (date) => selectedStaff && selectedLoad.full
+        && !selectedStaffAllocations.some(a => a.date === toLocalDateStr(date))
+        && !selectedStaffDutyAssignments.some(d => d.date === toLocalDateStr(date));
+      // Staff list: most FTE left to allocate first.
+      const fortnightStaffOptions = refData.staff
+        .filter(s => s.active !== false && (!fortnightRankFilter || s.rank === fortnightRankFilter))
+        .map(s => ({ s, load: fnLoad(s) }))
+        .sort((a, b) => b.load.left - a.load.left || a.s.name.localeCompare(b.s.name));
+
+      // The wizard's choices, fairest first for the selected person
+      // (fairness.js, with this fortnight's bookings counted).
+      const fortnightFairness = (() => {
+        if (!fortnightExposure || !selectedStaff) return null;
+        const seen = new Set();
+        const bookings = fortnightAllocations.filter(a => {
+          const key = `${a.staff_id}|${a.date}`;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        }).map(a => ({ staffId: a.staff_id, activityId: a.theatre_activities?.activity_id, date: a.date }));
+        return buildFairness({ ...fortnightExposure, ...withBookings(fortnightExposure, bookings, toLocalDateStr(new Date())) });
+      })();
+      const activityFairScore = (activityId) => {
+        if (!fortnightFairness) return null;
+        if (fortnightFairness.soloOwner.get(activityId) === selectedStaff.staff_id) return -1;
+        return fortnightFairness.activityScore(selectedStaff.staff_id, activityId);
+      };
+      const canDoActivity = (activity) => hasRequiredAdvancedSkill(selectedStaff?.staff_id, activity.required_advanced_skills);
+      const rankActivities = (activities) => activities
+        .map(a => ({ a, score: canDoActivity(a) ? activityFairScore(a.activity_id) : null }))
+        .sort((x, y) => (x.score ?? Infinity) - (y.score ?? Infinity) || x.a.name.localeCompare(y.a.name));
+      const fairNote = (score) => (score === -1 ? 'the only one who can' : score === null ? '' : formatFairShare(score));
 
       const modalDateStr = fortnightModalDate ? toLocalDateStr(fortnightModalDate) : null;
       const modalDateAllocations = modalDateStr ? (allocationsByDate[modalDateStr] || []) : [];
@@ -3370,18 +3413,20 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="">— Select a staff member —</option>
-                {refData.staff.filter(s => s.active !== false && (!fortnightRankFilter || s.rank === fortnightRankFilter)).map(s => (
-                  <option key={s.staff_id} value={s.staff_id}>{s.name} ({s.rank})</option>
+                {fortnightStaffOptions.map(({ s, load }) => (
+                  <option key={s.staff_id} value={s.staff_id}>{s.name} ({s.rank}) — {load.full ? 'FTE full' : `${Math.round(load.left * 100)}% left`}</option>
                 ))}
               </select>
 
               {selectedStaff ? (
-                <div className={`mt-4 p-3 rounded-lg border ${remainingShifts < 0 ? 'bg-orange-50 border-orange-300' : 'bg-blue-50 border-blue-200'}`}>
+                <div className={`mt-4 p-3 rounded-lg border ${selectedLoad.full ? 'bg-red-50 border-red-300' : selectedLoad.left < 0.1 ? 'bg-amber-50 border-amber-300' : 'bg-blue-50 border-blue-200'}`}>
                   <p className="text-sm font-semibold text-gray-900">
-                    {selectedStaffDatesCovered} of {expectedShifts.toFixed(1)} shifts allocated this fortnight ({formatFte(selectedStaff.fte ?? DEFAULT_FTE)} FTE)
+                    {formatHours(selectedLoad.hours)} of {formatHours(selectedLoad.target)} hours allocated this pay fortnight ({formatFte(selectedStaff.fte ?? DEFAULT_FTE)} FTE)
                   </p>
-                  <p className={`text-xs mt-1 ${remainingShifts < 0 ? 'text-orange-700 font-semibold' : 'text-gray-600'}`}>
-                    {remainingShifts >= 0 ? `${remainingShifts.toFixed(1)} remaining` : `${Math.abs(remainingShifts).toFixed(1)} over FTE`}
+                  <p className={`text-xs mt-1 ${selectedLoad.full ? 'text-red-700 font-semibold' : 'text-gray-600'}`}>
+                    {selectedLoad.full
+                      ? `${FTE_FULL_LABEL}: no more days can be booked for them`
+                      : `${Math.round(selectedLoad.left * 100)}% left to allocate (${formatHours(selectedLoad.target - selectedLoad.hours)} h)`}
                   </p>
                 </div>
               ) : (
@@ -3419,9 +3464,9 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                     value={toLocalDateStr(fortnightStart)}
                     onChange={(e) => {
                       if (!e.target.value) return;
-                      setFortnightStart(getMondayOfWeek(new Date(`${e.target.value}T00:00:00`)));
+                      setFortnightStart(new Date(`${payFortnightRange(e.target.value).from}T00:00:00`));
                     }}
-                    title="Jumps to the Monday of that date's week"
+                    title="Jumps to the pay fortnight that date is in"
                     className="mt-1 px-2 py-0.5 border border-gray-200 rounded text-xs text-gray-600"
                   />
                 </div>
@@ -3473,9 +3518,9 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                         key={idx}
                         role="button"
                         tabIndex={fortnightSelectedStaffId ? 0 : -1}
-                        onClick={() => fortnightSelectedStaffId && handleOpenFortnightModal(date)}
-                        onKeyDown={(e) => { if (fortnightSelectedStaffId && (e.key === 'Enter' || e.key === ' ')) handleOpenFortnightModal(date); }}
-                        title={!fortnightSelectedStaffId ? 'Select a staff member first' : undefined}
+                        onClick={() => fortnightSelectedStaffId && !fullOn(date) && handleOpenFortnightModal(date)}
+                        onKeyDown={(e) => { if (fortnightSelectedStaffId && !fullOn(date) && (e.key === 'Enter' || e.key === ' ')) handleOpenFortnightModal(date); }}
+                        title={!fortnightSelectedStaffId ? 'Select a staff member first' : fullOn(date) ? `${selectedStaff.name}: ${FTE_FULL_LABEL}` : undefined}
                         className={`min-h-[76px] p-1.5 rounded-lg border text-left align-top transition ${
                           !fortnightSelectedStaffId
                             ? 'border-gray-100 bg-gray-50 cursor-not-allowed'
@@ -3652,13 +3697,22 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                           <p className="text-sm text-gray-500">No locations configured — add some in Settings.</p>
                         ) : (
                           <div className="space-y-2">
-                            {activeLocations.map(location => (
+                            {/* Fairest first: each location by the best of
+                                its activities for this person. */}
+                            {activeLocations
+                              .map(location => ({ location, best: rankActivities(activitiesAllowedAtLocation(location.location_id))[0] }))
+                              .sort((x, y) => (x.best?.score ?? Infinity) - (y.best?.score ?? Infinity))
+                              .map(({ location, best }, i) => (
                               <button
                                 key={location.location_id}
                                 onClick={() => handleFortnightPickLocation(location.location_id)}
-                                className="w-full text-left px-3 py-2 rounded-lg text-sm border bg-white border-gray-300 hover:bg-blue-50 hover:border-blue-400 transition"
+                                className={`w-full text-left px-3 py-2 rounded-lg text-sm border bg-white hover:bg-blue-50 hover:border-blue-400 transition flex items-center gap-2 ${i === 0 && best?.score !== null && best?.score !== undefined ? 'border-green-600 ring-1 ring-green-600' : 'border-gray-300'}`}
                               >
-                                {location.name}
+                                {best?.score !== null && best?.score !== undefined && (
+                                  <span className={`flex-shrink-0 w-5 h-5 rounded-full text-[11px] font-bold flex items-center justify-center ${i === 0 ? 'bg-green-600 text-white' : 'bg-white text-green-800 border border-green-600'}`}>{i + 1}</span>
+                                )}
+                                <span className="flex-1">{location.name}</span>
+                                {best?.score !== null && best?.score !== undefined && <span className="text-xs text-gray-500">{best.a.name}: {fairNote(best.score)}</span>}
                               </button>
                             ))}
                           </div>
@@ -3673,13 +3727,17 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                           <p className="text-sm text-gray-500">No activities configured — add some in Settings.</p>
                         ) : (
                           <div className="space-y-2">
-                            {activitiesAllowedAtLocation(fortnightWizardLocationId).map(activity => (
+                            {rankActivities(activitiesAllowedAtLocation(fortnightWizardLocationId)).map(({ a: activity, score }, i) => (
                               <button
                                 key={activity.activity_id}
                                 onClick={() => handleFortnightPickActivity(activity.activity_id)}
-                                className="w-full text-left px-3 py-2 rounded-lg text-sm border bg-white border-gray-300 hover:bg-blue-50 hover:border-blue-400 transition"
+                                className={`w-full text-left px-3 py-2 rounded-lg text-sm border bg-white hover:bg-blue-50 hover:border-blue-400 transition flex items-center gap-2 ${i === 0 && score !== null ? 'border-green-600 ring-1 ring-green-600' : 'border-gray-300'}`}
                               >
-                                {activity.name}{activity.abbreviation ? ` (${activity.abbreviation})` : ''}
+                                {score !== null && (
+                                  <span className={`flex-shrink-0 w-5 h-5 rounded-full text-[11px] font-bold flex items-center justify-center ${i === 0 ? 'bg-green-600 text-white' : 'bg-white text-green-800 border border-green-600'}`}>{i + 1}</span>
+                                )}
+                                <span className="flex-1">{activity.name}{activity.abbreviation ? ` (${activity.abbreviation})` : ''}</span>
+                                {score !== null && <span className="text-xs text-gray-500">{fairNote(score)}</span>}
                               </button>
                             ))}
                           </div>

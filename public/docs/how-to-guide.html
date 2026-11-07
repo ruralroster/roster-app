@@ -473,11 +473,13 @@
         <h3>Assigning person-first</h3>
         <p>Fortnight view works the other way round from Day view: pick a <strong>person</strong> first, then click a day to assign them.</p>
         <ol>
-          <li>Filter by rank (optional) and select a staff member. Their FTE counter shows how many shifts they're expected to do this fortnight and how many they've already got.</li>
+          <li>Filter by rank (optional) and select a staff member. The list puts whoever has the most FTE left to allocate first, with the percentage left beside each name. Their FTE counter shows the hours allocated this pay fortnight against their FTE (44 hours a week is full time, so 88 at 1.0 FTE).</li>
+          <li>Once their FTE's hours are all allocated, the counter turns red and their days can't be clicked for the rest of the pay fortnight.</li>
           <li>Click any day cell to open the assignment wizard.</li>
           <li>Choose a shift, then a location, then an activity — if the location only ever allows one activity, that step is skipped and it's picked automatically. Long shifts that cross a session boundary (e.g. Morning into Afternoon) automatically fill the matching card in the next session too.</li>
+          <li>When you choose the location and activity, the fairest choice for that person is numbered <strong>1</strong> with a green border, with their score (× fair share) beside each, using the same rules as the Planner.</li>
         </ol>
-        <p>The date field beside the arrows above the grid jumps straight to any date's fortnight (it snaps to that week's Monday).</p>
+        <p>The date field beside the arrows above the grid jumps straight to any date's fortnight (it snaps to the start of that date's pay fortnight).</p>
         <p>Inside each day cell, people are sorted by where they start (ED, then Theatre, then Ward and everything else) and coloured by the session they start in: morning, afternoon or night. Anyone on call gets an extra orange entry at the top of the cell. Each week sizes its own columns, so one busy day doesn't stretch the whole fortnight.</p>
       </article>
 
