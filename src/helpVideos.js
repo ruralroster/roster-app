@@ -9,4 +9,7 @@ export const HELP_VIDEOS = {
   // decks 23 and 24 don't need videos of their own.
   'tap-a-name': 'https://drive.google.com/file/d/1mmDVah7CixfotfoQRsymgrSpDU5VnueS/view?usp=sharing',
   'day-and-week': 'https://drive.google.com/file/d/1N3zVNWXMQMOQ4Ygf5uqS7-7ZtDAYFbdt/view?usp=sharing',
+  // Video 08 covers Settings (profile, birthday, usual coffee) and sending
+  // the coffee order, so deck 09 doesn't need a video of its own.
+  'settings': 'https://drive.google.com/file/d/1YYFmODOJHBPI08TY8aqmBPk0mEHkE4R2/view?usp=sharing',
 };

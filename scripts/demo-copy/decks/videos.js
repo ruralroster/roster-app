@@ -2,8 +2,8 @@
 // videos/. Each is four slides:
 //   1. Title: the app and audience ("Rstar for staff"), then the topic.
 //   2. What it's for: the purpose, in plain words.
-//   3. The steps (then the live demo); a video covering two features
-//      (callbacks and overtime) has a second steps slide.
+//   3. The steps (then the live demo); a video covering more than one
+//      feature (callbacks and overtime) has a steps slide for each.
 //   4. Need a hand?: where Help is in the app, and the contact address.
 // Speaker notes are short prompts for recording, not a full script.
 //
@@ -154,11 +154,11 @@ const VIDEOS = [
     id: 'callback-overtime',
     audience: 'staff',
     layout: 'side',
-    topic: 'Callbacks and overtime',
-    sub: 'Timing them for your pay variation',
+    topic: 'Callbacks, overtime and My Variations',
+    sub: 'Timing them, and your pay variation form',
     purpose: {
-      bullets: ['Called in while on call?', 'Shift running over?', 'Need it for your variation?'],
-      notes: "When you're called in while on call, or your shift runs over, Rstar times it for you and keeps the record for your pay variation. The timer runs on the server, so it keeps going if you close the app. Afterwards it tells you the earliest you should be back, for 10 hours' rest.",
+      bullets: ['Called in while on call?', 'Shift running over?', 'Which patient was that?', 'Filling in your variation form?'],
+      notes: "When you're called in while on call, or your shift runs over, Rstar times it for you and keeps the record for your pay variation. The timer runs on the server, so it keeps going if you close the app. Afterwards it tells you the earliest you should be back, for 10 hours' rest. You can save the patient's details to your own phone, and My Variations keeps every record ready for your form.",
     },
     steps: [
       { h: 'Open Variation while on call', t: 'A green Callback button per on-call slot' },
@@ -170,7 +170,7 @@ const VIDEOS = [
     stepsTitle: 'Callbacks',
     stepsShot: 'r_callback',
     stepsNotes: "On call, open Variation: there's the green Callback button. Tap it as you head in. When you're done, Call Complete. Short calls ask whether to record them. You can save a patient detail to your own phone; the app never keeps it. Then the fatigue notice: the earliest you should be back.",
-    more: {
+    more: [{
       title: 'Overtime',
       shot: 'r_overtime',
       steps: [
@@ -180,7 +180,29 @@ const VIDEOS = [
         { h: 'Tap Overtime Complete', t: 'Then the same as a callback' },
       ],
       notes: "Overtime's the same idea. Near the end of your shift, a blue Overtime button appears. Tap it before you finish and it starts itself at the shift end. Forgot until later? Tap it anyway and it asks whether you've been on since the shift ended. Overtime Complete when you're done, and the rest is just like a callback: short ones ask first, then the fatigue notice. Both end up in My Variations for your form.",
-    },
+    }, {
+      title: 'Saving a patient detail',
+      shot: 'r_patient',
+      steps: [
+        { h: 'Tap Complete', t: 'When the call is over' },
+        { h: 'Callback recorded', t: 'The times, and an optional patient' },
+        { h: 'MRN, or a name', t: 'Whichever you have' },
+        { h: 'Download to phone', t: 'A text file, on this phone only' },
+        { h: 'Not needed?', t: 'Skip' },
+      ],
+      notes: "When the call's over, tap Complete. Callback recorded shows the times, then asks, optionally, which patient it was for: an MRN, or a surname and first name. Download to phone saves a small text file with the call and the patient on your phone. Nothing about the patient goes to Rstar. If you don't need it, Skip.",
+    }, {
+      title: 'My Variations',
+      shot: 'r_myvariations_full',
+      steps: [
+        { h: 'Variation, then My Variations', t: 'Every callback and overtime' },
+        { h: 'Check the times', t: 'And the total' },
+        { h: 'Pencil to correct a time', t: 'Shows as edited' },
+        { h: 'Download', t: 'A spreadsheet file, for your form' },
+        { h: 'Delete once submitted', t: 'One at a time, or Delete all' },
+      ],
+      notes: "Variation, then My Variations. Each callback and overtime is listed with its start, finish and length, and the total is at the top. Tapped Complete late? The pencil lets you fix a time, and it's marked edited. Download gives you a spreadsheet file for your variation form. Once it's submitted, delete them, one at a time with the bin, or Delete all.",
+    }],
   },
   {
     id: 'planner-lay-out-a-week',
@@ -276,26 +298,51 @@ const VIDEOS = [
     stepsNotes: "Phone Book, in the bottom bar. At the top is this week's on-call roster, one slot at a time: tap one to see who's on each day, and tap a name for their card, where the number calls and the email writes. Underneath, the Phone Book section has the other numbers your officers have added, all tap to call. The arrows move to other weeks.",
   },
   {
-    id: 'coffee-preferences',
+    id: 'settings',
     audience: 'staff',
     layout: 'side',
-    topic: 'Coffee',
-    sub: 'Setting your usual order',
+    topic: 'Settings and coffee',
+    sub: "Your profile, birthday, usual coffee and today's order",
     purpose: {
-      bullets: ['Same coffee most days?', 'Want it on the order without asking?', 'Not a coffee drinker?'],
-      notes: "Set your usual order once and it's on the morning coffee list every day you're working. No Coffee is an option too, so nobody chases you for an order.",
+      bullets: ['New mobile number?', 'Want a birthday cake?', 'Same coffee most days?', 'Coffee run this morning?'],
+      notes: "Settings is where you keep your own details up to date: your email and phone, an optional birthday notification, and your usual coffee. Your name, rank and FTE are set by your rostering officer. Then the Coffee button gathers everyone's usual order for the morning and writes the text to the coffee place for you.",
     },
     steps: [
-      { h: 'Settings, then Coffee', t: 'Your Coffee Order' },
-      { h: 'Choose the coffee', t: 'Or No Coffee' },
-      { h: 'Choose the milk', t: 'Espresso and long black are black' },
-      { h: 'Xtra shot?', t: 'Tick it. Every change saves straight away' },
+      { h: 'Settings, then Profile', t: 'Tap your phone or email to change it' },
+      { h: 'Your email', t: "It's the one you sign in with, too" },
+      { h: 'Birthday notification', t: 'Would you like one? Day and month only' },
+      { h: 'Dairy or gluten free?', t: 'Tick it so the cake is right, then Save' },
     ],
-    stepsShot: 'r_coffeeprefs',
-    stepsNotes: "Settings, Coffee. Pick your coffee, then your milk, and tick Xtra shot if you like. There's no save button: it's saved as you change it. Not a coffee drinker? Choose No Coffee, and you won't show up as needing an order.",
+    stepsShot: 'r_profile_birthday',
+    stepsNotes: "Settings, Profile. Tap your phone number or email to change it, then tap away and it's saved. Your email is also the one you sign in with. Under your phone is Birthday notification: tap Would you like one?, pick the day and month, no year, and tick dairy free or gluten free if that applies. Save. On your birthday, whoever does the coffee order gets a little pop-up with your name, and you get a happy birthday from Rstar. Nobody can look your birthday up. Name, rank and FTE come from your officer: if one's wrong, let them know.",
+    more: [{
+      title: 'Your usual coffee',
+      steps: [
+        { h: 'Settings, then Coffee', t: 'Your Coffee Order' },
+        { h: 'Choose the coffee', t: 'Or No Coffee' },
+        { h: 'Choose the milk', t: 'Espresso and long black are black' },
+        { h: 'Xtra shot?', t: 'Tick it. Every change saves straight away' },
+      ],
+      shot: 'r_coffeeprefs',
+      notes: "Then Coffee. Set your usual order once and it's on the morning coffee list every day you're working. Pick your coffee, then your milk, and tick Xtra shot if you like. There's no save button: it's saved as you change it. Not a coffee drinker? Choose No Coffee, and you won't show up as needing an order.",
+    }, {
+      title: "Sending today's order",
+      steps: [
+        { h: 'Tap Coffee', t: 'A red number: someone still needs an order' },
+        { h: 'Check the summary', t: "Everyone's order, totalled" },
+        { h: 'Needs a coffee order', t: 'Pick one, then Add to coffee list' },
+        { h: 'Untick, or add a visitor', t: 'Changes are shared, for today only' },
+        { h: 'Text the order', t: 'Pick up 10:25 or Delivery 10:30' },
+      ],
+      shot: 'r_coffee',
+      notes: "Tap Coffee. A red number on it means someone working this morning has no order yet. The summary at the top totals everyone's coffee. Under Needs a coffee order, pick one for them and Add to coffee list; it's for today only. Untick anyone not having one, or add a locum or visitor at the bottom. Everyone sees the same list. Then Text order, choose pick up or delivery, and your messages app opens with it written. On someone's birthday you'll see a pop-up first, with any dairy or gluten free note for the cake. At 9:00 the ED late consultant is emailed the morning's order too.",
+    }],
   },
   {
     id: 'coffee-order',
+    // Folded into deck 08 (settings and coffee). Kept so the decks after it
+    // keep their numbers; nothing is built for it.
+    skip: true,
     audience: 'staff',
     layout: 'side',
     topic: 'Coffee',
@@ -680,6 +727,9 @@ const VIDEOS = [
   },
   {
     id: 'profile',
+    // Folded into deck 08 (settings). Kept so the decks after it keep
+    // their numbers; nothing is built for it.
+    skip: true,
     audience: 'staff',
     layout: 'side',
     topic: 'Your profile',
@@ -719,6 +769,9 @@ const VIDEOS = [
   },
   {
     id: 'patient-detail',
+    // Folded into deck 04 (callbacks, overtime and My Variations). Kept so
+    // the decks after it keep their numbers; nothing is built for it.
+    skip: true,
     audience: 'staff',
     layout: 'side',
     topic: 'Callbacks',
@@ -739,6 +792,9 @@ const VIDEOS = [
   },
   {
     id: 'my-variations',
+    // Folded into deck 04 (callbacks, overtime and My Variations). Kept so
+    // the decks after it keep their numbers; nothing is built for it.
+    skip: true,
     audience: 'staff',
     layout: 'side',
     topic: 'My Variations',
@@ -835,7 +891,7 @@ function deck(v) {
       { type: 'purpose', title: "What it's for", ...v.purpose },
       ...(v.slides ? v.slides.map(x => ({ type: 'wide', ...x })) : [{ type: 'steps', title: v.stepsTitle || 'How to do it', items: v.steps, icon: 'MdTouchApp', shot: v.stepsShot, notes: v.stepsNotes }]),
       // A second feature in the same video gets its own steps slide.
-      ...(v.more ? [{ type: 'steps', title: v.more.title, items: v.more.steps, icon: 'MdTouchApp', shot: v.more.shot, notes: v.more.notes }] : []),
+      ...[].concat(v.more || []).map(m => ({ type: 'steps', title: m.title, items: m.steps, icon: 'MdTouchApp', shot: m.shot, notes: m.notes })),
       { type: 'help', title: 'Need a hand?', shot: help.shot, where: help.where, notes: help.notes },
     ],
   };
@@ -845,7 +901,7 @@ function deck(v) {
   const only = process.argv.slice(2);
   fs.mkdirSync('videos', { recursive: true });
   for (const [i, v] of VIDEOS.entries()) {
-    if (only.length && !only.includes(v.id)) continue;
+    if (v.skip || (only.length && !only.includes(v.id))) continue;
     const n = String(i + 1).padStart(2, '0');
     await build(deck(v), `videos/${n}-${v.audience}-${v.id}.pptx`);
   }

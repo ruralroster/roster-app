@@ -248,6 +248,15 @@ const bringUp = (locator, offset = 90) => locator.evaluate((el, off) => {
     await page.goto(ROSTAR, { waitUntil: 'networkidle' }); await page.waitForTimeout(2500);
     await shot(page, 'r_availability', async () => { await tap(page, 'Settings'); await tap(page, 'Availability'); });
     await shot(page, 'r_profile', async () => { await tap(page, 'Settings'); await tap(page, 'Profile'); await top(page); });
+    // The birthday form opened and filled in, in the browser only: nothing is saved.
+    await shot(page, 'r_profile_birthday', async () => {
+      await tap(page, 'Settings'); await tap(page, 'Profile');
+      await page.getByRole('button', { name: 'Would you like one?' }).click();
+      await page.getByLabel('Day').selectOption('14');
+      await page.getByLabel('Month').selectOption('3');
+      await page.getByLabel('Gluten free').check();
+      await bringUp(page.getByText('Birthday notification').first(), 200);
+    });
     await shot(page, 'r_coffeeprefs', async () => { await tap(page, 'Settings'); await page.locator('div.flex-wrap > button', { hasText: /^Coffee$/ }).click(); await top(page); });
     await shot(page, 'r_notifications', async () => { await tap(page, 'Settings'); await tap(page, 'Notifications'); });
     await shot(page, 'r_restrictions', async () => { await tap(page, 'Settings'); await tap(page, 'Restrictions'); await top(page); });
