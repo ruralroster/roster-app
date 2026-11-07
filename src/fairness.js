@@ -12,14 +12,20 @@
 //   - A job several people can do (it needs a skill more than one person
 //     holds, e.g. anaesthetics) is shared among those people by effective
 //     FTE.
-//   - Everything else (ward jobs) is shared among everyone on what's left:
-//     FTE times the share of their shifts not on skill-restricted jobs.
+//   - Everything else (ED and ward jobs, any job anyone can do) is shared
+//     among everyone on what's left: FTE times the share of their shifts
+//     not on skill-restricted work.
+//   - What's skill-restricted is the place someone was booked into, not
+//     just the job: an ED AST in a place that needs the ED skill is doing
+//     specialist work (shared among the ED ASTs); in an ordinary ED place,
+//     common work. exposureKey() gives such a place its own key.
 //   - Weekends: everyone, by effective FTE. Nobody is exempt.
-//   - On call: each on-call type among the people who can do it (hold its
-//     skill, and have done it in the last 12 months or are willing), by
-//     effective FTE; and all on call together across the hospital, among
-//     everyone who does any. A type only one person can do is theirs, like
-//     a solo job.
+//   - On call, the same way: a type that needs a skill (anaesthetics on
+//     call) among the people who can do it; a type everyone does (ED on
+//     call overnight) on what's left of each person's share of all on call
+//     after their specialist on call. Only people who've done it in the last
+//     12 months or are willing count. A type only one person can do is
+//     theirs, like a solo job. onCallScore is all on call together.
 // Each score is what they've done ÷ their fair share: 1 = exactly fair,
 // under 1 = behind (they should go first), over 1 = ahead.
 
@@ -27,6 +33,17 @@ import { DEFAULT_FTE } from './availabilityUtils';
 import { addDays } from './plannerUtils';
 
 const hasAny = (held, needed) => needed.some(id => held.includes(id));
+
+// The key a booking counts under: the activity, or for a place that needs
+// a skill, `${activityId}#${skill ids}` (that skilled work on its own).
+export function exposureKey(activityId, place) {
+  const skills = place?.required_advanced_skills || [];
+  return skills.length ? `${activityId}#${[...skills].sort().join(',')}` : activityId;
+}
+
+// Skills a key needs: from the map, or a skilled place's own key.
+const skillsForKey = (activitySkills, key) =>
+  activitySkills.get(key) || (key.includes('#') ? key.split('#')[1].split(',') : []);
 const sumOf = (values) => values.reduce((a, b) => a + b, 0);
 
 // activityId -> skill ids its staff places need. An activity's own
@@ -72,7 +89,7 @@ export function buildFairness({
   const eligibleByActivity = new Map();
   const soloOwner = new Map(); // activityId -> staffId
   for (const activityId of activityIds) {
-    const needed = activitySkills.get(activityId) || [];
+    const needed = skillsForKey(activitySkills, activityId);
     const eligible = eligibleForSkills(needed);
     eligibleByActivity.set(activityId, eligible);
     if (needed.length && eligible.length === 1) soloOwner.set(activityId, eligible[0]);
@@ -85,7 +102,7 @@ export function buildFairness({
   const soloShifts = new Map(ids.map(id => [id, 0]));
   const restrictedShifts = new Map(ids.map(id => [id, 0]));
   for (const activityId of activityIds) {
-    const restricted = (activitySkills.get(activityId) || []).length > 0;
+    const restricted = skillsForKey(activitySkills, activityId).length > 0;
     if (!restricted) continue;
     for (const id of ids) {
       const n = countOn(id, activityId);
@@ -124,6 +141,20 @@ export function buildFairness({
   const onCallPool = ids.filter(id => dutyTypes.some(dt => dutyEligible.get(dt.key).includes(id)));
   const totalSharedOnCall = sumOf(onCallPool.map(sharedOnCall));
 
+  // On call works like jobs: a type that needs a skill (anaesthetics on
+  // call) is specialist, shared among those who can do it; a type anyone
+  // does (ED on call overnight) is common, shared on what's left of each
+  // person's fair share of all on call once their specialist on call is
+  // taken off.
+  const specialistType = (dt) => dt.required_advanced_skills?.length > 0 && !dutySolo.has(dt.key);
+  const poolFte = sumOf(onCallPool.map(id => effFte.get(id)));
+  const onCallLeft = new Map(ids.map(id => {
+    if (!onCallPool.includes(id)) return [id, 0];
+    const fairTotal = poolFte ? totalSharedOnCall * effFte.get(id) / poolFte : 0;
+    const specialist = sumOf(dutyTypes.filter(specialistType).map(dt => dutyCount(id, dt.key)));
+    return [id, Math.max(0, fairTotal - specialist)];
+  }));
+
   return {
     soloOwner,
     effectiveFte: (id) => effFte.get(id),
@@ -132,7 +163,7 @@ export function buildFairness({
     // they can't do it). Lower = more due.
     activityScore(id, activityId) {
       if (soloOwner.has(activityId)) return null;
-      const restricted = (activitySkills.get(activityId) || []).length > 0;
+      const restricted = skillsForKey(activitySkills, activityId).length > 0;
       const pool = eligibleByActivity.get(activityId) || ids;
       return ratio(countOn(id, activityId), totalOn(activityId), id, pool, restricted ? effFte : openFte);
     },
@@ -146,9 +177,10 @@ export function buildFairness({
     // theirs alone or they can't do it.
     dutyScore(id, key) {
       if (dutySolo.has(key)) return null;
+      const dt = dutyTypes.find(d => d.key === key);
       const pool = dutyEligible.get(key) || [];
       const total = sumOf(pool.map(p => dutyCount(p, key)));
-      return ratio(dutyCount(id, key), total, id, pool, effFte);
+      return ratio(dutyCount(id, key), total, id, pool, dt && specialistType(dt) ? effFte : onCallLeft);
     },
 
     // All on call together, across the hospital (solo types left out).
@@ -158,13 +190,11 @@ export function buildFairness({
   };
 }
 
-// For ranking someone for one on-call type: half how they stand on that
-// type, half on all on call. null if they can't do it (or it's theirs alone).
+// For ranking someone for one on-call type: that type's score, which for a
+// common type already allows for all their on call across the hospital.
+// null if they can't do it (or it's theirs alone).
 export function dutyRankScore(fairness, id, key) {
-  const own = fairness.dutyScore(id, key);
-  if (own === null) return null;
-  const overall = fairness.onCallScore(id);
-  return overall === null ? own : (own + overall) / 2;
+  return fairness.dutyScore(id, key);
 }
 
 // "0.8× fair share" for pickers and reports.

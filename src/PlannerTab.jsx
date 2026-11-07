@@ -40,7 +40,7 @@ import {
   hhmm, addDays, firstName, jobForCard, isAdminJob, isSenior, hasAnySkill, placeMismatch, layOutCard, dayConflict, rankJobsForPerson, withBookings,
 } from './plannerUtils';
 import { payFortnightRange, fortnightLoad, fteFull, hoursBooked, formatHours, FULL_TIME_HOURS_PER_WEEK, FTE_FULL_LABEL } from './fteFortnight';
-import { buildFairness } from './fairness';
+import { buildFairness, exposureKey } from './fairness';
 
 // ============================================================
 // PLANNER — Officer view tab
@@ -479,7 +479,16 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
         return layout.places.some(({ place, slots }) =>
           place.kind === 'staff' && !placeMismatch(place, selectedStaff, rankRows) && slots.some(slot => !slot.assignment && !slot.visitor));
       })
-      .map(card => ({ cardId: card.theatre_activity_id, activityId: card.activity_id, date: card.date }));
+      // Ranked as the place they'd take: a skilled place (an ED AST place)
+      // counts as that skilled work, an ordinary one as the common job.
+      .map(card => {
+        const job = jobForCard(card, jobTypes);
+        const layout = layOutCard(card, job, places, assignments.filter(a => a.theatre_activity_id === card.theatre_activity_id),
+          visitors.filter(v => v.theatre_activity_id === card.theatre_activity_id), staffById, rankRows);
+        const open = layout.places.find(({ place, slots }) =>
+          place.kind === 'staff' && !placeMismatch(place, selectedStaff, rankRows) && slots.some(slot => !slot.assignment && !slot.visitor));
+        return { cardId: card.theatre_activity_id, activityId: exposureKey(card.activity_id, open?.place), date: card.date };
+      });
     // One per person per day, like the history counts shifts.
     const seen = new Set();
     const bookings = assignments.filter(a => {
@@ -487,7 +496,11 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
-    }).map(a => ({ staffId: a.staff_id, activityId: cardById.get(a.theatre_activity_id)?.activity_id, date: a.date }));
+    }).map(a => {
+      const activityId = cardById.get(a.theatre_activity_id)?.activity_id;
+      const place = a.place_id && places.find(p => p.place_id === a.place_id);
+      return { staffId: a.staff_id, activityId: activityId && exposureKey(activityId, place), date: a.date };
+    });
     const history = withBookings(exposure, bookings, todayStr);
     const fairness = buildFairness({ ...exposure, ...history });
     return rankJobsForPerson(selectedStaff.staff_id, candidates, fairness, history.statsByStaffActivity);

@@ -1,4 +1,4 @@
-import { buildFairness, activitySkillMap, dutyRankScore, formatFairShare, goesWithOnCall } from './fairness';
+import { buildFairness, activitySkillMap, dutyRankScore, formatFairShare, goesWithOnCall, exposureKey } from './fairness';
 
 const stats = (rows) => new Map(rows.map(([staff, activity, count]) => [`${staff}|${activity}`, { count, lastDate: '2026-10-01' }]));
 const totals = (rows) => new Map(rows);
@@ -71,14 +71,18 @@ describe('buildFairness', () => {
       dutyTypes: [{ key: 'anaes_oc', required_advanced_skills: ['anaes'] }, { key: 'ed_oc', required_advanced_skills: [] }],
       dutyCounts: new Map([['a|anaes_oc', 10], ['b|anaes_oc', 10], ['a|ed_oc', 5], ['c|ed_oc', 15]]),
     });
-    expect(f.dutyScore('a', 'anaes_oc')).toBeCloseTo(1);
+    expect(f.dutyScore('a', 'anaes_oc')).toBeCloseTo(1); // specialist: shared between a and b
     expect(f.dutyScore('c', 'anaes_oc')).toBeNull();
     expect(f.dutyScore('d', 'ed_oc')).toBeNull(); // not willing, never done it
     // All on call: 40 among a, b, c — 13.3 each. a did 15, b 10, c 15.
     expect(f.onCallScore('b')).toBeCloseTo(0.75);
     expect(f.onCallScore('d')).toBeNull();
-    // ED on call among a, b, c: b has done none, so b first.
-    expect(dutyRankScore(f, 'b', 'ed_oc')).toBeLessThan(dutyRankScore(f, 'a', 'ed_oc'));
+    // ED on call is common: on what's left after anaesthetics on call. Fair
+    // all-on-call share is 13.3 each; a and b have done 10 anaesthetics, so
+    // 3.3 ED each is fair, c 13.3. a did 5 (over), b none (due), c 15.
+    expect(f.dutyScore('a', 'ed_oc')).toBeCloseTo(1.5);
+    expect(f.dutyScore('c', 'ed_oc')).toBeCloseTo(1.125);
+    expect(dutyRankScore(f, 'b', 'ed_oc')).toBe(0);
   });
 });
 
@@ -114,5 +118,33 @@ describe('goesWithOnCall', () => {
     expect(goesWithOnCall(dt, 'me', '2026-11-02', [{ staff_id: 'me', date: '2026-11-03', shift_id: 'am' }])).toBe(true);
     expect(goesWithOnCall(dt, 'me', '2026-11-02', [{ staff_id: 'me', date: '2026-11-03', shift_id: 'late' }])).toBe(false);
     expect(goesWithOnCall({}, 'me', '2026-11-02', [{ staff_id: 'me', date: '2026-11-02', shift_id: 'late' }])).toBe(false);
+  });
+});
+
+describe('skilled places', () => {
+  it("counts an ED AST's AST-place shifts apart from the ED everyone does", () => {
+    // e1, e2 are ED ASTs: 30 AST-place ED each, plus 20 ordinary ED and 50 ward.
+    // w1, w2 aren't: 25 ED and 75 ward. Ordinary ED and ward are then fair for all.
+    const astEd = exposureKey('ed', { required_advanced_skills: ['edSkill'] });
+    expect(astEd).toBe('ed#edSkill');
+    const staff = [
+      { staff_id: 'e1', fte: 1, advanced_skills: ['edSkill'] }, { staff_id: 'e2', fte: 1, advanced_skills: ['edSkill'] },
+      { staff_id: 'w1', fte: 1 }, { staff_id: 'w2', fte: 1 },
+    ];
+    const f = buildFairness({
+      staff,
+      totalShiftsByStaff: totals(staff.map(s => [s.staff_id, 100])),
+      statsByStaffActivity: stats([
+        ['e1', astEd, 30], ['e1', 'ed', 14], ['e1', 'ward', 56], ['e2', astEd, 30], ['e2', 'ed', 14], ['e2', 'ward', 56],
+        ['w1', 'ed', 20], ['w1', 'ward', 80], ['w2', 'ed', 20], ['w2', 'ward', 80],
+      ]),
+      activitySkills: new Map([['ed', []], ['ward', []]]),
+    });
+    expect(f.activityScore('e1', astEd)).toBeCloseTo(1);
+    expect(f.activityScore('w1', astEd)).toBeNull();
+    for (const id of ['e1', 'w1']) {
+      expect(f.activityScore(id, 'ed')).toBeCloseTo(1);
+      expect(f.activityScore(id, 'ward')).toBeCloseTo(1);
+    }
   });
 });

@@ -8,7 +8,7 @@ import { gradeForSection, GRADE_LABEL } from './staffGrade';
 import { isEligibleForOffer, offerIsFilled } from './offerEligibility';
 import { findActiveOnCalls, findOvertimeShifts } from './callbackUtils';
 import { bestJobForNewCard, jobForImportedShift } from './plannerUtils';
-import { buildFairness, activitySkillMap, dutyRankScore } from './fairness';
+import { buildFairness, activitySkillMap, dutyRankScore, exposureKey as fairnessKey } from './fairness';
 import { missingRolesForCard, classifyDayStatus } from './volunteerUtils';
 
 console.log('=== supabaseClient.js LOADING ===');
@@ -2266,7 +2266,7 @@ async function getCaseMixRawData(departmentId, asOfDate) {
   startDate.setFullYear(startDate.getFullYear() - 1);
   const startStr = toLocalDateStr(startDate);
 
-  const [staffRes, activitiesRes, assignmentsRes, theatreRes] = await Promise.all([
+  const [staffRes, activitiesRes, assignmentsRes, theatreRes, placesRes] = await Promise.all([
     supabase
       .from('staff')
       .select('*')
@@ -2280,7 +2280,7 @@ async function getCaseMixRawData(departmentId, asOfDate) {
       .order('name'),
     supabase
       .from('staff_assignments')
-      .select('staff_id, date, location_id, shift_id, leave_code')
+      .select('staff_id, date, location_id, shift_id, leave_code, place_id')
       .eq('department_id', departmentId)
       .gte('date', startStr)
       .lte('date', endStr),
@@ -2290,6 +2290,8 @@ async function getCaseMixRawData(departmentId, asOfDate) {
       .eq('department_id', departmentId)
       .gte('date', startStr)
       .lte('date', endStr),
+    // Optional (departments before the Planner): which places need a skill.
+    supabase.from('job_places').select('place_id, required_advanced_skills').eq('department_id', departmentId),
   ]);
 
   if (staffRes.error) throw staffRes.error;
@@ -2310,6 +2312,20 @@ async function getCaseMixRawData(departmentId, asOfDate) {
   const totalShiftsByStaff = new Map();
   const weekendShiftsByStaff = new Map();
   const statsByStaffActivity = new Map(); // `${staff_id}|${activity_id}` -> { count, lastDate }
+  // The same, for fairness: a booking in a place that needs a skill counts
+  // under its own key (fairness.js exposureKey, imported as fairnessKey), so an ED AST's AST-place
+  // shifts aren't mixed with the ED everyone does.
+  const fairStatsByStaffActivity = new Map();
+  const placeById = new Map((placesRes.data || []).map(p => [p.place_id, p]));
+  const bump = (map, key, date) => {
+    const existing = map.get(key);
+    if (existing) {
+      existing.count += 1;
+      if (date > existing.lastDate) existing.lastDate = date;
+    } else {
+      map.set(key, { count: 1, lastDate: date });
+    }
+  };
 
   // One shift is sometimes several rows — spanning two session cards, or
   // covering two locations at once (Ward 1 + Ward 2). The total counts it
@@ -2330,14 +2346,8 @@ async function getCaseMixRawData(departmentId, asOfDate) {
     if (countedExposure.has(exposureKey)) return;
     countedExposure.add(exposureKey);
 
-    const key = `${a.staff_id}|${activityId}`;
-    const existing = statsByStaffActivity.get(key);
-    if (existing) {
-      existing.count += 1;
-      if (a.date > existing.lastDate) existing.lastDate = a.date;
-    } else {
-      statsByStaffActivity.set(key, { count: 1, lastDate: a.date });
-    }
+    bump(statsByStaffActivity, `${a.staff_id}|${activityId}`, a.date);
+    bump(fairStatsByStaffActivity, `${a.staff_id}|${fairnessKey(activityId, placeById.get(a.place_id))}`, a.date);
   });
 
   return {
@@ -2346,6 +2356,7 @@ async function getCaseMixRawData(departmentId, asOfDate) {
     totalShiftsByStaff,
     weekendShiftsByStaff,
     statsByStaffActivity,
+    fairStatsByStaffActivity,
   };
 }
 
@@ -2398,7 +2409,7 @@ async function loadFairnessInputs(departmentId, asOfDate) {
     staff: raw.staffList,
     totalShiftsByStaff: raw.totalShiftsByStaff,
     weekendShiftsByStaff: raw.weekendShiftsByStaff,
-    statsByStaffActivity: raw.statsByStaffActivity,
+    statsByStaffActivity: raw.fairStatsByStaffActivity,
     activitySkills: activitySkillMap(raw.activityList, jobsRes.data || [], placesRes.data || []),
     dutyTypes,
     dutyCounts,
@@ -2470,8 +2481,8 @@ export async function getDaysBooked(departmentId, fromStr, toStr) {
 }
 
 // The Day view's on-call pickers: dutyKey -> staffId -> rank score
-// (dutyRankScore: half that on-call type among the people who can do it,
-// half all on call across the hospital). Lower = more due.
+// (dutyRankScore: a specialist type among the people who can do it; a
+// common one on what's left of their share of all on call). Lower = more due.
 export async function getDutyFairness(departmentId, date) {
   try {
     const inputs = await getFairnessInputs(departmentId, date);
