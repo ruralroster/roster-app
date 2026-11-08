@@ -1,4 +1,4 @@
-import { jobForCard, placeMismatch, layOutCard, dayConflict, isAdminJob, daysWorked, intervalOn, intervalsOverlap, groupUnconverted, bestJobForNewCard, jobForImportedShift, rankJobsForPerson, withBookings } from './plannerUtils';
+import { jobForCard, placeMismatch, layOutCard, dayConflict, isAdminJob, daysWorked, intervalOn, intervalsOverlap, groupUnconverted, bestJobForNewCard, jobForImportedShift, rankJobsForPerson, rankPeopleForPlace, withBookings } from './plannerUtils';
 import { buildFairness } from './fairness';
 
 const ranks = [
@@ -277,6 +277,53 @@ describe('rankJobsForPerson', () => {
       { cardId: 'a', activityId: 'ward', date: '2026-11-02' },
     ], fair(st), stats);
     expect(ranks.get('a')).toBe(1);
+  });
+});
+
+describe('rankPeopleForPlace', () => {
+  const staff = [{ staff_id: 'a', fte: 1 }, { staff_id: 'b', fte: 1 }, { staff_id: 'c', fte: 1 }];
+  const totals = new Map([['a', 20], ['b', 20], ['c', 20]]);
+  const stats = new Map([
+    ['a|ward', { count: 12, lastDate: '2026-11-01' }],
+    ['b|ward', { count: 6, lastDate: '2026-10-20' }],
+    ['c|ward', { count: 9, lastDate: '2026-10-25' }],
+  ]);
+  const fair = (st = staff, s = stats, skills = new Map(), weekends = new Map()) =>
+    buildFairness({ staff: st, totalShiftsByStaff: totals, statsByStaffActivity: s, activitySkills: skills, weekendShiftsByStaff: weekends });
+  const people = [
+    { staffId: 'a', name: 'Ann', share: 0.2 },
+    { staffId: 'b', name: 'Bea', share: 0.5 },
+    { staffId: 'c', name: 'Cal', share: 0.1 },
+  ];
+  const order = (list) => list.map(p => p.staffId);
+
+  it('puts whoever is furthest under their fair share first', () => {
+    expect(order(rankPeopleForPlace(people, 'ward', '2026-11-11', fair(), stats))).toEqual(['b', 'c', 'a']);
+  });
+
+  it('puts yesterday\'s person on top, marked when fairness wouldn\'t have', () => {
+    const list = rankPeopleForPlace(people, 'ward', '2026-11-11', fair(), stats, new Set(['a']));
+    expect(order(list)).toEqual(['a', 'b', 'c']);
+    expect(list[0]).toMatchObject({ yesterday: true, jumped: true });
+    expect(list[1].jumped).toBe(false);
+  });
+
+  it('doesn\'t mark yesterday\'s person when fairness puts them first anyway', () => {
+    const list = rankPeopleForPlace(people, 'ward', '2026-11-11', fair(), stats, new Set(['b']));
+    expect(list[0]).toMatchObject({ staffId: 'b', yesterday: true, jumped: false });
+  });
+
+  it('puts the only person who can do a job first', () => {
+    const skills = new Map([['endo', ['sk']]]);
+    const st = [{ staff_id: 'a', fte: 1, advanced_skills: ['sk'] }, { staff_id: 'b', fte: 1 }, { staff_id: 'c', fte: 1 }];
+    const s2 = new Map([['a|endo', { count: 15, lastDate: '2026-11-01' }]]);
+    const list = rankPeopleForPlace(people.slice(0, 1), 'endo', '2026-11-11', fair(st, s2, skills), s2);
+    expect(list[0]).toMatchObject({ staffId: 'a', solo: true });
+  });
+
+  it('on a weekend, puts whoever is behind on weekends first', () => {
+    const weekends = new Map([['a', 0], ['b', 6], ['c', 3]]);
+    expect(order(rankPeopleForPlace(people, 'ward', '2026-11-14', fair(staff, stats, new Map(), weekends), stats))).toEqual(['a', 'c', 'b']);
   });
 });
 

@@ -2280,7 +2280,7 @@ async function getCaseMixRawData(departmentId, asOfDate) {
       .order('name'),
     supabase
       .from('staff_assignments')
-      .select('staff_id, date, location_id, shift_id, leave_code, place_id')
+      .select('staff_id, date, location_id, shift_id, leave_code, place_id, on_call')
       .eq('department_id', departmentId)
       .gte('date', startStr)
       .lte('date', endStr),
@@ -2333,6 +2333,10 @@ async function getCaseMixRawData(departmentId, asOfDate) {
   const countedShifts = new Set();
   const countedExposure = new Set();
   (assignmentsRes.data || []).forEach(a => {
+    // On call isn't a rostered shift: it's counted on its own (duty
+    // assignments), and left out here so a specialty's share of shifts
+    // (fairness.js) is of the day work only.
+    if (a.on_call) return;
     const shiftKey = assignmentShiftKey(a, { ignoreLocation: true });
     if (!countedShifts.has(shiftKey)) {
       countedShifts.add(shiftKey);
@@ -2384,7 +2388,7 @@ async function loadFairnessInputs(departmentId, asOfDate) {
   const endDate = asOfDate ? new Date(asOfDate) : new Date();
   const startDate = new Date(endDate);
   startDate.setFullYear(startDate.getFullYear() - 1);
-  const [raw, jobsRes, placesRes, dutyTypesRes, dutyRes] = await Promise.all([
+  const [raw, jobsRes, placesRes, dutyTypesRes, dutyRes, skillsRes] = await Promise.all([
     getCaseMixRawData(departmentId, endDate),
     supabase.from('job_types').select('job_type_id, activity_id').eq('department_id', departmentId),
     supabase.from('job_places').select('job_type_id, kind, required_advanced_skills').eq('department_id', departmentId),
@@ -2394,8 +2398,10 @@ async function loadFairnessInputs(departmentId, asOfDate) {
       .eq('department_id', departmentId)
       .gte('date', toLocalDateStr(startDate))
       .lte('date', toLocalDateStr(endDate)),
+    supabase.from('advanced_skills').select('advanced_skill_id, specialty_activity_ids').eq('department_id', departmentId),
   ]);
-  // Jobs and places are optional (departments before the Planner).
+  // Jobs and places are optional (departments before the Planner), and
+  // so are specialty activities (before 2026-11-09_open_specialty_activities.sql).
   for (const res of [dutyTypesRes, dutyRes]) if (res.error) throw res.error;
   const dutyTypes = dutyTypesRes.data || [];
   const onCallKeys = new Set(dutyTypes.map(d => d.key));
@@ -2413,6 +2419,9 @@ async function loadFairnessInputs(departmentId, asOfDate) {
     activitySkills: activitySkillMap(raw.activityList, jobsRes.data || [], placesRes.data || []),
     dutyTypes,
     dutyCounts,
+    specialtyActivities: new Map((skillsRes.error ? [] : skillsRes.data || [])
+      .filter(s => s.specialty_activity_ids?.length)
+      .map(s => [s.advanced_skill_id, s.specialty_activity_ids])),
   };
 }
 
@@ -2549,6 +2558,7 @@ export async function getFairnessReport(departmentId) {
         staff_name: staff.name,
         fte: staff.fte ?? DEFAULT_FTE,
         effective_fte: fairness.effectiveFte(id),
+        ast_time: fairness.astTime(id),
         total_shifts: inputs.totalShiftsByStaff.get(id) || 0,
         weekend_shifts: inputs.weekendShiftsByStaff.get(id) || 0,
         weekend_fairness_ratio: fairness.weekendScore(id),
@@ -2561,10 +2571,17 @@ export async function getFairnessReport(departmentId) {
         }])),
       };
     });
-    return { data: report, dutyTypes: inputs.dutyTypes, error: null };
+    // The benchmark specialty by name, for the report's note.
+    let astBenchmark = null;
+    if (fairness.astBenchmark) {
+      const { data: skill } = await supabase.from('advanced_skills').select('name')
+        .eq('advanced_skill_id', fairness.astBenchmark.skill).maybeSingle();
+      astBenchmark = { ...fairness.astBenchmark, name: skill?.name || 'another specialty' };
+    }
+    return { data: report, dutyTypes: inputs.dutyTypes, astBenchmark, error: null };
   } catch (err) {
     console.error('getFairnessReport error:', err);
-    return { data: [], dutyTypes: [], error: err };
+    return { data: [], dutyTypes: [], astBenchmark: null, error: err };
   }
 }
 
@@ -2878,7 +2895,9 @@ export async function getWeekTemplateApplicationsForRange(departmentId, startWee
 // against an active shift the same way the Day view's Add Activity already
 // does (falling back to any active shift) purely to satisfy that column —
 // the card's actual times come from the entry's start_time/end_time.
-export async function applyWeekTemplate(departmentId, weekStartDate, weekTemplateId) {
+// fromDate (YYYY-MM-DD): days before it are left alone (the Planner's
+// locked past days).
+export async function applyWeekTemplate(departmentId, weekStartDate, weekTemplateId, { fromDate = null } = {}) {
   console.log('applyWeekTemplate called', departmentId, weekStartDate, weekTemplateId);
   const weekStartStr = toLocalDateStr(weekStartDate);
 
@@ -2897,6 +2916,7 @@ export async function applyWeekTemplate(departmentId, weekStartDate, weekTemplat
       const date = new Date(weekStartDate);
       date.setDate(date.getDate() + entry.day_of_week);
       const dateStr = toLocalDateStr(date);
+      if (fromDate && dateStr < fromDate) continue;
 
       // An entry saved from the Planner carries its job: only that job
       // (or a card with the same place, activity and hours) counts as
@@ -4377,6 +4397,23 @@ export async function createAdvancedSkill(departmentId, name) {
     return { data, error };
   } catch (err) {
     console.error('createAdvancedSkill error:', err);
+    return { data: null, error: err };
+  }
+}
+
+// The activities that are this skill's specialty though anyone can do
+// them (ED for Emergency) — see migrations/2026-11-09_open_specialty_activities.sql.
+export async function updateAdvancedSkillSpecialty(advancedSkillId, activityIds) {
+  try {
+    const { data, error } = await supabase
+      .from('advanced_skills')
+      .update({ specialty_activity_ids: activityIds })
+      .eq('advanced_skill_id', advancedSkillId)
+      .select()
+      .single();
+    return { data, error };
+  } catch (err) {
+    console.error('updateAdvancedSkillSpecialty error:', err);
     return { data: null, error: err };
   }
 }
@@ -6954,7 +6991,7 @@ export async function saveWeekMeetingsToTemplate(weekTemplateId, weekStartDate, 
 
 // A template's meetings onto a week, skipping any already there (same
 // type and start time that day). Settings come from the type as it is now.
-export async function applyTemplateMeetings(departmentId, weekStartDate, weekTemplateId) {
+export async function applyTemplateMeetings(departmentId, weekStartDate, weekTemplateId, { fromDate = null } = {}) {
   try {
     const { data: rows, error } = await supabase.from('week_template_meetings').select('*').eq('week_template_id', weekTemplateId);
     if (error) return { error: isMissingTableError(error) ? null : error };
@@ -6973,7 +7010,7 @@ export async function applyTemplateMeetings(departmentId, weekStartDate, weekTem
     for (const row of rows) {
       const type = meetingTypes.find(t => t.meeting_type_id === row.meeting_type_id);
       const date = dateFor(row.day_of_week);
-      if (!type) continue;
+      if (!type || (fromDate && date < fromDate)) continue;
       if (existing.some(m => m.date === date && m.meeting_type_id === row.meeting_type_id && m.start_time?.slice(0, 5) === row.start_time?.slice(0, 5))) continue;
       const res = await createMeetingFromType(departmentId, date, type, { start_time: row.start_time, end_time: row.end_time });
       if (res.error) return { error: res.error };

@@ -28,8 +28,8 @@ reportWebVitals();
 // app installs as a PWA and loads instantly offline. It never caches
 // Supabase requests — see that file's own comment. onUpdate hands the
 // newly-installed (but not yet active) worker to UpdateBanner, which
-// offers a one-click way to activate and reload it — see that file's
-// comment for why that's needed at all.
+// activates it and reloads at the first safe moment — see that file's
+// comment.
 serviceWorkerRegistration.register({
   onUpdate: (registration) => {
     if (registration.waiting) {

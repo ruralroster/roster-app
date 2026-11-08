@@ -148,3 +148,54 @@ describe('skilled places', () => {
     }
   });
 });
+
+describe('a specialty anyone can cover (ED for an ED AST)', () => {
+  // Two anaesthetic ASTs spend 4 of 10 shifts on anaesthetics; two obs
+  // ASTs 9 of 10 on obstetrics (the service needs it). An ED AST and a
+  // registrar with no AST do ED and wards, which anyone can do.
+  const staff = [
+    { staff_id: 'anA', fte: 1, advanced_skills: ['anaes'] },
+    { staff_id: 'anB', fte: 1, advanced_skills: ['anaes'] },
+    { staff_id: 'obA', fte: 1, advanced_skills: ['obs'] },
+    { staff_id: 'obB', fte: 1, advanced_skills: ['obs'] },
+    { staff_id: 'edA', fte: 1, advanced_skills: ['ed'] },
+    { staff_id: 'reg', fte: 1 },
+  ];
+  const totals = new Map(staff.map(s => [s.staff_id, 10]));
+  const activitySkills = new Map([['anaesthetics', ['anaes']], ['obstetrics', ['obs']], ['ed', []], ['ward', []]]);
+  const stats = (edAst) => new Map(Object.entries({
+    'anA|anaesthetics': 4, 'anA|ed': 3, 'anA|ward': 3,
+    'anB|anaesthetics': 4, 'anB|ed': 3, 'anB|ward': 3,
+    'obA|obstetrics': 9, 'obA|ward': 1,
+    'obB|obstetrics': 9, 'obB|ward': 1,
+    'edA|ed': edAst.ed, 'edA|ward': edAst.ward,
+    'reg|ed': 5, 'reg|ward': 5,
+  }).map(([k, count]) => [k, { count, lastDate: '2026-11-01' }]));
+  const build = (edAst, specialtyActivities = new Map([['ed', ['ed']]])) => buildFairness({
+    staff, totalShiftsByStaff: totals, statsByStaffActivity: stats(edAst), activitySkills, specialtyActivities,
+  });
+
+  it('benchmarks on the least service-bound specialty, not obstetrics', () => {
+    expect(build({ ed: 7, ward: 3 }).astBenchmark).toMatchObject({ skill: 'anaes', share: 0.4 });
+  });
+
+  it('counts the ED AST\'s ED up to that share as specialist time, so their ward share matches an anaesthetic AST\'s', () => {
+    const f = build({ ed: 7, ward: 3 });
+    expect(f.astTime('edA')).toEqual({ done: 7, quota: 4 });
+    expect(f.activityScore('edA', 'ward')).toBeCloseTo(f.activityScore('anA', 'ward'));
+    expect(f.activityScore('edA', 'ed')).toBeCloseTo(f.activityScore('anA', 'ed'));
+  });
+
+  it('without the setting, the ED AST looks ahead on ED and behind on wards', () => {
+    const f = build({ ed: 7, ward: 3 }, new Map());
+    expect(f.activityScore('edA', 'ed')).toBeGreaterThan(f.activityScore('reg', 'ed'));
+    expect(f.activityScore('edA', 'ward')).toBeLessThan(f.activityScore('anA', 'ward'));
+  });
+
+  it('puts the ED AST first for ED while they\'re under their share', () => {
+    const f = build({ ed: 2, ward: 8 });
+    expect(f.activityScore('edA', 'ed')).toBeCloseTo(-0.5);
+    expect(f.activityScore('edA', 'ed')).toBeLessThan(f.activityScore('reg', 'ed'));
+    expect(formatFairShare(f.activityScore('edA', 'ed'))).toBe('AST time due (50% of their share)');
+  });
+});

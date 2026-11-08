@@ -508,6 +508,8 @@
         </ol>
         <p>A saved week can be reused. <strong>Save week as template</strong> stores the week's jobs under a name you choose. Later, pick the template from the <strong>Template…</strong> list beside a week and tap <strong>Apply</strong> to lay the same jobs down.</p>
 
+        <p><strong>Past days are read-only.</strong> Once a day has passed, the roster for it is the record of who worked, which payroll and fairness count from, so nothing on it can be booked, removed or laid out. To fix what actually happened (sick cover, a swap made on the day), tap <strong>Correct</strong> under that day and confirm. The day then shows <strong>Correcting · lock</strong>: make the change, then tap it to lock the day again. Applying a week template never adds anything to past days.</p>
+
         <h4>2 · Fill places</h4>
         <ol>
           <li>Pick a person in the bar at the bottom. Use the <strong>Show</strong> filter (Everyone, Seniors, Juniors or a single rank) to narrow the list. Each name shows how much of their FTE is still to allocate for the weeks shown, as a percentage (44 hours a week is a full-time FTE). It turns amber under 10% left.</li>
@@ -521,6 +523,7 @@
             </ul>
           </li>
           <li><strong>FTE cap:</strong> once someone has been booked their FTE's hours in a pay fortnight, they can't be booked for more in it: those places stay grey. Full time is 44 hours a week, so 88 a fortnight at 1.0 FTE and 70.4 at 0.8. Hours come from each shift's length; leave counts too (a leave day without a shift counts as 8.8 hours), on-call cards don't. Their name shows <strong>full</strong> in red once there. A volunteer can still be booked past it, with a warning.</li>
+          <li><strong>Let fairness pick:</strong> with nobody picked, tap an empty place. The fairest person for it appears in the place with a question mark, and their other bookings that pay fortnight are ringed in blue. Tap it again for everyone who's free and qualified for that place that day, fairest first, with their score and % left; tap a name to book them. Whoever did the same job the day before goes to the top, so the work carries on: in amber if fairness alone wouldn't have put them there.</li>
           <li>To add someone on top of a job's places, tap <strong>+ extra</strong> on that card. It's shown separately from the places, so the places still read as covered or short.</li>
           <li>For a visiting surgeon or dentist, tap an amber place and type their name. Visitors aren't staff: they're not in payroll or fairness counts. They do show on the Day view card and in the staff app's Day tab, and a card with a visitor on it counts as covered.</li>
           <li>District doctors booked from DR Roster appear as visitors marked <strong>From DR Roster</strong>, in an empty place for their role (or as an extra if there's none). Change or remove them in DR Roster, not here.</li>
@@ -699,6 +702,14 @@
         <div class="example-row"><span class="skill-chip">Anaesthetics</span><span class="arrow">or</span><span class="skill-chip">Endoscopy</span><span class="arrow">→</span>Endoscopy consultant slot</div>
         <div class="example-row"><span class="skill-chip">Anaesthetics</span><span class="arrow">or</span><span class="skill-chip">Obstetrics</span><span class="arrow">→</span>Obs Surgery</div>
         <div class="example-row"><span class="skill-chip">Anaesthetics</span><span class="arrow">→</span>overnight Anaesthetics on-call</div>
+        <h4>A specialty anyone can cover (ED for an ED AST)</h4>
+        <p>Some ASTs' specialty is work anyone can do: any AST or consultant can fill the ED spot, so ED needs no skill. Without telling Rstar, an ED AST's extra ED looks like ordinary ED. They'd seem ahead on ED and be steered onto wards. To fix that, tap <strong>Specialty</strong> next to the skill (e.g. Emergency) under Advanced Skills and tick the activities that are its specialty (ED). Then:</p>
+        <ul>
+          <li>a holder's shifts on that work count as their <strong>AST time</strong>, up to the share of shifts the least service-bound other specialty's ASTs spend in theirs (anaesthetics, say, rather than obstetrics, where the service needs someone every day);</li>
+          <li>that time comes out of their figures for everything else, so they still get their fair share of ordinary ED and wards on what's left, the same as an anaesthetic AST;</li>
+          <li>while they're under their share they come first for that work: pickers show "AST time due", and the Fairness report shows each one's AST time against their share.</li>
+        </ul>
+        <p>Leave it empty for a skill whose work needs the skill (Anaesthetics, Obstetrics); that's already counted as specialist time. This needs the database update in <code>migrations/2026-11-09_open_specialty_activities.sql</code>.</p>
         <div class="callout">
           <span class="mark">Existing assignments stay put</span>
           <p>Adding or changing a required skill only affects who's offered <em>next</em> time — someone already assigned before the requirement existed isn't removed from the card.</p>

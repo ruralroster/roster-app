@@ -326,6 +326,37 @@ export function rankJobsForPerson(staffId, candidates, fairness, statsByStaffAct
   return new Map(scored.map((c, i) => [c.cardId, i + 1]));
 }
 
+// Fill step, place first: who should take this empty place? people:
+// [{ staffId, name, share }] (share = hours booked ÷ FTE hours this pay
+// fortnight), already free and qualified for it. Fairest first, the same
+// order as rankJobsForPerson: a job only they can do, then on a weekend the
+// person furthest behind on weekends, then the lowest score for this job,
+// then the one who did it longest ago, then the least booked, then by name.
+// Anyone who did this job yesterday (yesterday: Set of staffIds) goes to the
+// top, so the work carries on; `jumped` marks those fairness alone wouldn't
+// have put there. Returns [{ staffId, name, score, solo, yesterday, jumped }].
+export function rankPeopleForPlace(people, activityId, dateStr, fairness, statsByStaffActivity, yesterday = new Set()) {
+  const day = new Date(`${dateStr}T00:00:00`).getDay();
+  const weekend = day === 0 || day === 6;
+  const scored = people.map(p => {
+    const solo = fairness.soloOwner.get(activityId) === p.staffId;
+    return {
+      ...p,
+      solo,
+      score: fairness.activityScore(p.staffId, activityId),
+      weekendScore: weekend ? fairness.weekendScore(p.staffId) ?? Infinity : 0,
+      last: statsByStaffActivity.get(`${p.staffId}|${activityId}`)?.lastDate || '0000-00-00',
+    };
+  });
+  const key = (p) => (p.solo ? -1 : p.score ?? Infinity);
+  scored.sort((a, b) => (b.solo - a.solo) || (a.weekendScore - b.weekendScore) || (key(a) - key(b))
+    || a.last.localeCompare(b.last) || (a.share - b.share) || a.name.localeCompare(b.name));
+  const carriedOn = scored.filter(p => yesterday.has(p.staffId)).length;
+  const ranked = scored.map((p, i) => ({ ...p, yesterday: yesterday.has(p.staffId), jumped: yesterday.has(p.staffId) && i >= carriedOn }));
+  return [...ranked.filter(p => p.yesterday), ...ranked.filter(p => !p.yesterday)]
+    .map(({ staffId, name, score, solo, yesterday: y, jumped }) => ({ staffId, name, score, solo, yesterday: y, jumped }));
+}
+
 // The 12-month history plus bookings after today (the week being planned),
 // so booking someone onto a job moves it down their list straight away.
 // bookings: [{ staffId, activityId, date }], one per shift.

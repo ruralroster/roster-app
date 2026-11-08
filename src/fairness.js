@@ -26,6 +26,15 @@
 //     after their specialist on call. Only people who've done it in the last
 //     12 months or are willing count. A type only one person can do is
 //     theirs, like a solo job. onCallScore is all on call together.
+//   - A specialty anyone can cover (ED for an ED AST: any AST or consultant
+//     can fill the ED spot) is set on the skill (specialtyActivities). Its
+//     holders' shifts on those activities count as specialist time up to
+//     the AST share: the share of shifts the least service-bound other
+//     shared specialty's holders spend in it (anaesthetics, say, rather
+//     than obstetrics, which the service needs every day). That time comes
+//     out of their figures for common work like any specialist time; while
+//     they're under it they're due those jobs first (score below 0). Past
+//     it, their ED is ordinary ED, shared with everyone.
 // Each score is what they've done ÷ their fair share: 1 = exactly fair,
 // under 1 = behind (they should go first), over 1 = ahead.
 
@@ -74,9 +83,12 @@ export function activitySkillMap(activities, jobTypes = [], places = []) {
 // weekendShiftsByStaff: staffId -> weekend shifts
 // dutyTypes: on-call duty types [{ key, required_advanced_skills }]
 // dutyCounts: `${staffId}|${dutyKey}` -> on-call shifts of that type
+// specialtyActivities: skillId -> activity ids that are that skill's
+//   specialty though anyone can do them (ED for the Emergency skill)
 export function buildFairness({
   staff, totalShiftsByStaff, statsByStaffActivity, activitySkills = new Map(),
   weekendShiftsByStaff = new Map(), dutyTypes = [], dutyCounts = new Map(),
+  specialtyActivities = new Map(),
 }) {
   const ids = staff.map(s => s.staff_id);
   const skillsOf = new Map(staff.map(s => [s.staff_id, s.advanced_skills || []]));
@@ -95,15 +107,48 @@ export function buildFairness({
     if (needed.length && eligible.length === 1) soloOwner.set(activityId, eligible[0]);
   }
   const countOn = (staffId, activityId) => statsByStaffActivity.get(`${staffId}|${activityId}`)?.count || 0;
-  const totalOn = (activityId) => sumOf(ids.map(id => countOn(id, activityId)));
+  const shiftsOf = (id) => totalShiftsByStaff.get(id) || 0;
+  const restrictedKeys = [...activityIds].filter(a => skillsForKey(activitySkills, a).length > 0);
+
+  // The AST share for open specialties: of each other skill shared by two
+  // or more people, the share of its holders' shifts spent on work that
+  // needs it; the lowest of those (the least service-bound specialty).
+  const astShares = [];
+  for (const skill of new Set(staff.flatMap(s => s.advanced_skills || []))) {
+    if (specialtyActivities.get(skill)?.length) continue;
+    const holders = ids.filter(id => skillsOf.get(id).includes(skill));
+    const keys = restrictedKeys.filter(a => !soloOwner.has(a) && skillsForKey(activitySkills, a).includes(skill));
+    if (holders.length < 2 || !keys.length) continue;
+    const done = sumOf(holders.flatMap(id => keys.map(a => countOn(id, a))));
+    const total = sumOf(holders.map(shiftsOf));
+    if (done > 0 && total > 0) astShares.push({ skill, share: done / total });
+  }
+  const benchmark = astShares.reduce((low, s) => (!low || s.share < low.share ? s : low), null);
+  const astShare = benchmark?.share || 0;
+
+  // Each person's open-specialty activities, their shifts there, and how
+  // many of those count as specialist time (skilled places there first).
+  const homeActs = new Map(ids.map(id => [id, new Set((skillsOf.get(id) || [])
+    .flatMap(skill => specialtyActivities.get(skill) || []))]));
+  const homeDone = (id) => sumOf([...homeActs.get(id)].map(a => countOn(id, a)));
+  const homeSkilled = (id) => sumOf(restrictedKeys.filter(k => homeActs.get(id).has(k.split('#')[0])).map(k => countOn(id, k)));
+  const homeQuota = (id) => (homeActs.get(id).size ? astShare * shiftsOf(id) : 0);
+  const homeSpecialist = new Map(ids.map(id => [id,
+    Math.min(homeDone(id), Math.max(0, homeQuota(id) - homeSkilled(id)))]));
+  // Shifts on an activity that count as common work.
+  const commonOn = (id, activityId) => {
+    const n = countOn(id, activityId);
+    const done = homeDone(id);
+    if (!n || !done || !homeActs.get(id).has(activityId)) return n;
+    return n - homeSpecialist.get(id) * n / done;
+  };
+  const totalOn = (activityId) => sumOf(ids.map(id => commonOn(id, activityId)));
 
   // Effective FTE: solo work taken out (specialist and weekend shares);
-  // all skill-restricted work taken out (open jobs).
+  // all specialist work taken out (open jobs).
   const soloShifts = new Map(ids.map(id => [id, 0]));
-  const restrictedShifts = new Map(ids.map(id => [id, 0]));
-  for (const activityId of activityIds) {
-    const restricted = skillsForKey(activitySkills, activityId).length > 0;
-    if (!restricted) continue;
+  const restrictedShifts = new Map(ids.map(id => [id, homeSpecialist.get(id)]));
+  for (const activityId of restrictedKeys) {
     for (const id of ids) {
       const n = countOn(id, activityId);
       if (!n) continue;
@@ -158,6 +203,13 @@ export function buildFairness({
   return {
     soloOwner,
     effectiveFte: (id) => effFte.get(id),
+    // The open-specialty benchmark: { skill, share } or null.
+    astBenchmark: benchmark,
+    // Someone's open-specialty time: { done, quota } in shifts, or null.
+    astTime(id) {
+      if (!homeActs.get(id)?.size || !astShare) return null;
+      return { done: homeDone(id) + homeSkilled(id), quota: homeQuota(id) };
+    },
 
     // Activity score for one person, or null if it's their solo job (or
     // they can't do it). Lower = more due.
@@ -165,7 +217,15 @@ export function buildFairness({
       if (soloOwner.has(activityId)) return null;
       const restricted = skillsForKey(activitySkills, activityId).length > 0;
       const pool = eligibleByActivity.get(activityId) || ids;
-      return ratio(countOn(id, activityId), totalOn(activityId), id, pool, restricted ? effFte : openFte);
+      if (restricted) return ratio(countOn(id, activityId), totalOn(activityId), id, pool, effFte);
+      // Their open specialty, under their AST share: due first, -1 (none
+      // done yet) up to 0 (share reached).
+      const quota = homeQuota(id);
+      if (homeActs.get(id)?.has(activityId) && quota > 0) {
+        const done = homeDone(id) + homeSkilled(id);
+        if (done < quota) return done / quota - 1;
+      }
+      return ratio(commonOn(id, activityId), totalOn(activityId), id, pool, openFte);
     },
 
     weekendScore(id) {
@@ -200,6 +260,7 @@ export function dutyRankScore(fairness, id, key) {
 // "0.8× fair share" for pickers and reports.
 export function formatFairShare(score) {
   if (score === null || score === undefined) return '';
+  if (score < 0) return `AST time due (${Math.round((score + 1) * 100)}% of their share)`;
   if (score >= 99) return 'no fair share yet';
   return `${score.toFixed(2)}× fair share`;
 }

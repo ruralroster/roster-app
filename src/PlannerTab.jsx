@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertCircle, ChevronLeft, ChevronRight, Loader, Plus, Minus, X } from 'lucide-react';
+import { AlertCircle, ChevronLeft, ChevronRight, Loader, Lock, Plus, Minus, X } from 'lucide-react';
 import {
   getJobTypesAndPlaces,
   getPlannerRange,
@@ -37,10 +37,10 @@ import { toLocalDateStr } from './dateUtils';
 import { DEFAULT_FTE } from './availabilityUtils';
 import { JOB_COLOURS, jobCategoryFor, jobCategoryRank, jobCardStyle, jobBoxStyle, holdsOnCallDuty } from './jobColours';
 import {
-  hhmm, addDays, firstName, jobForCard, isAdminJob, isSenior, hasAnySkill, placeMismatch, layOutCard, dayConflict, rankJobsForPerson, withBookings,
+  hhmm, addDays, firstName, jobForCard, isAdminJob, isSenior, hasAnySkill, placeMismatch, layOutCard, dayConflict, rankJobsForPerson, rankPeopleForPlace, withBookings,
 } from './plannerUtils';
 import { payFortnightRange, fortnightLoad, fteFull, hoursBooked, formatHours, FULL_TIME_HOURS_PER_WEEK, FTE_FULL_LABEL } from './fteFortnight';
-import { buildFairness, exposureKey } from './fairness';
+import { buildFairness, exposureKey, formatFairShare } from './fairness';
 
 // ============================================================
 // PLANNER — Officer view tab
@@ -51,12 +51,21 @@ import { buildFairness, exposureKey } from './fairness';
 //      the days it runs; or apply a saved week template.
 //   2. Fill places — pick a person; the places they can fill light up
 //      (grade, skills, not on leave, hours don't clash); tap to book.
+//      Or tap an empty place with nobody picked: the fairest person for it
+//      shows in the place (their other bookings that pay fortnight ringed
+//      in blue); tap it again for everyone free and qualified, fairest
+//      first, and tap a name to book them.
 // Writes the same theatre_activities / staff_assignments / duty_assignments
 // rows the Day and Fortnight views use, so everything else keeps working.
 // A short job from today on can be offered for volunteering straight from
 // its card (Offer senior / Offer any grade) — the same volunteer_offers
 // the Calendar's Volunteering panel shows — and its volunteers accepted
 // from the card too.
+//
+// Days before today are read-only: the roster there is the record of who
+// worked, which payroll and fairness count from. "Correct" unlocks one
+// past day (after a confirm) to fix it, e.g. sick cover or a swap made on
+// the day; templates never touch past days.
 //
 // With singleDate set it's the officer's Day tab: one day, laid out wide,
 // stepping a day at a time (onSingleDateChange), no templates.
@@ -86,6 +95,13 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
   const [error, setError] = useState(null);
   const [selectedJobId, setSelectedJobId] = useState(null);
   const [selectedStaffId, setSelectedStaffId] = useState(null);
+  // Fill step with nobody picked: the empty place tapped, whose fairest
+  // person shows in it ({ cardId, placeId, slotIndex }), and whether the
+  // list of everyone who could take it is open.
+  const [suggest, setSuggest] = useState(null);
+  const [peopleListOpen, setPeopleListOpen] = useState(false);
+  // Past days unlocked for a correction this session.
+  const [unlockedDays, setUnlockedDays] = useState(() => new Set());
   const [staffFilter, setStaffFilter] = useState('all'); // 'all' | 'senior' | 'junior' | rank name
   const [staffOnly, setStaffOnly] = useState(true); // hide people with 0 FTE (locums, casuals)
   const [templateIdForWeek, setTemplateIdForWeek] = useState({});
@@ -205,6 +221,27 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
   const days = Array.from({ length: numDays }, (_, i) => addDays(startStr, i));
   const todayStr = toLocalDateStr(new Date());
   const weeks = Array.from({ length: weeksShown }, (_, w) => days.slice(w * 7, w * 7 + 7));
+  const locked = (dateStr) => dateStr < todayStr && !unlockedDays.has(dateStr);
+  const dayLabel = (dateStr) => new Date(`${dateStr}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long' });
+  const unlockDay = (dateStr) => {
+    if (!window.confirm(`Correct ${dayLabel(dateStr)}? It's in the past: changes there change the record payroll and fairness count from. Use it for what actually happened, e.g. sick cover or a swap on the day.`)) return;
+    setUnlockedDays(prev => new Set(prev).add(dateStr));
+  };
+  const relockDay = (dateStr) => setUnlockedDays(prev => { const next = new Set(prev); next.delete(dateStr); return next; });
+  // The Correct / Lock control for a past day.
+  const pastDayControl = (dateStr, className = '') => {
+    if (dateStr >= todayStr) return null;
+    return locked(dateStr)
+      ? (
+        <button onClick={() => unlockDay(dateStr)} className={`inline-flex items-center gap-1 text-[11px] text-gray-600 hover:text-gray-900 ${className}`} title="This day has passed, so it's read-only. Tap to correct it.">
+          <Lock size={11} /> Correct
+        </button>
+      ) : (
+        <button onClick={() => relockDay(dateStr)} className={`inline-flex items-center gap-1 text-[11px] font-semibold text-amber-800 hover:text-amber-900 ${className}`} title="Correcting this past day. Tap to lock it again.">
+          Correcting · lock
+        </button>
+      );
+  };
 
   const cards = range?.cards || [];
   const assignments = range?.assignments || [];
@@ -263,10 +300,15 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
     run("Couldn't remove the job", () => deleteTheatreActivity(card.theatre_activity_id, departmentId, card.date, card.location_id));
   };
 
+  const bookStaff = (staff, card, job, placeId) =>
+    run(`Couldn't book ${staff.name}`, () => bookPlannerPlace(departmentId, card, staff.staff_id, placeId, roleFor(staff), job?.name));
+
   const book = (card, job, placeId) => {
     if (!selectedStaff) return;
-    run(`Couldn't book ${selectedStaff.name}`, () => bookPlannerPlace(departmentId, card, selectedStaff.staff_id, placeId, roleFor(selectedStaff), job?.name));
+    bookStaff(selectedStaff, card, job, placeId);
   };
+
+  const clearSuggest = () => { setSuggest(null); setPeopleListOpen(false); };
 
   const unbook = (a, card, job) => {
     if (!window.confirm(`Take ${a.staff?.name || 'this person'} off ${cardTitle(card, job)}?`)) return;
@@ -304,9 +346,10 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
     const templateId = templateIdForWeek[weekDays[0]];
     if (!templateId) return;
     run("Couldn't apply the template", async () => {
-      const res = await applyWeekTemplate(departmentId, new Date(`${weekDays[0]}T00:00:00`), templateId);
+      // Past days are left as they are.
+      const res = await applyWeekTemplate(departmentId, new Date(`${weekDays[0]}T00:00:00`), templateId, { fromDate: todayStr });
       if (res.error) return res;
-      return applyTemplateMeetings(departmentId, new Date(`${weekDays[0]}T00:00:00`), templateId);
+      return applyTemplateMeetings(departmentId, new Date(`${weekDays[0]}T00:00:00`), templateId, { fromDate: todayStr });
     });
   };
 
@@ -393,6 +436,14 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
     </span>
   );
 
+  // The picked person's bookings ringed in black; the suggested person's
+  // in the suggested place's pay fortnight in blue.
+  const bookingRing = (staffId, dateStr) => {
+    if (selectedStaffId === staffId) return 'ring-2 ring-gray-900 rounded';
+    if (suggestion?.list[0]?.staffId === staffId && dateStr >= suggestion.fortnight.from && dateStr <= suggestion.fortnight.to) return 'ring-2 ring-blue-500 rounded';
+    return '';
+  };
+
   const renderSlot = (card, job, category, { place, slot }) => {
     const key = `${place.place_id}-${slot.index}`;
     if (slot.assignment) {
@@ -400,9 +451,9 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
       return (
         <button
           key={key}
-          disabled={mode !== 'fill' || busy}
+          disabled={mode !== 'fill' || busy || locked(card.date)}
           onClick={() => unbook(a, card, job)}
-          className={`block w-full text-left ${selectedStaffId === a.staff_id ? 'ring-2 ring-gray-900 rounded' : ''}`}
+          className={`block w-full text-left ${bookingRing(a.staff_id, card.date)}`}
           title={mode === 'fill' ? `${a.staff?.name} — tap to remove` : a.staff?.name}
         >
           {namePill(a.staff_id, a.staff?.name, category, card.date)}
@@ -413,7 +464,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
       return (
         <button
           key={key}
-          disabled={mode !== 'fill' || busy}
+          disabled={mode !== 'fill' || busy || locked(card.date)}
           onClick={() => editVisitor(card, place, slot, slot.visitor)}
           className="block w-full text-left text-xs italic text-gray-700 truncate"
           title={`${slot.visitor.source === 'dr_roster' ? 'From DR Roster' : 'Visitor'} — tap to change`}
@@ -425,7 +476,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
 
     // Empty place.
     const base = 'block w-full text-left px-1.5 py-0.5 rounded border border-dashed text-xs truncate transition';
-    if (mode !== 'fill') {
+    if (mode !== 'fill' || locked(card.date)) {
       return <span key={key} className={`${base} border-gray-400 text-gray-500`}>{place.role}</span>;
     }
     if (selectedStaff) {
@@ -460,16 +511,113 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
         </button>
       );
     }
-    return <span key={key} className={`${base} border-gray-400 text-gray-500`} title="Pick a person below first">{place.role}</span>;
+    // Nobody picked: tap to let fairness pick, tap the pick for the list.
+    const suggested = suggestion && suggestion.card.theatre_activity_id === card.theatre_activity_id
+      && suggest.placeId === place.place_id && suggest.slotIndex === slot.index;
+    if (suggested) {
+      const top = suggestion.list[0];
+      if (!top) {
+        return <span key={key} className={`${base} border-gray-400 text-gray-500 italic`} title="Nobody is free and qualified for this place">nobody free</span>;
+      }
+      return (
+        <button
+          key={key}
+          disabled={busy}
+          onClick={() => setPeopleListOpen(true)}
+          className={`${base} font-semibold ${top.jumped ? 'border-amber-600 bg-amber-100 text-amber-900' : 'border-blue-600 bg-blue-100 text-blue-900'}`}
+          title={`Fairest for ${place.role}: ${top.name}${top.yesterday ? ' (did this job yesterday)' : ''}. Their other bookings this pay fortnight are ringed in blue. Tap for everyone who could take it.`}
+        >
+          {firstName(top.name)}?
+        </button>
+      );
+    }
+    if (card.date < todayStr) {
+      return <span key={key} className={`${base} border-gray-400 text-gray-500`} title="Pick a person below first">{place.role}</span>;
+    }
+    return (
+      <button
+        key={key}
+        disabled={busy}
+        onClick={() => pickForPlace(card, place, slot)}
+        className={`${base} border-blue-400 text-gray-600 hover:bg-blue-50`}
+        title="Tap to see who's fairest for this place, or pick a person below first"
+      >
+        {place.role}
+      </button>
+    );
   };
 
   const cardCategory = (card) => jobCategoryFor(card.locations?.name || locationName(card.location_id), activityName(card.activity_id));
   const jobCategory = (job) => jobCategoryFor(locationName(job.location_id), activityName(job.activity_id));
 
+  // Fairness for the fill step: the 12-month history plus what's booked
+  // after today (fairness.js), so each booking counts straight away.
+  const planned = (() => {
+    if (mode !== 'fill' || !exposure) return null;
+    // One per person per day, like the history counts shifts.
+    const seen = new Set();
+    const bookings = assignments.filter(a => {
+      const key = `${a.staff_id}|${a.date}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }).map(a => {
+      const activityId = cardById.get(a.theatre_activity_id)?.activity_id;
+      const place = a.place_id && places.find(p => p.place_id === a.place_id);
+      return { staffId: a.staff_id, activityId: activityId && exposureKey(activityId, place), date: a.date };
+    });
+    const history = withBookings(exposure, bookings, todayStr);
+    return { history, fairness: buildFairness({ ...exposure, ...history }) };
+  })();
+
+  // Place first: everyone free and qualified for this place, fairest first,
+  // with whoever did this job yesterday on top (rankPeopleForPlace).
+  const peopleForPlace = (card, place) => {
+    if (!planned) return null;
+    const job = jobForCard(card, jobTypes);
+    const sameJob = (other) => (job
+      ? jobForCard(other, jobTypes)?.job_type_id === job.job_type_id
+      : other.location_id === card.location_id && other.activity_id === card.activity_id);
+    const dayBefore = addDays(card.date, -1);
+    const yesterday = new Set(assignments
+      .filter(a => a.date === dayBefore && cardById.get(a.theatre_activity_id) && sameJob(cardById.get(a.theatre_activity_id)))
+      .map(a => a.staff_id));
+    const people = refData.staff
+      .filter(s => s.active !== false && (!staffOnly || (s.fte ?? DEFAULT_FTE) > 0))
+      .filter(s => !placeMismatch(place, s, rankRows) && !conflictFor(s.staff_id, card))
+      .map(s => {
+        const load = fortnightLoad(s, card.date, fortnightBookings);
+        return { staffId: s.staff_id, name: s.name, share: load.target > 0 ? load.hours / load.target : Infinity };
+      });
+    return rankPeopleForPlace(people, exposureKey(card.activity_id, place), card.date, planned.fairness, planned.history.statsByStaffActivity, yesterday);
+  };
+
+  const pickForPlace = (card, place, slot) => {
+    if (!planned) { setError('Still loading the fairness figures. Try again in a moment.'); return; }
+    setPeopleListOpen(false);
+    setSuggest({ cardId: card.theatre_activity_id, placeId: place.place_id, slotIndex: slot.index });
+  };
+
+  // The tapped place, its fairest person and the full list.
+  const suggestion = (() => {
+    if (!suggest || mode !== 'fill' || selectedStaff) return null;
+    const card = cardById.get(suggest.cardId);
+    const job = card && jobForCard(card, jobTypes);
+    const place = job && places.find(p => p.place_id === suggest.placeId);
+    if (!place) return null;
+    const layout = layOutCard(card, job, places, assignments.filter(a => a.theatre_activity_id === card.theatre_activity_id),
+      visitors.filter(v => v.theatre_activity_id === card.theatre_activity_id), staffById, rankRows);
+    const slot = layout.places.find(p => p.place.place_id === place.place_id)?.slots[suggest.slotIndex];
+    if (!slot || slot.assignment || slot.visitor) return null; // filled since
+    const list = peopleForPlace(card, place);
+    if (!list) return null;
+    return { card, job, place, list, fortnight: payFortnightRange(card.date) };
+  })();
+
   // Fill step: with a person picked, number the jobs they could go on —
   // 1 for the fairest for them (rankJobsForPerson, fairness.js), and so on.
   const jobRanks = (() => {
-    if (mode !== 'fill' || !selectedStaff || !exposure) return new Map();
+    if (!selectedStaff || !planned) return new Map();
     const candidates = cards
       .filter(card => card.date >= todayStr && !isAdminCard(card) && !conflictFor(selectedStaff.staff_id, card))
       .filter(card => {
@@ -489,21 +637,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
           place.kind === 'staff' && !placeMismatch(place, selectedStaff, rankRows) && slots.some(slot => !slot.assignment && !slot.visitor));
         return { cardId: card.theatre_activity_id, activityId: exposureKey(card.activity_id, open?.place), date: card.date };
       });
-    // One per person per day, like the history counts shifts.
-    const seen = new Set();
-    const bookings = assignments.filter(a => {
-      const key = `${a.staff_id}|${a.date}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    }).map(a => {
-      const activityId = cardById.get(a.theatre_activity_id)?.activity_id;
-      const place = a.place_id && places.find(p => p.place_id === a.place_id);
-      return { staffId: a.staff_id, activityId: activityId && exposureKey(activityId, place), date: a.date };
-    });
-    const history = withBookings(exposure, bookings, todayStr);
-    const fairness = buildFairness({ ...exposure, ...history });
-    return rankJobsForPerson(selectedStaff.staff_id, candidates, fairness, history.statsByStaffActivity);
+    return rankJobsForPerson(selectedStaff.staff_id, candidates, planned.fairness, planned.history.statsByStaffActivity);
   })();
 
   const renderCard = (card) => {
@@ -515,8 +649,8 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
     // Why the picked person can't go on this card at all (busy, away,
     // already on it) — shown in place of "+ extra" so it never just
     // silently disappears.
-    const extraBlockedReason = mode === 'fill' && selectedStaff ? conflictFor(selectedStaff.staff_id, card) : null;
-    const canAddExtra = mode === 'fill' && selectedStaff && !extraBlockedReason;
+    const extraBlockedReason = mode === 'fill' && selectedStaff && !locked(card.date) ? conflictFor(selectedStaff.staff_id, card) : null;
+    const canAddExtra = mode === 'fill' && selectedStaff && !extraBlockedReason && !locked(card.date);
 
     // Offering: empty staff places by the role they'd be offered as, and
     // which roles are already on offer (and not yet taken up).
@@ -558,7 +692,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
               {!job && <span className="ml-1 italic">not a job</span>}
             </p>
           </div>
-          {mode === 'layout' && (
+          {mode === 'layout' && !locked(card.date) && (
             <button
               onClick={() => removeCard(card, job, cardAssignments.length)}
               disabled={busy}
@@ -579,7 +713,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
             {layout.extraVisitors.map(v => (
               <button
                 key={v.visitor_id}
-                disabled={mode !== 'fill' || busy}
+                disabled={mode !== 'fill' || busy || locked(card.date)}
                 onClick={() => editVisitor(card, null, null, v)}
                 className="text-xs italic text-gray-700 truncate"
                 title={`${v.source === 'dr_roster' ? 'From DR Roster' : 'Visitor'} (extra)${mode === 'fill' ? ' — tap to change' : ''}`}
@@ -590,9 +724,9 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
             {layout.extras.map(a => (
               <button
                 key={a.assignment_id}
-                disabled={mode !== 'fill' || busy}
+                disabled={mode !== 'fill' || busy || locked(card.date)}
                 onClick={() => unbook(a, card, job)}
-                className={selectedStaffId === a.staff_id ? 'ring-2 ring-gray-900 rounded' : ''}
+                className={bookingRing(a.staff_id, card.date)}
                 title={`${a.staff?.name}${job ? ' (extra)' : ''}${mode === 'fill' ? ' — tap to remove' : ''}`}
               >
                 {namePill(a.staff_id, a.staff?.name, category, card.date)}
@@ -650,13 +784,13 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
           const label = dt.abbreviation || dt.label;
           let eligible = false;
           let reason = null;
-          if (mode === 'fill' && selectedStaff) {
+          if (mode === 'fill' && selectedStaff && !locked(dateStr)) {
             if (unavailable.some(u => u.staff_id === selectedStaff.staff_id && u.date === dateStr)) reason = 'Unavailable';
             else if (!hasAnySkill(selectedStaff, dt.required_advanced_skills)) reason = 'Missing the skill';
             else if (holder?.staff_id === selectedStaff.staff_id) reason = 'Already on it';
             eligible = !reason;
           }
-          const clickable = mode === 'fill' && (eligible || (!selectedStaff && holder));
+          const clickable = mode === 'fill' && !locked(dateStr) && (eligible || (!selectedStaff && holder));
           return (
             <button
               key={dt.key}
@@ -667,7 +801,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
             >
               <span className={`truncate ${dt.counts_as_on_call ? 'text-fuchsia-800 font-semibold' : 'text-gray-600'}`}>{label}</span>
               {holder
-                ? <span className={`truncate font-medium text-gray-900 ${selectedStaffId === holder.staff_id ? 'underline' : ''}`}>{firstName(holder.staff?.name)}</span>
+                ? <span className={`truncate font-medium text-gray-900 ${bookingRing(holder.staff_id, dateStr) ? 'underline' : ''}`}>{firstName(holder.staff?.name)}</span>
                 : <span className="text-gray-400">{eligible ? '+ book' : '—'}</span>}
             </button>
           );
@@ -687,7 +821,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
           <button
             key={m.meeting_id}
             onClick={() => setMeetingPick({ meeting: m, draft: meetingDraft(m) })}
-            disabled={busy}
+            disabled={busy || locked(dateStr)}
             title={`${m.name} · ${audienceLabel(m.audience)} · ${remindersLabel(m)}`}
             className="w-full flex items-center gap-1 text-left text-[11px] rounded px-1.5 py-0.5 bg-indigo-50 border border-indigo-300 text-indigo-900 hover:bg-indigo-100"
           >
@@ -798,7 +932,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
         </div>
         )}
         <div className="flex rounded-lg border border-gray-300 overflow-hidden text-sm font-semibold">
-          <button onClick={() => setMode('layout')} className={`px-4 py-2 ${mode === 'layout' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700'}`}>
+          <button onClick={() => { setMode('layout'); clearSuggest(); }} className={`px-4 py-2 ${mode === 'layout' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700'}`}>
             1 · Lay out jobs
           </button>
           <button onClick={() => setMode('fill')} className={`px-4 py-2 ${mode === 'fill' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700'}`}>
@@ -884,7 +1018,13 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
         // One day, wide: on-call first, then the day's jobs in colour order
         // and start time, as many across as fit.
         <div className={`space-y-3 ${selectedStaff && unavailable.some(u => u.staff_id === selectedStaff.staff_id && u.date === startStr) ? 'opacity-50' : ''}`}>
-          {mode === 'layout' && selectedJob && (
+          {startStr < todayStr && (
+            <div className={`flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-lg text-xs ${locked(startStr) ? 'bg-gray-100 text-gray-700' : 'bg-amber-50 border border-amber-300 text-amber-900'}`}>
+              <span>{locked(startStr) ? 'This day has passed, so it\'s read-only.' : 'Correcting a past day: changes here change the record payroll and fairness count from.'}</span>
+              {pastDayControl(startStr, 'text-xs')}
+            </div>
+          )}
+          {mode === 'layout' && selectedJob && !locked(startStr) && (
             <button
               onClick={() => addJobToDay(startStr)}
               disabled={busy}
@@ -893,7 +1033,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
               + {selectedJob.name}
             </button>
           )}
-          {mode === 'layout' && selectedMeetingType && (
+          {mode === 'layout' && selectedMeetingType && !locked(startStr) && (
             <button
               onClick={() => addMeetingToDay(startStr)}
               disabled={busy}
@@ -974,7 +1114,8 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
                         {DAY_NAMES[i]} {new Date(`${dateStr}T00:00:00`).getDate()}
                         {offToday && ' · away'}
                       </p>
-                      {mode === 'layout' && selectedJob && (
+                      {dateStr < todayStr && <div className="text-center">{pastDayControl(dateStr)}</div>}
+                      {mode === 'layout' && selectedJob && !locked(dateStr) && (
                         <button
                           onClick={() => addJobToDay(dateStr)}
                           disabled={busy}
@@ -983,7 +1124,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
                           + {selectedJob.name}
                         </button>
                       )}
-                      {mode === 'layout' && selectedMeetingType && (
+                      {mode === 'layout' && selectedMeetingType && !locked(dateStr) && (
                         <button
                           onClick={() => addMeetingToDay(dateStr)}
                           disabled={busy}
@@ -1022,7 +1163,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
             <p className="text-xs text-gray-600">
               {selectedStaff
                 ? <>Booking <span className="font-semibold text-gray-900">{selectedStaff.name}</span> — green places are theirs to take; 1 is the fairest job for them. Once their FTE's hours for a pay fortnight are booked (44 h a week full time), that fortnight's places stay grey. Tap their name again to stop.</>
-                : 'Pick a person (most in need of shifts first). With nobody picked, tap a name on the grid to remove it, or an amber place to type a visitor.'}
+                : 'Pick a person (most in need of shifts first), or tap an empty place to see who\'s fairest for it (tap again for the list). With nobody picked, tap a name on the grid to remove it, or an amber place to type a visitor.'}
             </p>
           </div>
           <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto">
@@ -1040,7 +1181,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
               return (
                 <button
                   key={s.staff_id}
-                  onClick={() => setSelectedStaffId(on ? null : s.staff_id)}
+                  onClick={() => { setSelectedStaffId(on ? null : s.staff_id); clearSuggest(); }}
                   aria-pressed={on}
                   className={`px-2.5 py-1 rounded-full border text-xs transition ${on ? 'bg-gray-900 text-white border-gray-900' : 'bg-white border-gray-300 text-gray-800 hover:border-gray-500'}`}
                   title={`${s.name} (${s.rank || 'no rank'}) — ${formatHours(worked)} of ${formatHours(target)} h in the weeks shown${fortnightNote}`}
@@ -1055,6 +1196,52 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
                 </button>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {suggestion && peopleListOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50" onClick={() => setPeopleListOpen(false)}>
+          <div className="bg-white rounded-lg shadow-lg p-5 w-full max-w-md max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-between items-start mb-3">
+              <div>
+                <h2 className="text-lg font-bold text-gray-900">{cardTitle(suggestion.card, suggestion.job)} · {suggestion.place.role}</h2>
+                <p className="text-sm text-gray-600">
+                  {new Date(`${suggestion.card.date}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long' })}
+                  {' · '}everyone free and qualified, fairest first
+                </p>
+              </div>
+              <button onClick={() => setPeopleListOpen(false)} className="p-1 hover:bg-gray-100 rounded-lg" aria-label="Close"><X size={20} /></button>
+            </div>
+            {suggestion.list.length === 0 && <p className="text-sm text-gray-600">Nobody is free and qualified for this place.</p>}
+            <div className="space-y-1">
+              {suggestion.list.map((p, i) => {
+                const staff = staffById.get(p.staffId);
+                const load = fortnightLoad(staff, suggestion.card.date, fortnightBookings);
+                const left = load.target > 0 ? Math.max(0, Math.round((1 - load.hours / load.target) * 100)) : 0;
+                return (
+                  <button
+                    key={p.staffId}
+                    disabled={busy}
+                    onClick={() => { clearSuggest(); bookStaff(staff, suggestion.card, suggestion.job, suggestion.place.place_id); }}
+                    className={`w-full flex items-center justify-between gap-2 text-left px-3 py-2 rounded-lg border text-sm ${p.jumped ? 'border-amber-400 bg-amber-50 hover:bg-amber-100' : i === 0 ? 'border-blue-400 bg-blue-50 hover:bg-blue-100' : 'border-gray-200 hover:bg-gray-50'}`}
+                  >
+                    <span className="min-w-0">
+                      <span className="font-semibold text-gray-900">{i + 1}. {p.name}</span>
+                      <span className="block text-xs text-gray-600">
+                        {p.yesterday && <span className={p.jumped ? 'text-amber-800 font-semibold' : ''}>did this job yesterday · </span>}
+                        {p.solo ? 'the only one who can' : formatFairShare(p.score) || 'can do it'}
+                      </span>
+                    </span>
+                    <span className={`flex-shrink-0 text-xs ${left <= 10 ? 'text-amber-700 font-semibold' : 'text-gray-500'}`}>{left}% left</span>
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-xs text-gray-500 mt-3">
+              Fairest first: furthest behind their fair share of this job (on a weekend, of weekends first). Whoever did it yesterday goes on top so the work carries on; in amber when fairness alone wouldn't have put them there. Anyone on leave, busy then, missing the grade or skill, or with their FTE's hours for this pay fortnight already booked isn't listed.
+            </p>
+            <button onClick={clearSuggest} className="w-full mt-3 px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-800 text-sm font-medium rounded-lg">Cancel</button>
           </div>
         </div>
       )}

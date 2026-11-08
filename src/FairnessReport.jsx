@@ -36,6 +36,7 @@ const RatioCell = ({ ratio, count }) => {
 export default function FairnessReport({ departmentId, refreshKey }) {
   const [rows, setRows] = useState([]);
   const [dutyTypes, setDutyTypes] = useState([]);
+  const [astBenchmark, setAstBenchmark] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [sortBy, setSortBy] = useState('weekend'); // a column key
@@ -46,10 +47,11 @@ export default function FairnessReport({ departmentId, refreshKey }) {
       if (!departmentId) return;
       setLoading(true);
       try {
-        const { data, dutyTypes: types, error: err } = await getFairnessReport(departmentId);
+        const { data, dutyTypes: types, astBenchmark: benchmark, error: err } = await getFairnessReport(departmentId);
         if (err) throw err;
         setRows(data);
         setDutyTypes(types);
+        setAstBenchmark(benchmark);
         setError(null);
       } catch (err) {
         setError(`Failed to load fairness report: ${err.message}`);
@@ -65,6 +67,7 @@ export default function FairnessReport({ departmentId, refreshKey }) {
     { header: 'Staff Name', value: r => r.staff_name },
     { header: 'FTE', value: r => formatFte(r.fte) },
     { header: 'FTE after solo work', value: r => formatFte(r.effective_fte) },
+    { header: 'AST time (shifts done / share)', value: r => (r.ast_time ? `${r.ast_time.done} / ${Math.round(r.ast_time.quota)}` : '') },
     ...columns.flatMap(c => [
       { header: c.label, value: c.count },
       { header: `${c.label} Fairness Ratio`, value: r => fmtRatio(c.ratio(r)) },
@@ -94,6 +97,7 @@ export default function FairnessReport({ departmentId, refreshKey }) {
       <p className="text-xs text-gray-600 mb-4">
         Each person's weekend shifts and on call over the last 12 months, against their fair share. 1.00x is exactly fair; above 1.25x they're carrying more than their share, below 0.75x less.
         Fair shares are by FTE, less any work only that person can do (a solo endoscopy list, say). Weekends are shared by everyone; each on-call type by the people who can do it; All On Call across the hospital.
+        {astBenchmark && ` AST time for a specialty anyone can cover (ED for an ED AST) is ${Math.round(astBenchmark.share * 100)}% of their shifts, matching ${astBenchmark.name}, the least service-bound specialty.`}
       </p>
 
       {rows.length > 0 && (
@@ -133,7 +137,14 @@ export default function FairnessReport({ departmentId, refreshKey }) {
             <tbody>
               {sortedRows.map(row => (
                 <tr key={row.staff_id} className="hover:bg-gray-50">
-                  <td className="px-3 py-2 border border-gray-300 font-medium">{row.staff_name}</td>
+                  <td className="px-3 py-2 border border-gray-300 font-medium">
+                    {row.staff_name}
+                    {row.ast_time && (
+                      <span className="block text-[11px] font-normal text-gray-500" title="Shifts in their specialty, against their AST share of their shifts">
+                        AST time {row.ast_time.done} of {Math.round(row.ast_time.quota)} shifts
+                      </span>
+                    )}
+                  </td>
                   <td className="px-3 py-2 border border-gray-300 text-right text-gray-600" title="FTE, and in brackets after work only they can do">
                     {formatFte(row.fte)}{row.effective_fte < row.fte - 0.005 && <span className="text-gray-400"> ({formatFte(row.effective_fte)})</span>}
                   </td>

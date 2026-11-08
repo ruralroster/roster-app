@@ -88,6 +88,7 @@ import { createTheatreActivity,
   deleteLeaveType,
   createAdvancedSkill,
   updateAdvancedSkill,
+  updateAdvancedSkillSpecialty,
   deleteAdvancedSkill,
   updateActivityTypeRequiredSkills,
   updateDutyTypeRequiredSkills,
@@ -381,6 +382,8 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   const [newAdvancedSkillName, setNewAdvancedSkillName] = useState('');
   const [editingAdvancedSkillId, setEditingAdvancedSkillId] = useState(null);
   const [editAdvancedSkillName, setEditAdvancedSkillName] = useState('');
+  // The skill whose specialty-anyone-can-cover activities are being ticked.
+  const [editingSkillSpecialtyId, setEditingSkillSpecialtyId] = useState(null);
   // Which activity's / duty type's required-skills modal is open, if any.
   const [editingActivitySkillsId, setEditingActivitySkillsId] = useState(null);
   const [editingDutyTypeSkillsId, setEditingDutyTypeSkillsId] = useState(null);
@@ -2043,6 +2046,19 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
       setError(null);
     } catch (err) {
       setError(`Failed to rename advanced skill: ${err.message}`);
+    }
+  };
+
+  const handleUpdateSkillSpecialty = async (advancedSkillId, activityIds) => {
+    try {
+      const { data, error } = await updateAdvancedSkillSpecialty(advancedSkillId, activityIds);
+      if (error) throw error;
+      setRefData(prev => ({ ...prev, advancedSkills: prev.advancedSkills.map(s => s.advanced_skill_id === advancedSkillId ? data : s) }));
+      setError(null);
+    } catch (err) {
+      setError(/specialty_activity_ids/.test(err.message || '')
+        ? 'Specialty work needs the database update in migrations/2026-11-09_open_specialty_activities.sql. Run it in the Supabase SQL Editor, then try again.'
+        : `Failed to save the specialty: ${err.message}`);
     }
   };
 
@@ -5508,8 +5524,22 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                       </div>
                     ) : (
                       <>
-                        <p className="font-semibold text-sm text-gray-900">{skill.name}</p>
+                        <div className="min-w-0">
+                          <p className="font-semibold text-sm text-gray-900">{skill.name}</p>
+                          {skill.specialty_activity_ids?.length > 0 && (
+                            <p className="text-xs text-gray-500 truncate">
+                              Specialty anyone can cover: {skill.specialty_activity_ids.map(id => refData.activities.find(a => a.activity_id === id)?.name).filter(Boolean).join(', ')}
+                            </p>
+                          )}
+                        </div>
                         <div className="flex gap-2">
+                          <button
+                            onClick={() => setEditingSkillSpecialtyId(skill.advanced_skill_id)}
+                            title="Work that's this skill's specialty though anyone can do it (ED for an ED AST), so it counts as their AST time"
+                            className="px-3 py-1 bg-indigo-100 hover:bg-indigo-200 text-indigo-900 font-medium rounded text-xs transition"
+                          >
+                            Specialty{skill.specialty_activity_ids?.length ? ` (${skill.specialty_activity_ids.length})` : ''}
+                          </button>
                           <button
                             onClick={() => handleStartEditAdvancedSkill(skill)}
                             className="px-3 py-1 bg-blue-100 hover:bg-blue-200 text-blue-900 font-medium rounded text-xs transition"
@@ -6438,6 +6468,46 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
 
       {/* Duty Type Required Skills Modal — same as the Activity one above,
           but narrows the Duty Assignments dropdown for this on-call slot. */}
+      {editingSkillSpecialtyId && (() => {
+        const skill = refData.advancedSkills.find(s => s.advanced_skill_id === editingSkillSpecialtyId);
+        if (!skill) return null;
+        const ticked = skill.specialty_activity_ids || [];
+        const toggle = (id) => handleUpdateSkillSpecialty(skill.advanced_skill_id, ticked.includes(id) ? ticked.filter(x => x !== id) : [...ticked, id]);
+        const activities = refData.activities.filter(a => a.active !== false).slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        return (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-lg max-h-[85vh] overflow-y-auto">
+              <div className="flex justify-between items-start mb-4">
+                <div>
+                  <h2 className="text-lg font-bold text-gray-900">{skill.name} — Specialty anyone can cover</h2>
+                  <p className="text-sm text-gray-600">
+                    Tick the work that's this skill's specialty even though anyone can do it: ED for the Emergency skill, say. Leave it empty when the skill's work needs the skill (anaesthetics, obstetrics). A holder's shifts on ticked work count as their AST time, up to the share of shifts the least service-bound other specialty spends in theirs, so they do as much in their specialty as other ASTs do in theirs and still get their share of the rest. Changes save as you tick.
+                  </p>
+                </div>
+                <button onClick={() => setEditingSkillSpecialtyId(null)} className="p-1 hover:bg-gray-100 rounded-lg">
+                  <X size={20} />
+                </button>
+              </div>
+              {error && (
+                <div className="mb-4 p-3 bg-red-50 border border-red-300 rounded-lg flex gap-2 items-start">
+                  <AlertCircle size={18} className="text-red-600 flex-shrink-0 mt-0.5" />
+                  <p className="text-sm text-red-700">{error}</p>
+                </div>
+              )}
+              <div className="border border-gray-200 rounded-lg divide-y divide-gray-100">
+                {activities.map(a => (
+                  <label key={a.activity_id} className="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-gray-50">
+                    <input type="checkbox" checked={ticked.includes(a.activity_id)} onChange={() => toggle(a.activity_id)} />
+                    {a.name}
+                    {a.required_advanced_skills?.length > 0 && <span className="text-xs text-gray-400">(needs a skill already)</span>}
+                  </label>
+                ))}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {editingDutyTypeShiftsId && (() => {
         const dutyType = refData.dutyTypes.find(d => d.duty_type_id === editingDutyTypeShiftsId);
         if (!dutyType) return null;
