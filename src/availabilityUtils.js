@@ -18,6 +18,12 @@ export function formatFte(fte) {
 }
 
 export const DEFAULT_FTE = 1.0;
+
+// Leavers: staff.leaving_date is their last working day. After it they
+// can't be booked (migrations/2026-11-09_staff_leaving_date.sql).
+export const hasLeft = (staff, dateStr) => !!staff?.leaving_date && dateStr > staff.leaving_date;
+export const leftLabel = (staff) =>
+  `Left: last day ${new Date(`${staff.leaving_date}T00:00:00`).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}`;
 export const TARGET_FTE_MULTIPLIER = 1.25; // ideal buffer for weekend/break flexibility
 
 // A 1.0 FTE staff member works 5 of 7 days, not every day — so their

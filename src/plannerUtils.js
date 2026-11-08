@@ -327,8 +327,9 @@ export function rankJobsForPerson(staffId, candidates, fairness, statsByStaffAct
 }
 
 // Fill step, place first: who should take this empty place? people:
-// [{ staffId, name, share }] (share = hours booked ÷ FTE hours this pay
-// fortnight), already free and qualified for it. Fairest first, the same
+// [{ staffId, name, share, casual }] (share = hours booked ÷ FTE hours this
+// pay fortnight; casual = FTE 0), already free and qualified for it.
+// Casuals and locums always come after regular staff, even yesterday's. Fairest first, the same
 // order as rankJobsForPerson: a job only they can do, then on a weekend the
 // person furthest behind on weekends, then the lowest score for this job,
 // then the one who did it longest ago, then the least booked, then by name.
@@ -349,12 +350,16 @@ export function rankPeopleForPlace(people, activityId, dateStr, fairness, statsB
     };
   });
   const key = (p) => (p.solo ? -1 : p.score ?? Infinity);
-  scored.sort((a, b) => (b.solo - a.solo) || (a.weekendScore - b.weekendScore) || (key(a) - key(b))
+  scored.sort((a, b) => (!!a.casual - !!b.casual) || (b.solo - a.solo) || (a.weekendScore - b.weekendScore) || (key(a) - key(b))
     || a.last.localeCompare(b.last) || (a.share - b.share) || a.name.localeCompare(b.name));
-  const carriedOn = scored.filter(p => yesterday.has(p.staffId)).length;
-  const ranked = scored.map((p, i) => ({ ...p, yesterday: yesterday.has(p.staffId), jumped: yesterday.has(p.staffId) && i >= carriedOn }));
-  return [...ranked.filter(p => p.yesterday), ...ranked.filter(p => !p.yesterday)]
-    .map(({ staffId, name, score, solo, yesterday: y, jumped }) => ({ staffId, name, score, solo, yesterday: y, jumped }));
+  // Yesterday's people go to the top of their own group (regular, casual).
+  const lift = (group) => {
+    const carriedOn = group.filter(p => yesterday.has(p.staffId)).length;
+    const ranked = group.map((p, i) => ({ ...p, yesterday: yesterday.has(p.staffId), jumped: yesterday.has(p.staffId) && i >= carriedOn }));
+    return [...ranked.filter(p => p.yesterday), ...ranked.filter(p => !p.yesterday)];
+  };
+  return [...lift(scored.filter(p => !p.casual)), ...lift(scored.filter(p => p.casual))]
+    .map(({ staffId, name, score, solo, casual, yesterday: y, jumped }) => ({ staffId, name, score, solo, casual: !!casual, yesterday: y, jumped }));
 }
 
 // The 12-month history plus bookings after today (the week being planned),

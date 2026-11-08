@@ -34,13 +34,13 @@ import { audienceLabel } from './meetingAudience';
 import { offerIsFilled } from './offerEligibility';
 import { getMondayOfWeek } from './payrollExport';
 import { toLocalDateStr } from './dateUtils';
-import { DEFAULT_FTE } from './availabilityUtils';
+import { DEFAULT_FTE, hasLeft, leftLabel } from './availabilityUtils';
 import { JOB_COLOURS, jobCategoryFor, jobCategoryRank, jobCardStyle, jobBoxStyle, holdsOnCallDuty } from './jobColours';
 import {
   hhmm, addDays, firstName, jobForCard, isAdminJob, isSenior, hasAnySkill, placeMismatch, layOutCard, dayConflict, rankJobsForPerson, rankPeopleForPlace, withBookings,
 } from './plannerUtils';
 import { payFortnightRange, fortnightLoad, fteFull, hoursBooked, formatHours, FULL_TIME_HOURS_PER_WEEK, FTE_FULL_LABEL } from './fteFortnight';
-import { buildFairness, exposureKey, formatFairShare } from './fairness';
+import { buildFairness, exposureKey, formatFairShare, isCasual } from './fairness';
 
 // ============================================================
 // PLANNER — Officer view tab
@@ -416,9 +416,9 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
   // ---------- render helpers ----------
 
   const isAdminCard = (card) => isAdminJob(jobForCard(card, jobTypes)?.name, card.locations?.name || locationName(card.location_id), activityName(card.activity_id));
-  // Why staffId can't go on card: a clash, leave, or their FTE for that
-  // pay fortnight already allocated. null = free.
-  const conflictFor = (staffId, card) => dayConflict({
+  // Why staffId can't go on card: they've left by then, a clash, leave, or
+  // their FTE for that pay fortnight already allocated. null = free.
+  const conflictFor = (staffId, card) => (hasLeft(staffById.get(staffId), card.date) ? leftLabel(staffById.get(staffId)) : null) || dayConflict({
     staffId, dateStr: card.date, startTime: card.start_time, endTime: card.end_time,
     cardId: card.theatre_activity_id, assignments, unavailable, cardLabel: assignmentLabel,
     clashFree: isAdminCard(card),
@@ -587,7 +587,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
       .filter(s => !placeMismatch(place, s, rankRows) && !conflictFor(s.staff_id, card))
       .map(s => {
         const load = fortnightLoad(s, card.date, fortnightBookings);
-        return { staffId: s.staff_id, name: s.name, share: load.target > 0 ? load.hours / load.target : Infinity };
+        return { staffId: s.staff_id, name: s.name, share: load.target > 0 ? load.hours / load.target : Infinity, casual: isCasual(s) };
       });
     return rankPeopleForPlace(people, exposureKey(card.activity_id, place), card.date, planned.fairness, planned.history.statsByStaffActivity, yesterday);
   };
@@ -785,7 +785,8 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
           let eligible = false;
           let reason = null;
           if (mode === 'fill' && selectedStaff && !locked(dateStr)) {
-            if (unavailable.some(u => u.staff_id === selectedStaff.staff_id && u.date === dateStr)) reason = 'Unavailable';
+            if (hasLeft(selectedStaff, dateStr)) reason = leftLabel(selectedStaff);
+            else if (unavailable.some(u => u.staff_id === selectedStaff.staff_id && u.date === dateStr)) reason = 'Unavailable';
             else if (!hasAnySkill(selectedStaff, dt.required_advanced_skills)) reason = 'Missing the skill';
             else if (holder?.staff_id === selectedStaff.staff_id) reason = 'Already on it';
             eligible = !reason;
@@ -1176,8 +1177,11 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
               const loads = [...new Set(days.map(d => payFortnightRange(d).from))]
                 .map(from => fortnightLoad(s, from, fortnightBookings));
               const fullest = loads.reduce((a, b) => (b.target - b.hours < a.target - a.hours ? b : a));
-              const left = fullest.target - fullest.hours;
-              const fortnightNote = ` — ${formatHours(fullest.hours)} of ${formatHours(fullest.target)} h this pay fortnight${left <= 0.01 ? `, ${FTE_FULL_LABEL}` : ''}`;
+              // FTE 0 (casual or locum): no target, never full.
+              const left = fullest.target > 0 ? fullest.target - fullest.hours : Infinity;
+              const fortnightNote = fullest.target > 0
+                ? ` — ${formatHours(fullest.hours)} of ${formatHours(fullest.target)} h this pay fortnight${left <= 0.01 ? `, ${FTE_FULL_LABEL}` : ''}`
+                : ` — casual, no FTE: ${formatHours(fullest.hours)} h this pay fortnight`;
               return (
                 <button
                   key={s.staff_id}
@@ -1188,11 +1192,12 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
                 >
                   {s.name}
                   {left <= 0.01 && <span className={`ml-1 font-semibold ${on ? 'text-red-300' : 'text-red-600'}`}>full</span>}
-                  {!singleDay && (
+                  {!singleDay && target > 0 && (
                     <span className={`ml-1 ${on ? 'text-gray-300' : worked >= target ? 'text-orange-600 font-semibold' : worked >= target * 0.9 ? 'text-amber-600 font-semibold' : 'text-gray-500'}`}>
-                      {target > 0 ? Math.max(0, Math.round((1 - worked / target) * 100)) : 0}% left
+                      {Math.max(0, Math.round((1 - worked / target) * 100))}% left
                     </span>
                   )}
+                  {!singleDay && target <= 0 && <span className={`ml-1 ${on ? 'text-gray-300' : 'text-gray-500'}`}>casual</span>}
                 </button>
               );
             })}
@@ -1218,7 +1223,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
               {suggestion.list.map((p, i) => {
                 const staff = staffById.get(p.staffId);
                 const load = fortnightLoad(staff, suggestion.card.date, fortnightBookings);
-                const left = load.target > 0 ? Math.max(0, Math.round((1 - load.hours / load.target) * 100)) : 0;
+                const left = load.target > 0 ? Math.max(0, Math.round((1 - load.hours / load.target) * 100)) : null;
                 return (
                   <button
                     key={p.staffId}
@@ -1230,10 +1235,10 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
                       <span className="font-semibold text-gray-900">{i + 1}. {p.name}</span>
                       <span className="block text-xs text-gray-600">
                         {p.yesterday && <span className={p.jumped ? 'text-amber-800 font-semibold' : ''}>did this job yesterday · </span>}
-                        {p.solo ? 'the only one who can' : formatFairShare(p.score) || 'can do it'}
+                        {p.casual ? 'casual or locum, after regular staff' : p.solo ? 'the only one who can' : formatFairShare(p.score) || 'can do it'}
                       </span>
                     </span>
-                    <span className={`flex-shrink-0 text-xs ${left <= 10 ? 'text-amber-700 font-semibold' : 'text-gray-500'}`}>{left}% left</span>
+                    <span className={`flex-shrink-0 text-xs ${left !== null && left <= 10 ? 'text-amber-700 font-semibold' : 'text-gray-500'}`}>{left === null ? 'casual' : `${left}% left`}</span>
                   </button>
                 );
               })}

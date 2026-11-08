@@ -7,7 +7,7 @@ import ShiftPatternRulesUI from './ShiftPatternRulesUI';
 import CaseMixReport from './CaseMixReport';
 import { payFortnightRange, fteFull, hoursBooked, fortnightTargetHours, formatHours, FTE_FULL_LABEL } from './fteFortnight';
 import { addDays, withBookings } from './plannerUtils';
-import { formatFairShare, goesWithOnCall, buildFairness } from './fairness';
+import { formatFairShare, goesWithOnCall, buildFairness, isCasual } from './fairness';
 import FairnessReport from './FairnessReport';
 import CallbacksReport from './CallbacksReport';
 import RuleViolationsReport, { createDefaultRuleCheckState } from './RuleViolationsReport';
@@ -62,6 +62,7 @@ import { createTheatreActivity,
   updateDutyTypeLinkedShifts,
   deactivateLocation,
   reactivateLocation,
+  deactivateLeavers,
   createActivityType,
   updateActivityTypeName,
   deleteActivityType,
@@ -119,7 +120,7 @@ import { createTheatreActivity,
 } from './supabaseClient';
 import { downloadPayrollExcel, getMondayOfWeek } from './payrollExport';
 import { getSessionGroups, SESSION_GROUP_ORDER, SESSION_GROUP_LABELS, SESSION_DEFAULT_TIMES, DEFAULT_SESSION_BOUNDARIES, getDepartmentSessionBoundaries } from './shiftSessionUtils';
-import { formatFte, DEFAULT_FTE } from './availabilityUtils';
+import { formatFte, DEFAULT_FTE, hasLeft, leftLabel } from './availabilityUtils';
 import { GRADE_LABEL, roleForGrade } from './staffGrade';
 
 const CALENDAR_WEEKS_SHOWN = 4;
@@ -419,6 +420,10 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
       }
 
       try {
+        // Anyone whose last day has passed is deactivated first, so they
+        // drop out of everything this load shows.
+        const leavers = await deactivateLeavers(departmentId);
+        if (leavers.error) console.error('deactivateLeavers error:', leavers.error);
         const result = await initializeDepartment(departmentId);
         if (result.errors.length > 0) {
           console.error('Initialization errors:', result.errors);
@@ -742,6 +747,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
 
   // " — 0.80× fair share" (with the weekend on a weekend), or "only one who can".
   const fairLabel = (s) => {
+    if (isCasual(s)) return ' — casual or locum';
     if (s.solo) return ' — the only one who can';
     const parts = [];
     if (typeof s.weekend_score === 'number') parts.push(`weekends ${formatFairShare(s.weekend_score)}`);
@@ -837,6 +843,10 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   // (it's an extra shift); the label still says so.
   const getAssignabilityInfo = (staffId, { volunteer = false } = {}) => {
     const fatigueRisk = fatigueStatus.fatigueRiskStaffIds.has(staffId);
+    const staffRow = refData.staff.find(s => s.staff_id === staffId);
+    if (hasLeft(staffRow, toLocalDateStr(selectedDate))) {
+      return { blocked: true, overridable: false, blockType: 'left', label: ` — ${leftLabel(staffRow)}`, fatigueRisk };
+    }
 
     // Their FTE's hours for this pay fortnight are all allocated (fteFortnight.js).
     const fullLabel = fteFull(refData.staff.find(s => s.staff_id === staffId), toLocalDateStr(selectedDate), fortnightBookings)
@@ -883,6 +893,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   // in the list (marked unavailable) rather than silently dropped, so the <select>
   // doesn't appear to reset if someone becomes unavailable after being assigned.
   const isAvailableForDuty = (staffId) => {
+    if (hasLeft(refData.staff.find(s => s.staff_id === staffId), toLocalDateStr(selectedDate))) return false;
     if (staffAvailabilityStatus === null) return true;
     if (fatigueStatus.postNightRestStaffIds.has(staffId)) return false;
     return (staffAvailabilityStatus.get(staffId) || 'unset') === 'available';
@@ -905,7 +916,8 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
       // Whoever's on the shift it goes with first (Settings → Duty Types →
       // Shifts), then the fairest; anyone with no share (theirs alone, or
       // new) by name.
-      .sort((a, b) => b.goes_with - a.goes_with || (a.fair_score ?? Infinity) - (b.fair_score ?? Infinity) || a.name.localeCompare(b.name));
+      // Casuals and locums after regular staff, even on the linked shift.
+      .sort((a, b) => isCasual(a) - isCasual(b) || b.goes_with - a.goes_with || (a.fair_score ?? Infinity) - (b.fair_score ?? Infinity) || a.name.localeCompare(b.name));
   };
 
   // Handlers for staff assignment. skipPatternCheck is set when re-calling
@@ -3339,12 +3351,15 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
       const fnLoad = (s) => {
         const hours = hoursBooked(s.staff_id, fnFromStr, fnToStr, fortnightAllocations);
         const target = fortnightTargetHours(s.fte);
-        return { hours, target, left: target > 0 ? Math.max(0, 1 - hours / target) : 0, full: hours >= target - 0.01 };
+        // FTE 0 (casual or locum): no cap, and listed last.
+        return { hours, target, left: target > 0 ? Math.max(0, 1 - hours / target) : 0, full: target > 0 && hours >= target - 0.01 };
       };
       const selectedLoad = selectedStaff ? fnLoad(selectedStaff) : null;
       const fullOn = (date) => selectedStaff && selectedLoad.full
         && !selectedStaffAllocations.some(a => a.date === toLocalDateStr(date))
         && !selectedStaffDutyAssignments.some(d => d.date === toLocalDateStr(date));
+      // After their last day, a leaver's days can't be opened.
+      const leftOn = (date) => !!selectedStaff && hasLeft(selectedStaff, toLocalDateStr(date));
       // Staff list: most FTE left to allocate first.
       const fortnightStaffOptions = refData.staff
         .filter(s => s.active !== false && (!fortnightRankFilter || s.rank === fortnightRankFilter))
@@ -3430,7 +3445,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
               >
                 <option value="">— Select a staff member —</option>
                 {fortnightStaffOptions.map(({ s, load }) => (
-                  <option key={s.staff_id} value={s.staff_id}>{s.name} ({s.rank}) — {load.full ? 'FTE full' : `${Math.round(load.left * 100)}% left`}</option>
+                  <option key={s.staff_id} value={s.staff_id}>{s.name} ({s.rank}) — {load.target <= 0 ? 'casual, no FTE' : load.full ? 'FTE full' : `${Math.round(load.left * 100)}% left`}</option>
                 ))}
               </select>
 
@@ -3534,9 +3549,9 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                         key={idx}
                         role="button"
                         tabIndex={fortnightSelectedStaffId ? 0 : -1}
-                        onClick={() => fortnightSelectedStaffId && !fullOn(date) && handleOpenFortnightModal(date)}
-                        onKeyDown={(e) => { if (fortnightSelectedStaffId && !fullOn(date) && (e.key === 'Enter' || e.key === ' ')) handleOpenFortnightModal(date); }}
-                        title={!fortnightSelectedStaffId ? 'Select a staff member first' : fullOn(date) ? `${selectedStaff.name}: ${FTE_FULL_LABEL}` : undefined}
+                        onClick={() => fortnightSelectedStaffId && !fullOn(date) && !leftOn(date) && handleOpenFortnightModal(date)}
+                        onKeyDown={(e) => { if (fortnightSelectedStaffId && !fullOn(date) && !leftOn(date) && (e.key === 'Enter' || e.key === ' ')) handleOpenFortnightModal(date); }}
+                        title={!fortnightSelectedStaffId ? 'Select a staff member first' : leftOn(date) ? `${selectedStaff.name}: ${leftLabel(selectedStaff)}` : fullOn(date) ? `${selectedStaff.name}: ${FTE_FULL_LABEL}` : undefined}
                         className={`min-h-[76px] p-1.5 rounded-lg border text-left align-top transition ${
                           !fortnightSelectedStaffId
                             ? 'border-gray-100 bg-gray-50 cursor-not-allowed'
@@ -4406,7 +4421,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                                 key={s.staff_id}
                                 onClick={() => selectStaff(s, blocked, overridable, blockType, label)}
                                 disabled={hardBlocked}
-                                title={hardBlocked ? (blockType === 'fte_full' ? `Their FTE's hours for this pay fortnight are all allocated` : `Not confirmed available for this date${label}`) : blocked ? `Requires override${label}` : restricted ? 'Marked themselves as unable to do this activity — can still be assigned' : undefined}
+                                title={hardBlocked ? (blockType === 'fte_full' ? `Their FTE's hours for this pay fortnight are all allocated` : blockType === 'left' ? `They've left${label}` : `Not confirmed available for this date${label}`) : blocked ? `Requires override${label}` : restricted ? 'Marked themselves as unable to do this activity — can still be assigned' : undefined}
                                 className={`w-full text-left px-3 py-2 rounded text-sm ${
                                   hardBlocked ? 'text-gray-400 cursor-not-allowed bg-gray-50' : blocked ? 'text-orange-700 hover:bg-orange-50' : restricted ? 'text-red-700 hover:bg-red-50' : 'hover:bg-blue-50'
                                 }`}
@@ -4536,7 +4551,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                                 key={s.staff_id}
                                 onClick={() => selectStaff(s, blocked, overridable, blockType, label)}
                                 disabled={hardBlocked}
-                                title={hardBlocked ? (blockType === 'fte_full' ? `Their FTE's hours for this pay fortnight are all allocated` : `Not confirmed available for this date${label}`) : blocked ? `Requires override${label}` : restricted ? 'Marked themselves as unable to do this activity — can still be assigned' : undefined}
+                                title={hardBlocked ? (blockType === 'fte_full' ? `Their FTE's hours for this pay fortnight are all allocated` : blockType === 'left' ? `They've left${label}` : `Not confirmed available for this date${label}`) : blocked ? `Requires override${label}` : restricted ? 'Marked themselves as unable to do this activity — can still be assigned' : undefined}
                                 className={`w-full text-left px-3 py-2 rounded text-sm ${
                                   hardBlocked ? 'text-gray-400 cursor-not-allowed bg-gray-50' : blocked ? 'text-orange-700 hover:bg-orange-50' : restricted ? 'text-red-700 hover:bg-red-50' : 'hover:bg-blue-50'
                                 }`}

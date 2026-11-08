@@ -38,6 +38,9 @@ describe('fteFull', () => {
     expect(fteFull({ staff_id: 'me', fte: 0.5 }, '2026-11-05', tenHourDays(4))).toBe(false); // 40 of 44
     expect(fteFull({ staff_id: 'me', fte: 0.5 }, '2026-11-05', tenHourDays(5))).toBe(true); // 50 of 44
   });
+  it('never caps FTE 0 (casuals and locums)', () => {
+    expect(fteFull({ staff_id: 'me', fte: 0 }, '2026-11-05', tenHourDays(5))).toBe(false);
+  });
   it('starts again in the next fortnight', () => {
     expect(fteFull({ staff_id: 'me', fte: 0.5 }, '2026-11-09', tenHourDays(5))).toBe(false);
   });

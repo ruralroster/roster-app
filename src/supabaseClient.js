@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import { DEFAULT_FTE, getDatesInRange } from './availabilityUtils';
+import { DEFAULT_FTE, getDatesInRange, hasLeft } from './availabilityUtils';
 import { toLocalDateStr } from './dateUtils';
 import { getSessionGroups, dedupeAssignmentsByShift, assignmentShiftKey } from './shiftSessionUtils';
 import { getMondayOfWeek } from './payrollExport';
@@ -8,7 +8,7 @@ import { gradeForSection, GRADE_LABEL } from './staffGrade';
 import { isEligibleForOffer, offerIsFilled } from './offerEligibility';
 import { findActiveOnCalls, findOvertimeShifts } from './callbackUtils';
 import { bestJobForNewCard, jobForImportedShift } from './plannerUtils';
-import { buildFairness, activitySkillMap, dutyRankScore, exposureKey as fairnessKey } from './fairness';
+import { buildFairness, activitySkillMap, dutyRankScore, isCasual, exposureKey as fairnessKey } from './fairness';
 import { missingRolesForCard, classifyDayStatus } from './volunteerUtils';
 
 console.log('=== supabaseClient.js LOADING ===');
@@ -1121,6 +1121,86 @@ async function seedDefaultAvailability(departmentId, staffId) {
 // "Delete" sets active=false: they disappear from staff-selection dropdowns
 // and case-mix/fairness calculations used for new allocation, but every
 // existing assignment they're already on is left exactly as it was.
+// Leaving: their last working day, or null for not leaving.
+export async function updateStaffLeavingDate(staffId, dateStr) {
+  try {
+    const { data, error } = await supabase
+      .from('staff')
+      .update({ leaving_date: dateStr || null })
+      .eq('staff_id', staffId)
+      .select()
+      .single();
+    return { data, error };
+  } catch (err) {
+    return { data: null, error: err };
+  }
+}
+
+// What a leaver is booked on after their last day: { assignments, duties }.
+export async function getBookingsAfter(staffId, dateStr) {
+  try {
+    const [assignRes, dutyRes] = await Promise.all([
+      supabase.from('staff_assignments')
+        .select('assignment_id, date, leave_code, locations(name), shifts(name)')
+        .eq('staff_id', staffId).gt('date', dateStr).order('date'),
+      supabase.from('duty_assignments')
+        .select('duty_id, date, duty_type')
+        .eq('staff_id', staffId).gt('date', dateStr).order('date'),
+    ]);
+    const error = assignRes.error || dutyRes.error;
+    if (error) throw error;
+    return { assignments: assignRes.data || [], duties: dutyRes.data || [], error: null };
+  } catch (err) {
+    console.error('getBookingsAfter error:', err);
+    return { assignments: [], duties: [], error: err };
+  }
+}
+
+// Takes a leaver off everything after their last day: bookings, on call
+// and volunteering. The places they leave show as gaps to fill or offer.
+export async function clearBookingsAfter(staffId, dateStr) {
+  try {
+    const { data: requests, error: reqError } = await supabase.from('volunteer_requests')
+      .select('theatre_activity_id').eq('staff_id', staffId);
+    if (reqError) throw reqError;
+    const requestCardIds = [...new Set((requests || []).map(r => r.theatre_activity_id))];
+    let laterCardIds = [];
+    if (requestCardIds.length) {
+      const { data: cards, error: cardError } = await supabase.from('theatre_activities')
+        .select('theatre_activity_id').in('theatre_activity_id', requestCardIds).gt('date', dateStr);
+      if (cardError) throw cardError;
+      laterCardIds = (cards || []).map(c => c.theatre_activity_id);
+    }
+    const results = await Promise.all([
+      supabase.from('staff_assignments').delete().eq('staff_id', staffId).gt('date', dateStr),
+      supabase.from('duty_assignments').delete().eq('staff_id', staffId).gt('date', dateStr),
+      laterCardIds.length
+        ? supabase.from('volunteer_requests').delete().eq('staff_id', staffId).in('theatre_activity_id', laterCardIds)
+        : Promise.resolve({ error: null }),
+    ]);
+    const failed = results.find(r => r.error);
+    return { error: failed ? failed.error : null };
+  } catch (err) {
+    console.error('clearBookingsAfter error:', err);
+    return { error: err };
+  }
+}
+
+// Deactivates anyone in the department whose last day has passed. Run when
+// an officer opens the app. Before the leaving-date migration it does nothing.
+export async function deactivateLeavers(departmentId) {
+  try {
+    const { data, error } = await supabase.from('staff')
+      .update({ active: false })
+      .eq('department_id', departmentId).eq('active', true)
+      .lt('leaving_date', toLocalDateStr(new Date()))
+      .select('staff_id');
+    return { data: data || [], error: error && !/leaving_date/.test(error.message || '') ? error : null };
+  } catch (err) {
+    return { data: [], error: err };
+  }
+}
+
 export async function deactivateStaff(staffId) {
   console.log('deactivateStaff called', staffId);
 
@@ -1137,14 +1217,21 @@ export async function deactivateStaff(staffId) {
   }
 }
 
+// Coming back (e.g. a leaver returning as a locum): their old leaving date
+// is cleared too, or they'd be unbookable after it and deactivated again
+// on the next officer load (deactivateLeavers).
 export async function reactivateStaff(staffId) {
   console.log('reactivateStaff called', staffId);
 
   try {
-    const { error } = await supabase
+    let { error } = await supabase
       .from('staff')
-      .update({ active: true })
+      .update({ active: true, leaving_date: null })
       .eq('staff_id', staffId);
+    // Before the leaving-date migration there's no column to clear.
+    if (error && /leaving_date/.test(error.message || '')) {
+      ({ error } = await supabase.from('staff').update({ active: true }).eq('staff_id', staffId));
+    }
 
     return { error };
   } catch (err) {
@@ -2529,7 +2616,8 @@ export async function getSortedStaffForActivity(departmentId, activityId, date) 
     });
     const key = (s) => (s.solo ? -1 : s.fair_score ?? Infinity);
     enriched.sort((a, b) =>
-      (weekend ? a.weekend_score - b.weekend_score : 0)
+      (isCasual(a) - isCasual(b)) // casuals and locums after regular staff
+      || (weekend ? a.weekend_score - b.weekend_score : 0)
       || key(a) - key(b)
       || (a.last_worked_date || '0000-00-00').localeCompare(b.last_worked_date || '0000-00-00'));
     return { data: enriched, error: null };
@@ -3219,7 +3307,7 @@ export async function getAvailableShiftsForStaff(staffId, departmentId) {
     const [staffRes, offersRes, assignRes, availRes, volunteerRes, ranksRes] = await Promise.all([
       supabase
         .from('staff')
-        .select('rank, activity_restrictions, advanced_skills')
+        .select('*')
         .eq('staff_id', staffId)
         .single(),
       supabase
@@ -3272,7 +3360,7 @@ export async function getAvailableShiftsForStaff(staffId, departmentId) {
           rankRow,
           requiredGrade: ta.required_grade,
           roleFilled: offerIsFilled(offer, roleCounts.get(`${offer.theatre_activity_id}|${offer.role}`) || 0),
-          isAvailable: availableDates.has(ta.date),
+          isAvailable: availableDates.has(ta.date) && !hasLeft(staffRes.data, ta.date),
           activityName: ta.activity_types?.name || null,
           restrictions: staffRes.data?.activity_restrictions || [],
           requiredSkills: ta.activity_types?.required_advanced_skills || [],

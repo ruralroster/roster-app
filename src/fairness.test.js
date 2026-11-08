@@ -149,6 +149,33 @@ describe('skilled places', () => {
   });
 });
 
+describe('casuals and locums (FTE 0)', () => {
+  it('come after everyone with an FTE, even with nothing done', () => {
+    const f = buildFairness({
+      staff: [{ staff_id: 'reg', fte: 1 }, { staff_id: 'locum', fte: 0 }],
+      totalShiftsByStaff: new Map([['reg', 10]]),
+      statsByStaffActivity: new Map([['reg|ward', { count: 10, lastDate: '2026-11-01' }]]),
+    });
+    expect(f.activityScore('locum', 'ward')).toBe(99);
+    expect(f.activityScore('locum', 'ward')).toBeGreaterThan(f.activityScore('reg', 'ward'));
+  });
+
+  it('don\'t share a solo job or take AST time', () => {
+    const f = buildFairness({
+      staff: [{ staff_id: 'reg', fte: 1, advanced_skills: ['endo', 'ed'] }, { staff_id: 'locum', fte: 0, advanced_skills: ['endo', 'ed'] },
+        { staff_id: 'anA', fte: 1, advanced_skills: ['anaes'] }, { staff_id: 'anB', fte: 1, advanced_skills: ['anaes'] }],
+      totalShiftsByStaff: new Map([['reg', 10], ['locum', 10], ['anA', 10], ['anB', 10]]),
+      statsByStaffActivity: new Map([['anA|anaesthetics', { count: 4, lastDate: '2026-11-01' }], ['anB|anaesthetics', { count: 4, lastDate: '2026-11-01' }]]),
+      activitySkills: new Map([['endoscopy', ['endo']], ['anaesthetics', ['anaes']], ['ed', []]]),
+      specialtyActivities: new Map([['ed', ['ed']]]),
+    });
+    expect(f.soloOwner.get('endoscopy')).toBe('reg');
+    expect(f.astTime('locum')).toBeNull();
+    expect(f.activityScore('locum', 'ed')).toBe(99);
+    expect(f.activityScore('reg', 'ed')).toBeLessThan(0);
+  });
+});
+
 describe('a specialty anyone can cover (ED for an ED AST)', () => {
   // Two anaesthetic ASTs spend 4 of 10 shifts on anaesthetics; two obs
   // ASTs 9 of 10 on obstetrics (the service needs it). An ED AST and a

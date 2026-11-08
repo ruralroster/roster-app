@@ -321,6 +321,13 @@ describe('rankPeopleForPlace', () => {
     expect(list[0]).toMatchObject({ staffId: 'a', solo: true });
   });
 
+  it('puts casuals and locums after regular staff, even if they did it yesterday', () => {
+    const st = [...staff, { staff_id: 'loc', fte: 0 }];
+    const list = rankPeopleForPlace([...people, { staffId: 'loc', name: 'Lou', share: Infinity, casual: true }],
+      'ward', '2026-11-11', fair(st), stats, new Set(['loc']));
+    expect(list.map(p => p.staffId)).toEqual(['b', 'c', 'a', 'loc']);
+  });
+
   it('on a weekend, puts whoever is behind on weekends first', () => {
     const weekends = new Map([['a', 0], ['b', 6], ['c', 3]]);
     expect(order(rankPeopleForPlace(people, 'ward', '2026-11-14', fair(staff, stats, new Map(), weekends), stats))).toEqual(['a', 'c', 'b']);

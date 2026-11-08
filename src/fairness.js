@@ -35,6 +35,9 @@
 //     out of their figures for common work like any specialist time; while
 //     they're under it they're due those jobs first (score below 0). Past
 //     it, their ED is ordinary ED, shared with everyone.
+//   - Casuals and locums (FTE 0) never come ahead of regular staff: they
+//     have no fair share (score 99), can't own a solo job or on-call type,
+//     don't take AST time, and every picker lists them after everyone else.
 // Each score is what they've done ÷ their fair share: 1 = exactly fair,
 // under 1 = behind (they should go first), over 1 = ahead.
 
@@ -42,6 +45,9 @@ import { DEFAULT_FTE } from './availabilityUtils';
 import { addDays } from './plannerUtils';
 
 const hasAny = (held, needed) => needed.some(id => held.includes(id));
+
+// FTE 0: a casual or locum, listed after all regular staff.
+export const isCasual = (staff) => !((staff?.fte ?? DEFAULT_FTE) > 0);
 
 // The key a booking counts under: the activity, or for a place that needs
 // a skill, `${activityId}#${skill ids}` (that skilled work on its own).
@@ -94,6 +100,7 @@ export function buildFairness({
   const skillsOf = new Map(staff.map(s => [s.staff_id, s.advanced_skills || []]));
   const fteOf = new Map(staff.map(s => [s.staff_id, s.fte ?? DEFAULT_FTE]));
   const eligibleForSkills = (needed) => (needed?.length ? ids.filter(id => hasAny(skillsOf.get(id), needed)) : ids);
+  const regular = (id) => fteOf.get(id) > 0;
 
   // Activities: who can do each, and whose alone it is.
   const activityIds = new Set([...activitySkills.keys()]);
@@ -104,7 +111,9 @@ export function buildFairness({
     const needed = skillsForKey(activitySkills, activityId);
     const eligible = eligibleForSkills(needed);
     eligibleByActivity.set(activityId, eligible);
-    if (needed.length && eligible.length === 1) soloOwner.set(activityId, eligible[0]);
+    // Only regular staff count: a locum with the skill doesn't share it.
+    const regulars = eligible.filter(regular);
+    if (needed.length && regulars.length === 1) soloOwner.set(activityId, regulars[0]);
   }
   const countOn = (staffId, activityId) => statsByStaffActivity.get(`${staffId}|${activityId}`)?.count || 0;
   const shiftsOf = (id) => totalShiftsByStaff.get(id) || 0;
@@ -116,7 +125,7 @@ export function buildFairness({
   const astShares = [];
   for (const skill of new Set(staff.flatMap(s => s.advanced_skills || []))) {
     if (specialtyActivities.get(skill)?.length) continue;
-    const holders = ids.filter(id => skillsOf.get(id).includes(skill));
+    const holders = ids.filter(id => regular(id) && skillsOf.get(id).includes(skill));
     const keys = restrictedKeys.filter(a => !soloOwner.has(a) && skillsForKey(activitySkills, a).includes(skill));
     if (holders.length < 2 || !keys.length) continue;
     const done = sumOf(holders.flatMap(id => keys.map(a => countOn(id, a))));
@@ -128,8 +137,8 @@ export function buildFairness({
 
   // Each person's open-specialty activities, their shifts there, and how
   // many of those count as specialist time (skilled places there first).
-  const homeActs = new Map(ids.map(id => [id, new Set((skillsOf.get(id) || [])
-    .flatMap(skill => specialtyActivities.get(skill) || []))]));
+  const homeActs = new Map(ids.map(id => [id, new Set(regular(id) ? (skillsOf.get(id) || [])
+    .flatMap(skill => specialtyActivities.get(skill) || []) : [])]));
   const homeDone = (id) => sumOf([...homeActs.get(id)].map(a => countOn(id, a)));
   const homeSkilled = (id) => sumOf(restrictedKeys.filter(k => homeActs.get(id).has(k.split('#')[0])).map(k => countOn(id, k)));
   const homeQuota = (id) => (homeActs.get(id).size ? astShare * shiftsOf(id) : 0);
@@ -164,8 +173,10 @@ export function buildFairness({
   const openFte = new Map(ids.map(id => [id, fteOf.get(id) * leftOver(id, soloShifts.get(id) + restrictedShifts.get(id))]));
 
   // done ÷ fair share of `total` among `pool`, weighted by `weights`.
+  // FTE 0 (casuals, locums) have no fair share: 99, so they come last.
   const ratio = (done, total, id, pool, weights) => {
     if (!pool.includes(id)) return null;
+    if (!(fteOf.get(id) > 0)) return 99;
     const poolWeight = sumOf(pool.map(p => weights.get(p)));
     const expected = poolWeight ? total * weights.get(id) / poolWeight : 0;
     if (expected > 0) return done / expected;
@@ -179,7 +190,8 @@ export function buildFairness({
     const pool = eligibleForSkills(dt.required_advanced_skills)
       .filter(id => dutyCounts.get(`${id}|${dt.key}`) > 0 || staff.find(s => s.staff_id === id)?.on_call_willing !== false);
     dutyEligible.set(dt.key, pool);
-    if (dt.required_advanced_skills?.length && pool.length === 1) dutySolo.set(dt.key, pool[0]);
+    const regulars = pool.filter(regular);
+    if (dt.required_advanced_skills?.length && regulars.length === 1) dutySolo.set(dt.key, regulars[0]);
   }
   const dutyCount = (id, key) => dutyCounts.get(`${id}|${key}`) || 0;
   const sharedOnCall = (id) => sumOf(dutyTypes.filter(dt => dutySolo.get(dt.key) !== id).map(dt => dutyCount(id, dt.key)));

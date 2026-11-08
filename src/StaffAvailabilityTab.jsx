@@ -16,6 +16,9 @@ import {
   updateStaffPositionId,
   updateStaffCostCentre,
   updateStaffAdvancedSkills,
+  updateStaffLeavingDate,
+  getBookingsAfter,
+  clearBookingsAfter,
 } from './supabaseClient';
 import {
   FTE_OPTIONS,
@@ -71,6 +74,12 @@ export default function StaffAvailabilityTab({ departmentId, staffList = [], lea
   const [savingDate, setSavingDate] = useState(null);
   const [fteOverrides, setFteOverrides] = useState({});
   const [savingFte, setSavingFte] = useState(false);
+  // Leaving date: saved values by staff id (until the staff list reloads),
+  // and what they're booked on after it ({ date, assignments, duties }).
+  const [leavingOverrides, setLeavingOverrides] = useState({});
+  const [savingLeaving, setSavingLeaving] = useState(false);
+  const [bookingsAfter, setBookingsAfter] = useState(null);
+  useEffect(() => { setBookingsAfter(null); }, [selectedStaffId]);
   const [rankOverrides, setRankOverrides] = useState({});
   const [savingRank, setSavingRank] = useState(false);
   const [savingAdvancedSkills, setSavingAdvancedSkills] = useState(false);
@@ -244,6 +253,48 @@ export default function StaffAvailabilityTab({ departmentId, staffList = [], lea
       setError(`Failed to update FTE: ${err.message}`);
     } finally {
       setSavingFte(false);
+    }
+  };
+
+  // Their last working day. Lists anything booked after it, to clear.
+  const handleLeavingDateChange = async (dateStr) => {
+    if (!selectedStaffId) return;
+    setSavingLeaving(true);
+    setBookingsAfter(null);
+    try {
+      const { error: saveError } = await updateStaffLeavingDate(selectedStaffId, dateStr || null);
+      if (saveError) {
+        throw /leaving_date/.test(saveError.message || '')
+          ? new Error('it needs the database update in migrations/2026-11-09_staff_leaving_date.sql. Run it in the Supabase SQL Editor, then try again.')
+          : saveError;
+      }
+      setLeavingOverrides(prev => ({ ...prev, [selectedStaffId]: dateStr || null }));
+      if (dateStr) {
+        const after = await getBookingsAfter(selectedStaffId, dateStr);
+        if (after.error) throw after.error;
+        if (after.assignments.length || after.duties.length) setBookingsAfter({ date: dateStr, ...after });
+      }
+      if (onStaffChanged) await onStaffChanged();
+      setError(null);
+    } catch (err) {
+      setError(`Failed to save the leaving date: ${err.message}`);
+    } finally {
+      setSavingLeaving(false);
+    }
+  };
+
+  const handleClearBookingsAfter = async () => {
+    if (!bookingsAfter || !selectedStaffId) return;
+    setSavingLeaving(true);
+    try {
+      const { error: clearError } = await clearBookingsAfter(selectedStaffId, bookingsAfter.date);
+      if (clearError) throw clearError;
+      setBookingsAfter(null);
+      setError(null);
+    } catch (err) {
+      setError(`Failed to clear their later bookings: ${err.message}`);
+    } finally {
+      setSavingLeaving(false);
     }
   };
 
@@ -631,6 +682,7 @@ export default function StaffAvailabilityTab({ departmentId, staffList = [], lea
 
   const selectedStaff = staffList.find(s => s.staff_id === selectedStaffId);
   const currentFte = fteOverrides[selectedStaffId] ?? selectedStaff?.fte ?? DEFAULT_FTE;
+  const currentLeaving = (selectedStaffId in leavingOverrides ? leavingOverrides[selectedStaffId] : selectedStaff?.leaving_date) || '';
   const currentRank = rankOverrides[selectedStaffId] ?? selectedStaff?.rank ?? '';
   const currentName = nameOverrides[selectedStaffId] ?? selectedStaff?.name ?? '';
   const currentEmail = emailOverrides[selectedStaffId] ?? selectedStaff?.email ?? '';
@@ -804,6 +856,65 @@ export default function StaffAvailabilityTab({ departmentId, staffList = [], lea
                 <option key={f} value={f}>{formatFte(f)} FTE</option>
               ))}
             </select>
+          </div>
+
+          <div className="mb-4">
+            <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Leaving on (last working day)</label>
+            <div className="flex gap-2 items-center">
+              <input
+                type="date"
+                value={currentLeaving}
+                onChange={(e) => handleLeavingDateChange(e.target.value)}
+                disabled={savingLeaving}
+                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+              />
+              {currentLeaving && (
+                <button
+                  onClick={() => handleLeavingDateChange('')}
+                  disabled={savingLeaving}
+                  className="px-3 py-2 text-xs font-semibold text-gray-600 hover:text-gray-900 disabled:opacity-50"
+                >
+                  Not leaving
+                </button>
+              )}
+            </div>
+            <p className="text-xs text-gray-500 mt-1">
+              {currentLeaving
+                ? 'Bookable up to and including this day, not after. The day after, they\'re deactivated when an officer next opens the app, which also ends their access.'
+                : 'Set this when someone is leaving. They stay bookable until then; nobody can book them after it.'}
+            </p>
+            {bookingsAfter && (
+              <div className="mt-2 p-3 bg-amber-50 border border-amber-300 rounded-lg text-sm text-amber-900">
+                <p className="font-semibold mb-1">
+                  Still booked after their last day: {bookingsAfter.assignments.length + bookingsAfter.duties.length}
+                </p>
+                <ul className="text-xs space-y-0.5 max-h-40 overflow-y-auto mb-2">
+                  {[
+                    ...bookingsAfter.assignments.map(a => ({ key: a.assignment_id, date: a.date, what: a.leave_code ? `Leave (${a.leave_code})` : [a.locations?.name, a.shifts?.name].filter(Boolean).join(' · ') || 'A shift' })),
+                    ...bookingsAfter.duties.map(d => ({ key: d.duty_id, date: d.date, what: `On call: ${d.duty_type}` })),
+                  ].sort((a, b) => a.date.localeCompare(b.date)).map(row => (
+                    <li key={row.key}>
+                      {new Date(`${row.date}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })} — {row.what}
+                    </li>
+                  ))}
+                </ul>
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleClearBookingsAfter}
+                    disabled={savingLeaving}
+                    className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold rounded disabled:opacity-50"
+                  >
+                    Clear them (the places show as gaps to fill)
+                  </button>
+                  <button
+                    onClick={() => setBookingsAfter(null)}
+                    className="px-3 py-1.5 bg-white border border-amber-300 text-amber-900 text-xs font-semibold rounded"
+                  >
+                    Leave them for now
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="mb-4">

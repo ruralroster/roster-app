@@ -61,9 +61,11 @@ export function fortnightLoad(staff, dateStr, bookings) {
 }
 
 // True once `staff` has their FTE's hours for dateStr's pay fortnight.
+// FTE 0 (a casual or locum) has no cap: they're booked as needed.
 export function fteFull(staff, dateStr, bookings) {
   if (!staff) return false;
   const { hours, target } = fortnightLoad(staff, dateStr, bookings);
+  if (target <= 0) return false;
   return hours >= target - 0.01;
 }
 
