@@ -1338,7 +1338,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
                             <p className="text-xs font-semibold text-gray-600 uppercase mb-1">{dutyType.label}</p>
                             <p className="text-sm font-medium text-gray-900 flex items-center gap-2">
                               {duty?.staff?.name ? (
-                                <button onClick={() => handleViewStaffDetail(duty.staff_id)} className="hover:underline hover:text-blue-700">
+                                <button onClick={() => handleViewStaffDetail(duty.staff_id)} className="text-left hover:underline hover:text-blue-700">
                                   {duty.staff.name}
                                 </button>
                               ) : 'Unassigned'}
@@ -1428,7 +1428,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
                                   <div className="space-y-1">
                                     {colleagues.map(c => (
                                       <div key={c.staff_id} className="flex items-center justify-between gap-2">
-                                        <button onClick={() => handleViewStaffDetail(c.staff_id)} className="text-sm font-medium text-gray-800 hover:underline hover:text-blue-700">
+                                        <button onClick={() => handleViewStaffDetail(c.staff_id)} className="text-left text-sm font-medium text-gray-800 hover:underline hover:text-blue-700">
                                           {c.staff?.name}
                                         </button>
                                         <span className="text-xs text-gray-500">{c.visitor ? visitorLabel(c) : RANK_LABEL[c.staff?.rank] || c.staff?.rank}</span>
@@ -1524,7 +1524,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
                                       <div key={assignment.assignment_id} style={boxStyle} className={`flex items-center justify-between gap-2 p-2 rounded ${isYou ? 'ring-2 ring-blue-600' : ''}`}>
                                         <div>
                                           <p className="text-sm font-medium text-gray-900 flex items-center gap-2">
-                                            <button onClick={() => handleViewStaffDetail(assignment.staff_id)} className="hover:underline hover:text-blue-700">
+                                            <button onClick={() => handleViewStaffDetail(assignment.staff_id)} className="text-left hover:underline hover:text-blue-700">
                                               {assignment.staff?.name}
                                             </button>
                                             {isYou && <span className="px-2 py-0.5 bg-blue-600 text-white text-xs font-semibold rounded-full">You</span>}
@@ -1805,7 +1805,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
                                 <p className="text-xs font-semibold text-gray-600 uppercase mb-1">
                                   {new Date(assignment.date).toLocaleDateString('en-AU', { weekday: 'short', month: 'short', day: 'numeric' })}
                                 </p>
-                                <button onClick={() => handleViewStaffDetail(assignment.staff_id)} className="text-sm font-bold text-gray-900 hover:underline hover:text-blue-700">
+                                <button onClick={() => handleViewStaffDetail(assignment.staff_id)} className="text-left text-sm font-bold text-gray-900 hover:underline hover:text-blue-700">
                                   {assignment.staff?.name}
                                 </button>
                                 {assignment.staff?.phone && (
