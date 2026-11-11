@@ -1,6 +1,6 @@
 -- Removes the demo copy made by 1_copy_innisfail_to_demo.sql: the
 -- "Wattle Creek Hospital" department and everything in it, and the
--- "Demo District" on DR Roster with its sites, doctors and shifts.
+-- "Demo District" on DR App with its sites, doctors and shifts.
 -- The two demo logins stay; delete them under Authentication if you like.
 -- Touches nothing outside the demo.
 
@@ -10,7 +10,7 @@ CREATE TEMP TABLE ctx ON COMMIT DROP AS
 SELECT (SELECT department_id FROM departments WHERE name = 'Wattle Creek Hospital') AS dept,
        (SELECT district_id FROM districts WHERE name = 'Demo District') AS district;
 
--- DR Roster
+-- DR App
 DELETE FROM district_swap_offers WHERE listing_id IN (SELECT listing_id FROM district_swap_listings, ctx WHERE district_id = ctx.district)
    OR offered_notice_id IN (SELECT notice_id FROM district_notices, ctx WHERE district_id = ctx.district);
 DELETE FROM district_swap_listings USING ctx WHERE district_id = ctx.district;

@@ -271,7 +271,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   const [volunteerRequests, setVolunteerRequests] = useState([]); // pending volunteer_requests for the visible theatreActivities
   const [volunteerOffers, setVolunteerOffers] = useState([]); // volunteer_offers already opened for the visible theatreActivities
   const [offerPrompt, setOfferPrompt] = useState(null); // the offer dialog: { theatreActivityId, role, disruption }
-  const [cardVisitors, setCardVisitors] = useState([]); // theatre_activity_visitors on the visible theatreActivities (Planner visitors, district doctors from DR Roster)
+  const [cardVisitors, setCardVisitors] = useState([]); // theatre_activity_visitors on the visible theatreActivities (Planner visitors, district doctors from DR App)
   // Department-wide, from today on — the Calendar tab's Volunteering panel
   // and the volunteer count on the Calendar nav button. See
   // getVolunteeringOverview.
@@ -581,7 +581,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   }, [theatreActivities]);
 
   // Visitors are read-only here: they're named in the Planner, or booked
-  // from DR Roster.
+  // from DR App.
   useEffect(() => {
     const ids = theatreActivities.map(ta => ta.theatre_activity_id);
     getVisitorsForActivities(ids).then(({ data, error }) => {
@@ -590,7 +590,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     });
   }, [theatreActivities]);
 
-  // A visitor's role on the card: DR Roster records it; a Planner visitor
+  // A visitor's role on the card: DR App records it; a Planner visitor
   // takes their place's (a senior place is a consultant's).
   const visitorRole = (v) => v.role || (v.job_places?.grade === 'senior' ? 'consultant' : 'registrar');
 
@@ -4038,7 +4038,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                   <div key={v.visitor_id} className="flex items-center gap-2 flex-wrap p-2 bg-white/60 rounded-lg border border-dashed border-black/20">
                     <span className="text-sm italic text-gray-800">{v.name}</span>
                     <span className="text-xs text-gray-500">
-                      {v.source === 'dr_roster' ? 'From DR Roster — change it there' : `Visitor${v.job_places?.role ? ` (${v.job_places.role})` : ''} — change it in the Planner`}
+                      {v.source === 'dr_roster' ? 'From DR App — change it there' : `Visitor${v.job_places?.role ? ` (${v.job_places.role})` : ''} — change it in the Planner`}
                     </span>
                   </div>
                 ));

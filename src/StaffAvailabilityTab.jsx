@@ -1176,7 +1176,7 @@ export default function StaffAvailabilityTab({ departmentId, staffList = [], lea
           )}
 
           <p className="text-xs text-gray-500 mt-3">
-            Click a date to cycle {selectedStaff?.name || 'staff'}'s availability: grey = not set, green = available, red = unavailable (still open to district shifts in DR Roster), dark grey = unavailable because working elsewhere (no district shifts either).
+            Click a date to cycle {selectedStaff?.name || 'staff'}'s availability: grey = not set, green = available, red = unavailable (still open to district shifts in DR App), dark grey = unavailable because working elsewhere (no district shifts either).
           </p>
         </>
       )}

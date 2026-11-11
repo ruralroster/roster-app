@@ -14,7 +14,7 @@ import { getMondayOfWeek } from './payrollExport';
 // Swaps here are only "internal" ones, at this department's own site
 // (my_department_swaps, district-roster's migrations/
 // 2026-11-07_department_swaps_for_rstar.sql); swaps across sites stay in
-// DR Roster. Only DR Roster doctors get any; for anyone else, or until that
+// DR App. Only DR App doctors get any; for anyone else, or until that
 // migration is run, there are none and only volunteering shows.
 
 const WEEKS = 4;
@@ -196,8 +196,8 @@ export default function AvailableShifts({ departmentId, opportunities, renderOpp
 
       {swaps.length === 0 && (
         <p className="text-xs text-gray-500 mt-3">
-          On DR Roster? Colleagues' shifts up for swap here show in amber; swaps at other sites are in{' '}
-          <a href={DR_ROSTER_URL} target="_blank" rel="noreferrer" className="text-blue-700 underline">DR Roster</a>.
+          On DR App? Colleagues' shifts up for swap here show in amber; swaps at other sites are in{' '}
+          <a href={DR_ROSTER_URL} target="_blank" rel="noreferrer" className="text-blue-700 underline">DR App</a>.
         </p>
       )}
     </>
@@ -205,7 +205,7 @@ export default function AvailableShifts({ departmentId, opportunities, renderOpp
 }
 
 // A colleague's shift up for swap: pick one of yours (on a day they can
-// work) to give them in return. The officer approves it in DR Roster.
+// work) to give them in return. The officer approves it in DR App.
 function SwapRow({ swap: s, busy, run }) {
   const options = s.swap_options || [];
   const [offered, setOffered] = useState('');

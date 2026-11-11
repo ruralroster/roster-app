@@ -315,7 +315,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
     run("Couldn't remove the booking", () => deleteStaffAssignment(a.assignment_id));
   };
 
-  // place is null for a visitor DR Roster added with no place of their own.
+  // place is null for a visitor DR App added with no place of their own.
   const editVisitor = (card, place, slot, existing) => {
     const label = place?.role || 'extra';
     const name = window.prompt(
@@ -467,7 +467,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
           disabled={mode !== 'fill' || busy || locked(card.date)}
           onClick={() => editVisitor(card, place, slot, slot.visitor)}
           className="block w-full text-left text-xs italic text-gray-700 truncate"
-          title={`${slot.visitor.source === 'dr_roster' ? 'From DR Roster' : 'Visitor'} — tap to change`}
+          title={`${slot.visitor.source === 'dr_roster' ? 'From DR App' : 'Visitor'} — tap to change`}
         >
           {slot.visitor.name}
         </button>
@@ -716,7 +716,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
                 disabled={mode !== 'fill' || busy || locked(card.date)}
                 onClick={() => editVisitor(card, null, null, v)}
                 className="text-xs italic text-gray-700 truncate"
-                title={`${v.source === 'dr_roster' ? 'From DR Roster' : 'Visitor'} (extra)${mode === 'fill' ? ' — tap to change' : ''}`}
+                title={`${v.source === 'dr_roster' ? 'From DR App' : 'Visitor'} (extra)${mode === 'fill' ? ' — tap to change' : ''}`}
               >
                 {v.name}
               </button>

@@ -1,4 +1,4 @@
-// Builds the Rstar and DR Roster staff feature decks.
+// Builds the Rstar and DR App staff feature decks.
 const pptxgen = require('pptxgenjs');
 const React = require('react');
 const RDS = require('react-dom/server');
@@ -363,8 +363,8 @@ const rostar = {
       items: [
         { color: 'F3F4F6', border: 'D1D5DB', h: 'Not set', t: 'Tap to start' },
         { color: '22C55E', h: 'Available', t: 'Can be rostered and offered shifts' },
-        { color: 'EF4444', h: 'Unavailable', t: 'Leave or a day off; DR Roster can still offer you a shift' },
-        { color: '4B5563', h: 'Working elsewhere', t: 'Unavailable here, and DR Roster offers you nothing' },
+        { color: 'EF4444', h: 'Unavailable', t: 'Leave or a day off; DR App can still offer you a shift' },
+        { color: '4B5563', h: 'Working elsewhere', t: 'Unavailable here, and DR App offers you nothing' },
       ] },
     { type: 'flow', section: 'Variation', title: 'Pick up an extra shift', items: [
       { icon: 'MdCampaign', h: 'Officer offers a gap', t: "You're emailed if you can do it" },
@@ -372,7 +372,7 @@ const rostar = {
       { icon: 'MdPanTool', h: 'Volunteer', t: 'One tap puts your hand up' },
       { icon: 'MdCheckCircle', h: 'Officer accepts', t: "You're booked onto the roster" },
     ], note: 'Eligible = senior enough, holding any required skill, not restricted, and marked available that day.' },
-    { type: 'statSteps', section: 'Variation', title: 'Swap a shift, one for one', big: '1 for 1', bigLabel: "A swap never lowers anyone's shift count or FTE. Needs a DR Roster account.", items: [
+    { type: 'statSteps', section: 'Variation', title: 'Swap a shift, one for one', big: '1 for 1', bigLabel: "A swap never lowers anyone's shift count or FTE. Needs a DR App account.", items: [
       { h: 'Offer for swap', t: 'Variation → Swap a shift, last on the tab (tap to open)' },
       { h: 'Say when you could work', t: 'Tick at least one day or night that pay fortnight' },
       { h: 'Widen the pool (optional)', t: "Tick I'd take a shift in return at another site" },
@@ -416,7 +416,7 @@ const rostar = {
     { type: 'steps', section: 'Settings', title: 'Security and two-factor', icon: 'MdLock', items: [
       { h: 'Change your password', t: 'Settings → Security, any time' },
       { h: 'Turn on two-factor', t: 'Scan the QR code with an authenticator app, enter the 6-digit code, Verify & enable' },
-      { h: 'One login, both apps', t: 'The same sign-in and two-factor work in DR Roster' },
+      { h: 'One login, both apps', t: 'The same sign-in and two-factor work in DR App' },
       { h: 'Lost that phone?', t: 'The administrator clears two-factor; your officer can give a one-time password' },
     ] },
     { type: 'divider', section: 'For officers', title: 'For officers', sub: 'Build the week, offer the gaps, let the district cover the rest' },
@@ -435,8 +435,8 @@ const rostar = {
       { icon: 'MdCampaign', h: 'Offer', t: 'Offer senior or any grade; the day turns blue' },
       { icon: 'MdPanTool', h: 'Volunteers', t: 'The day turns purple' },
       { icon: 'MdCheckCircle', h: 'Accept', t: 'Booked; the day goes green' },
-      { icon: 'MdTravelExplore', h: 'Nobody local?', t: 'After 72 hours it goes to DR Roster' },
-    ], note: 'A district doctor approved on DR Roster lands on your card by themselves, marked From DR Roster.' },
+      { icon: 'MdTravelExplore', h: 'Nobody local?', t: 'After 72 hours it goes to DR App' },
+    ], note: 'A district doctor approved on DR App lands on your card by themselves, marked From DR App.' },
     { type: 'cards', section: 'For officers', title: 'More officer tools', items: [
       { icon: 'MdUploadFile', h: 'Excel import', t: 'Dry run, then write week by week' },
       { icon: 'MdPayments', h: 'Payroll export', t: 'Any fortnight as an Excel file' },
@@ -449,7 +449,7 @@ const rostar = {
       { h: 'Offer the gap', t: 'From the Planner, Calendar or Day view' },
       { h: 'Tick Service disruption', t: 'Unfilled means the service closes' },
       { h: 'Staff see it flagged', t: 'On their Available shifts, and in the email and phone alert' },
-      { h: 'It travels with the shift', t: 'Marked the same in DR Roster' },
+      { h: 'It travels with the shift', t: 'Marked the same in DR App' },
     ] },
     { type: 'cards', section: 'For officers', title: 'Day-to-day officer tools', items: [
       { icon: 'MdHealing', h: 'Sick calls', t: 'Acknowledge from the red banner on Calendar or Day view' },
@@ -654,7 +654,7 @@ const rostar = {
       { h: 'Notifications', t: 'Email, phone alerts, Send me a test' },
       { h: 'Password', t: 'Change it any time' },
       { h: 'Two-factor', t: 'An authenticator app code' },
-      { h: 'Yours only', t: 'Same login as DR Roster' },
+      { h: 'Yours only', t: 'Same login as DR App' },
     ] },
     { type: 'steps', section: 'Settings', title: 'Department', icon: 'MdApartment', items: [
       { h: 'Pay Centre Number', t: 'For the payroll export' },
@@ -725,19 +725,19 @@ const rostar = {
   ],
 };
 
-// ---------- DR Roster ----------
+// ---------- DR App ----------
 const dr = {
-  name: 'DR Roster: feature tour',
-  footer: 'DR Roster · feature tour',
+  name: 'DR App: feature tour',
+  footer: 'DR App · feature tour',
   palette: { dark: '23362B', primary: '2F6B4F', accent: 'D97706', light: 'EAF2EC', soft: 'B7D3C1' },
   slides: [
-    { type: 'title', section: 'Welcome', title: 'DR Roster', sub: 'The district shift board · a quick tour for doctors and officers' },
+    { type: 'title', section: 'Welcome', title: 'DR App', sub: 'The district shift board · a quick tour for doctors and officers' },
     { type: 'flow', section: 'Welcome', title: 'How it fits with Rstar', items: [
       { icon: 'MdLocalHospital', h: 'Gap at a site', t: 'Offered to local staff in Rstar' },
-      { icon: 'MdHourglassBottom', h: 'Nobody local', t: 'After 72 hours it comes to DR Roster' },
+      { icon: 'MdHourglassBottom', h: 'Nobody local', t: 'After 72 hours it comes to DR App' },
       { icon: 'MdPanTool', h: 'Doctors apply', t: 'District doctors who can do it' },
       { icon: 'MdCheckCircle', h: 'Officer approves', t: 'The doctor lands on the Rstar card' },
-    ], note: 'Sites can also post straight to DR Roster. It uses the same login as Rstar.' },
+    ], note: 'Sites can also post straight to DR App. It uses the same login as Rstar.' },
     { type: 'steps', section: 'Getting started', title: 'Getting started', icon: 'MdPhoneIphone', items: [
       { h: 'Accept your invite', t: 'Set a password from the email; Rstar users keep the same login' },
       { h: 'Install it', t: 'iPhone: Safari → Share → Add to Home Screen. Android: Install app' },
@@ -768,7 +768,7 @@ const dr = {
       { color: 'FFFFFF', border: 'D1D5DB', h: 'White', t: 'Nothing for you' },
     ] },
     { type: 'twoCol', section: 'Doctors', title: 'Look across sites',
-      left: { icon: 'MdTravelExplore', h: 'Ticked (default)', items: ["Every site you'd work at", 'The point of DR Roster: more sites, more shifts'] },
+      left: { icon: 'MdTravelExplore', h: 'Ticked (default)', items: ["Every site you'd work at", 'The point of DR App: more sites, more shifts'] },
       right: { icon: 'MdHome', h: 'Unticked', items: ["Only your home site's shifts", 'Shifts you applied for or are booked on always show', 'Swaps are the other way round: off unless you tick it'] } },
     { type: 'flow', section: 'Doctors', title: 'Applying for a shift', items: [
       { icon: 'MdTouchApp', h: 'Tap a day', t: 'See its shifts, and why' },
@@ -780,7 +780,7 @@ const dr = {
       left: { icon: 'MdBlock', h: 'Blocked', items: ["Tap a day → I'm not available this day", 'Or dark grey (working elsewhere) in Rstar', 'No shifts shown, no alerts'] },
       right: { icon: 'MdBeachAccess', h: 'Not blocked', items: ['A red leave or day-off in Rstar', "You're still offered shifts, in case you want one", 'A night into a blocked morning is blocked'] } },
     { type: 'stats', section: 'Doctors', title: "When you'll hear about shifts", lead: "Only shifts you can do, at sites you'd work at, and each thing only once.", items: [
-      { h: 'Now', t: 'New shifts posted on DR Roster go straight to doctors who can do them' },
+      { h: 'Now', t: 'New shifts posted on DR App go straight to doctors who can do them' },
       { h: 'Mon 9:00', t: 'One summary of shifts passed up from Rstar, next 6 weeks' },
       { h: '6–21h', t: 'Checked every 30 minutes, so nothing arrives overnight' },
     ] },
@@ -797,7 +797,7 @@ const dr = {
       { h: 'You approve, or decline', t: "Bookings swap over; nobody's count changes" },
     ] },
     { type: 'twoCol', section: 'Swaps', title: 'My shifts',
-      left: { icon: 'MdViewList', h: 'List', items: ['Every shift you work: DR Roster plus your Rstar roster', 'List for swap and Find a swap on each'] },
+      left: { icon: 'MdViewList', h: 'List', items: ['Every shift you work: DR App plus your Rstar roster', 'List for swap and Find a swap on each'] },
       right: { icon: 'MdCalendarMonth', h: 'Calendar', items: ['Four weeks; swipe or use the arrows', 'Coloured by site; striped amber when listed', 'Tap a day to see its shifts'] } },
     { type: 'steps', section: 'Swaps', title: 'Listing a shift', icon: 'MdPostAdd', items: [
       { h: 'List for swap', t: "On the shift in My shifts, or in Rstar's Variation tab" },

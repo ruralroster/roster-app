@@ -3408,7 +3408,7 @@ export async function getAvailableShiftsForStaff(staffId, departmentId) {
 // of a grade (see offerIsFilled in offerEligibility.js).
 // serviceDisruption: the officer's flag that the service closes (e.g.
 // obstetrics goes on bypass) if nobody takes it. Officers only; it carries
-// through to DR Roster if the offer escalates.
+// through to DR App if the offer escalates.
 export async function createVolunteerOffer(departmentId, theatreActivityId, role, filledBaseline = 0, serviceDisruption = false) {
   console.log('createVolunteerOffer called', departmentId, theatreActivityId, role, filledBaseline, serviceDisruption);
 
@@ -3484,7 +3484,7 @@ function countRolesOnCards(assignments) {
 // rows the "is this card covered" checks read: { date,
 // theatre_activity_id, role }. role is NULL for a visitor in a place of
 // their own (visiting surgeons) and 'consultant'/'registrar' for district
-// doctors DR Roster books on (migrations/2026-10-28_card_visitors_without_
+// doctors DR App books on (migrations/2026-10-28_card_visitors_without_
 // place.sql). Either way the card has someone on it.
 async function getCardVisitorRows(departmentId, startStr, endStr = null) {
   let query = supabase
@@ -4966,7 +4966,7 @@ export async function getVisitorAssignmentsForDate(departmentId, date) {
   }
 }
 
-// Renames a visitor in place — also the ones DR Roster adds with no place.
+// Renames a visitor in place — also the ones DR App adds with no place.
 export async function renamePlannerVisitor(visitorId, name) {
   try {
     const { error } = await supabase.from('theatre_activity_visitors').update({ name: name.trim() }).eq('visitor_id', visitorId);

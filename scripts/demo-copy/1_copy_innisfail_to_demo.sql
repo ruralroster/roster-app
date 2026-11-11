@@ -4,7 +4,7 @@
 -- setup (ranks, skills, activities, shifts, locations, jobs and places, week
 -- templates, duty types, rules, phone book) and its roster from 2 weeks ago
 -- to 6 weeks ahead, with every person renamed to a made-up name. Plus a
--- "Demo District" on DR Roster with two made-up sites: Wattle Creek (linked
+-- "Demo District" on DR App with two made-up sites: Wattle Creek (linked
 -- to the copy) and Banksia Bay, made-up district doctors, and open shifts.
 --
 -- Nothing real is copied: no emails, phones, payroll numbers, notes, sick
@@ -230,7 +230,7 @@ SELECT gen_random_uuid(), c.dst, mt.new, ms.new, r.role, now()
 FROM volunteer_requests r JOIN m_ta mt ON mt.old = r.theatre_activity_id JOIN m_staff ms ON ms.old = r.staff_id, ctx c
 WHERE r.department_id = c.src;
 
--- ---------------------------------------------------------------- DR Roster
+-- ---------------------------------------------------------------- DR App
 CREATE TEMP TABLE dctx ON COMMIT DROP AS
 SELECT gen_random_uuid() AS district, gen_random_uuid() AS wattle, gen_random_uuid() AS banksia,
        (SELECT site_id FROM sites, ctx WHERE department_id = ctx.src) AS src_site;
@@ -281,7 +281,7 @@ SELECT d.district, NULL, f.email, f.full_name, '07 5550 ' || lpad((300 + k)::tex
   (ARRAY['consultant', 'registrar', 'consultant', 'rmo', 'registrar', 'advanced_trainee', 'intern', 'consultant'])[k + 1]
 FROM generate_series(0, 7) AS k JOIN fake_name f ON f.n = 300 + k, dctx d;
 
--- Open shifts on DR Roster: Innisfail's open district shifts in the window,
+-- Open shifts on DR App: Innisfail's open district shifts in the window,
 -- moved to Wattle Creek, plus about ten at Banksia Bay. Marked as already
 -- notified so nobody is emailed.
 INSERT INTO district_notices (notice_id, district_id, site_id, shift_date, start_time, end_time, required_skill, notes, status,

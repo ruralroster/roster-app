@@ -4,12 +4,12 @@ import { supabase } from './supabaseClient';
 import { toLocalDateStr } from './dateUtils';
 import { blockedSlots } from './swapSlots';
 
-// Variation → "Swap a shift (DR Roster)": put one of your upcoming roster
-// shifts on DR Roster's swap marketplace. Only for people who are DR
+// Variation → "Swap a shift (DR App)": put one of your upcoming roster
+// shifts on DR App's swap marketplace. Only for people who are DR
 // Roster doctors in the district of a site linked to this department —
 // for anyone else my_roster_swap_shifts returns nothing and this shows
 // nothing. The marketplace itself (finding a pairing, the officer's
-// approval) is in DR Roster; until a swap is approved, you still work the
+// approval) is in DR App; until a swap is approved, you still work the
 // shift. See district-roster's migrations/2026-10-31_swaps.sql.
 
 const DR_ROSTER_URL = 'https://ruralroster.github.io/district-roster/';
@@ -44,7 +44,7 @@ export default function SwapShiftOffer() {
     const to = new Date();
     to.setDate(to.getDate() + WEEKS_AHEAD * 7);
     const { data, error } = await supabase.rpc('my_roster_swap_shifts', { p_from: toLocalDateStr(from), p_to: toLocalDateStr(to) });
-    // Missing until the DR Roster swaps migration is run: just show nothing.
+    // Missing until the DR App swaps migration is run: just show nothing.
     if (!error) setShifts(data || []);
   }, []);
 
@@ -68,11 +68,11 @@ export default function SwapShiftOffer() {
 
   return (
     // Collapsed by default: it sits last on the Variations tab.
-    <CollapsibleSection title="Swap a shift (DR Roster)">
+    <CollapsibleSection title="Swap a shift (DR App)">
       <p className="text-sm text-gray-500 mb-3">
-        Can't do a shift? Put it on DR Roster's swap marketplace. A doctor there swaps one of theirs for it, on a day you can
+        Can't do a shift? Put it on DR App's swap marketplace. A doctor there swaps one of theirs for it, on a day you can
         work, and your officer approves the swap. You still work it unless a swap is approved.{' '}
-        <a href={DR_ROSTER_URL} target="_blank" rel="noreferrer" className="text-blue-700 underline">Open DR Roster</a>
+        <a href={DR_ROSTER_URL} target="_blank" rel="noreferrer" className="text-blue-700 underline">Open DR App</a>
       </p>
       {error && <p className="text-sm text-red-700 mb-2">{error}</p>}
       {message && <p className="text-sm text-green-700 mb-2">{message}</p>}
@@ -115,7 +115,7 @@ export default function SwapShiftOffer() {
                 onCancel={() => setListing(null)}
                 onSubmit={async (args) => {
                   if (await run('list_roster_shift_for_swap', { p_assignment_id: s.assignment_id, ...args },
-                    "It's on DR Roster's swap marketplace. You'll hear when someone offers and your officer decides.")) {
+                    "It's on DR App's swap marketplace. You'll hear when someone offers and your officer decides.")) {
                     setListing(null);
                   }
                 }}
@@ -131,7 +131,7 @@ export default function SwapShiftOffer() {
 // The days/nights of the shift's pay fortnight you could work in return (at least one: a swap never changes anyone's number
 // of shifts).
 function ListForm({ shift, allShifts, busy, onCancel, onSubmit }) {
-  // Your other roster shifts (DR Roster ones are checked when someone offers).
+  // Your other roster shifts (DR App ones are checked when someone offers).
   const asShift = (x) => ({ shift_date: x.date, start_time: x.start_time, end_time: x.end_time });
   const blocked = blockedSlots(allShifts.map(asShift), asShift(shift), fortnightDays(shift.date), toLocalDateStr(new Date()), dayLabel);
   const [slots, setSlots] = useState([]);

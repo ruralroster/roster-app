@@ -1,4 +1,4 @@
--- Fills out the Demo District on DR Roster so screenshots have something
+-- Fills out the Demo District on DR App so screenshots have something
 -- to show. Run after 1_copy_innisfail_to_demo.sql and 2_link_demo_logins.sql.
 --
 --   - open shifts at Wattle Creek and Banksia Bay over the next 4 weeks;

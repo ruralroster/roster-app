@@ -21,7 +21,7 @@
 // from Supabase (generateLink), written like the one-time password email
 // (StaffAccountsTab's tempPasswordMailto). That avoids Supabase's built-in
 // email limit of a few an hour, and its invite template, which is shared
-// with DR Roster.
+// with DR App.
 //
 // Request body: { departmentId, name, email, rank, role, redirectTo, staffId? }
 // Response:     { data: { staffId, invited } } | { error }

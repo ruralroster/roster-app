@@ -78,7 +78,7 @@ export const COMPLIANCE_STYLES = {
 
 // availabilityMap values: true (available), false (unavailable) or
 // 'working' (unavailable because they're working elsewhere —
-// staff_availability.working_elsewhere). Only 'working' days stop DR Roster
+// staff_availability.working_elsewhere). Only 'working' days stop DR App
 // offering district shifts; a plain unavailable day (leave, a day off) is
 // still open to them. To roster-app both are unavailable.
 export function getAvailabilityState(availabilityMap, dateStr) {

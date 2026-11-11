@@ -103,11 +103,11 @@ const RANK_LABEL = {
   intern: 'Intern',
 };
 
-// A visitor's role line: "Consultant · DR Roster" for a district doctor,
+// A visitor's role line: "Consultant · DR App" for a district doctor,
 // else their place on the card ("Surgeon").
 const visitorLabel = (v) => {
   const role = v.role === 'consultant' ? 'Consultant' : v.role === 'registrar' ? 'Registrar' : v.role;
-  return v.source === 'dr_roster' ? `${role} · DR Roster` : role;
+  return v.source === 'dr_roster' ? `${role} · DR App` : role;
 };
 
 const toDateStr = toLocalDateStr;
@@ -372,7 +372,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
         if (dutyRes.error) throw dutyRes.error;
         if (visitorRes.error) throw visitorRes.error;
         setTodayAssignments(assignRes.data);
-        // Visitors (visiting surgeons, district doctors from DR Roster) are
+        // Visitors (visiting surgeons, district doctors from DR App) are
         // listed with everyone else in "who is where".
         setTodayAllAssignments([...allAssignRes.data, ...visitorRes.data]);
         setTodayOnCall(dutyRes.data);
@@ -1960,7 +1960,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
             {/* Order: Variations (Callback per on-call slot / Overtime
                 buttons — only while on call or near the end of a rostered
                 shift), My Variations, Notify Sick, Available Shifts, then
-                Swap a shift (DR Roster), collapsed. */}
+                Swap a shift (DR App), collapsed. */}
             <CallbackBanner
               staffId={staffId}
               departmentId={departmentId}
@@ -2057,7 +2057,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
               />
             )}
 
-            {/* Only for DR Roster doctors at a linked department; otherwise empty. */}
+            {/* Only for DR App doctors at a linked department; otherwise empty. */}
             <div className="mt-6">
               <SwapShiftOffer />
             </div>
@@ -2380,7 +2380,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
                   )}
 
                   <p className="text-xs text-gray-500 mt-3">
-                    Tap a date to cycle your availability: grey = not set, green = available, red = unavailable (you can still pick up district shifts in DR Roster), dark grey = working elsewhere (no district shifts either). Changes save immediately.
+                    Tap a date to cycle your availability: grey = not set, green = available, red = unavailable (you can still pick up district shifts in DR App), dark grey = working elsewhere (no district shifts either). Changes save immediately.
                   </p>
                 </div>
               </>

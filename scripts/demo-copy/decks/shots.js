@@ -1,6 +1,6 @@
-// Screenshots of Rstar and DR Roster for the decks, signed in as the demo
+// Screenshots of Rstar and DR App for the decks, signed in as the demo
 // officer and doctor (Wattle Creek / Demo District, all made-up people).
-// Staff and DR Roster screens at phone size; Rstar's officer screens at
+// Staff and DR App screens at phone size; Rstar's officer screens at
 // laptop size. Writes shots/<name>.png. Each shot is independent: a
 // failure is logged and the rest carry on.
 //
@@ -508,7 +508,7 @@ const bringUp = (locator, offset = 90) => locator.evaluate((el, off) => {
     await ctx.close();
   }
 
-  // ---- DR Roster, doctor (phone).
+  // ---- DR App, doctor (phone).
   {
     const s = await open(browser, DR, null, PHONE, { signIn: false });
     await shot(s.page, 'd_signin');
@@ -556,7 +556,7 @@ const bringUp = (locator, offset = 90) => locator.evaluate((el, off) => {
     await ctx.close();
   }
 
-  // ---- DR Roster, officer (phone).
+  // ---- DR App, officer (phone).
   {
     const { ctx, page } = await open(browser, DR, 'OFFICER', PHONE);
     await shot(page, 'do_post', async () => { await bringUp(page.getByText('Post a shift').first(), 40); });

@@ -1,12 +1,12 @@
 -- Links two demo logins to people in the demo copy, so they can sign in to
--- Rstar and DR Roster for screenshots.
+-- Rstar and DR App for screenshots.
 --
 -- First, in Supabase: Authentication → Users → Add user → Create new user,
 -- twice (tick Auto Confirm User). One is the officer, one is a doctor.
 -- Then put their two email addresses in the two lines marked EDIT below and
 -- run this. It picks:
 --   - the officer: a Wattle Creek officer (so also a Wattle Creek site
---     officer on DR Roster);
+--     officer on DR App);
 --   - the doctor: the registrar with the most shifts in the next 2 weeks,
 --     who's also a district doctor, so My shifts and Swaps have content.
 -- Their screens still show their made-up name and @demo.example email.

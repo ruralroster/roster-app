@@ -374,11 +374,11 @@ const VIDEOS = [
     steps: [
       { h: 'Settings, then Availability', t: 'Four weeks at a time; arrows for more' },
       { h: 'Tap a day to change it', t: 'Grey, green, red, dark grey, and round again' },
-      { h: 'Red: unavailable', t: 'Leave or a day off; DR Roster can still offer you shifts' },
-      { h: 'Dark grey: working elsewhere', t: 'DR Roster offers you nothing' },
+      { h: 'Red: unavailable', t: 'Leave or a day off; DR App can still offer you shifts' },
+      { h: 'Dark grey: working elsewhere', t: 'DR App offers you nothing' },
     ],
     stepsShot: 'r_availability',
-    stepsNotes: "Settings, Availability. Each tap moves a day on: green is available, red unavailable, dark grey working elsewhere, then back to grey. Red and dark grey both keep you off the roster here. The difference is for DR Roster: on a red day you can still be offered district shifts, on a dark grey day you can't. It saves as you tap.",
+    stepsNotes: "Settings, Availability. Each tap moves a day on: green is available, red unavailable, dark grey working elsewhere, then back to grey. Red and dark grey both keep you off the roster here. The difference is for DR App: on a red day you can still be offered district shifts, on a dark grey day you can't. It saves as you tap.",
   },
   {
     id: 'activity-restrictions',
@@ -511,9 +511,9 @@ const VIDEOS = [
         'Staff only see shifts you have offered',
         'Only eligible, available staff are told',
         'Mark a service disruption if the service closes',
-        'Unfilled offers go to DR Roster after 72 hours',
+        'Unfilled offers go to DR App after 72 hours',
       ],
-      notes: "An empty place isn't offered on its own; you decide what goes out. When you offer it, only staff who are senior enough, hold any required skill, haven't opted out and are available that day see it, and they're emailed and notified straight away. If nobody local takes it, it goes to DR Roster after the site's keep-local time, 72 hours unless changed.",
+      notes: "An empty place isn't offered on its own; you decide what goes out. When you offer it, only staff who are senior enough, hold any required skill, haven't opted out and are available that day see it, and they're emailed and notified straight away. If nobody local takes it, it goes to DR App after the site's keep-local time, 72 hours unless changed.",
     },
     slides: [
       { title: 'Finding the gap', wideShot: 'o_fill', items: [
@@ -527,7 +527,7 @@ const VIDEOS = [
         { h: 'Service disruption', t: 'Tick it if the service closes when unfilled' },
         { h: 'Select Offer', t: 'Eligible staff are emailed and notified' },
         { h: 'Now reads Offered', t: 'And the Calendar day turns blue' },
-      ], notes: "Select the button and confirm. Tick Service disruption if the service closes when nobody takes it, for example obstetrics going on bypass; staff see it marked, and it carries through to DR Roster. Select Offer. Eligible staff are emailed and notified at once, the button now reads Offered, and the day turns blue on the Calendar. Selecting Offered takes it back off." },
+      ], notes: "Select the button and confirm. Tick Service disruption if the service closes when nobody takes it, for example obstetrics going on bypass; staff see it marked, and it carries through to DR App. Select Offer. Eligible staff are emailed and notified at once, the button now reads Offered, and the day turns blue on the Calendar. Selecting Offered takes it back off." },
     ],
   },
   {
@@ -865,7 +865,7 @@ const VIDEOS = [
     sub: "Taking a colleague's shift",
     purpose: {
       bullets: ["A colleague can't do a shift?", 'Happy to take it?', 'Want one of yours covered in return?'],
-      notes: "When a colleague puts a shift up for swap, it shows amber in Available Shifts. You take it by giving them one of yours, on a day they said they could work, so neither of you ends up with more or fewer shifts. Your officer approves it. Swaps are for DR Roster doctors; if you're not one, you won't see them.",
+      notes: "When a colleague puts a shift up for swap, it shows amber in Available Shifts. You take it by giving them one of yours, on a day they said they could work, so neither of you ends up with more or fewer shifts. Your officer approves it. Swaps are for DR App doctors; if you're not one, you won't see them.",
     },
     steps: [
       { h: 'Variation, then Available Shifts', t: 'Amber days: a swap you could take' },
@@ -885,7 +885,7 @@ const VIDEOS = [
     sub: 'Putting one of your shifts up for swap',
     purpose: {
       bullets: ["Can't do a shift?", 'Happy to work another day instead?', 'Too far ahead for Notify Sick?'],
-      notes: "Swap a shift puts one of your rostered shifts on DR Roster's swap marketplace. Someone takes it by giving you one of theirs on a day you said you could work, and your officer approves it. You still work your shift unless a swap is approved. This is for DR Roster doctors.",
+      notes: "Swap a shift puts one of your rostered shifts on DR App's swap marketplace. Someone takes it by giving you one of theirs on a day you said you could work, and your officer approves it. You still work your shift unless a swap is approved. This is for DR App doctors.",
     },
     steps: [
       { h: 'Variation, then Swap a shift', t: 'At the bottom; tap to open' },
