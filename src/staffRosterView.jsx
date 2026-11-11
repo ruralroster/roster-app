@@ -249,7 +249,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
   const [showCoffeeBirthdayPopup, setShowCoffeeBirthdayPopup] = useState(false);
   const [loadingCoffeeModal, setLoadingCoffeeModal] = useState(false);
   const [coffeeModalError, setCoffeeModalError] = useState(null);
-  const [coffeeModalStaff, setCoffeeModalStaff] = useState([]); // [{ staff_id, name, rank, coffee_order, sessionGroups }]
+  const [coffeeModalStaff, setCoffeeModalStaff] = useState([]); // [{ staff_id, name, rank, coffee_order, sessionGroups, slots: [{ group, locationId }] }]
   const [coffeeCopied, setCoffeeCopied] = useState(false);
   const [coffeeChoosingHandover, setCoffeeChoosingHandover] = useState(false); // "Text order" pressed: pickup or delivery?
   // Today's people and visitors still needing a coffee order — the red count
@@ -261,6 +261,27 @@ export default function StaffRosterView({ departmentId, staffId }) {
   // today"); unchecking a box drops that session's staff from the list
   // instead of trying to guess it from the viewer's local clock.
   const [coffeeSessionFilters, setCoffeeSessionFilters] = useState({ morning: true, afternoon: false, night: false });
+  // Which locations to include: null = all, else a Set of location_ids
+  // (e.g. a site where each area does its own coffee run). Combined with
+  // the session boxes — someone's in if any one of today's shifts is in a
+  // ticked session AND a chosen location. Remembered on this device, per
+  // department; a saved location nobody's in today is just ignored.
+  const [coffeeLocationFilter, setCoffeeLocationFilter] = useState(null);
+  const [coffeeLocations, setCoffeeLocations] = useState([]); // today's: [{ location_id, name, count }]
+  const [showCoffeeLocations, setShowCoffeeLocations] = useState(false);
+  const coffeeLocationsKey = `rstar-coffee-locations-${departmentId}`;
+  // Closing with nothing picked means all, never no coffees at all.
+  const closeCoffeeLocations = () => {
+    if (coffeeLocationFilter && coffeeLocationFilter.size === 0) chooseCoffeeLocations(null);
+    setShowCoffeeLocations(false);
+  };
+  const chooseCoffeeLocations = (ids) => {
+    setCoffeeLocationFilter(ids);
+    try {
+      if (ids) localStorage.setItem(coffeeLocationsKey, JSON.stringify([...ids]));
+      else localStorage.removeItem(coffeeLocationsKey);
+    } catch { /* just not remembered */ }
+  };
   // Day-scoped adjustments to the otherwise roster-computed order — who to
   // leave off, and coffees for people not on the roster at all (locums,
   // visiting surgeons). Persisted per department+date (see
@@ -1048,6 +1069,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
     setLoadingCoffeeModal(true);
     setCoffeeCopied(false);
     setCoffeeSessionFilters({ morning: true, afternoon: false, night: false });
+    setShowCoffeeLocations(false);
     setShowAddCoffeeExtra(false);
     try {
       const [{ data, error: fetchError }, { data: adjustments, error: adjustmentsError }, { data: birthdays }] = await Promise.all([
@@ -1075,15 +1097,36 @@ export default function StaffRosterView({ departmentId, staffId }) {
             rank: assignment.staff?.rank,
             coffee_order: assignment.staff?.coffee_order,
             sessionGroups: new Set(),
+            slots: [],
           });
         }
-        getSessionGroups(assignment.shifts, sessionBoundaries).forEach(g => byStaff.get(assignment.staff_id).sessionGroups.add(g));
+        const person = byStaff.get(assignment.staff_id);
+        getSessionGroups(assignment.shifts, sessionBoundaries).forEach(g => {
+          person.sessionGroups.add(g);
+          person.slots.push({ group: g, locationId: assignment.location_id });
+        });
       });
 
       const list = [...byStaff.values()]
         .map(person => ({ ...person, sessionGroups: [...person.sessionGroups] }))
         .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
       setCoffeeModalStaff(list);
+
+      // Today's locations, for the Locations pop-up, with how many people.
+      const byLocation = new Map();
+      data.forEach(a => {
+        if (!a.staff_id || !a.location_id) return;
+        if (!byLocation.has(a.location_id)) byLocation.set(a.location_id, { location_id: a.location_id, name: a.locations?.name || 'Unknown location', people: new Set() });
+        byLocation.get(a.location_id).people.add(a.staff_id);
+      });
+      const todaysLocations = [...byLocation.values()]
+        .map(l => ({ location_id: l.location_id, name: l.name, count: l.people.size }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+      setCoffeeLocations(todaysLocations);
+      let saved = null;
+      try { saved = JSON.parse(localStorage.getItem(coffeeLocationsKey) || 'null'); } catch { /* all */ }
+      const kept = Array.isArray(saved) ? saved.filter(id => byLocation.has(id)) : [];
+      setCoffeeLocationFilter(kept.length > 0 ? new Set(kept) : null);
       setCoffeeModalError(null);
 
       // Only people here for the morning coffee run.
@@ -1108,7 +1151,8 @@ export default function StaffRosterView({ departmentId, staffId }) {
   // them), while the summary/count/text below only counts the ones still
   // included.
   const coffeeOrdersForModal = coffeeModalStaff
-    .filter(person => person.sessionGroups.some(g => coffeeSessionFilters[g]))
+    .filter(person => person.slots.some(slot => coffeeSessionFilters[slot.group]
+      && (!coffeeLocationFilter || coffeeLocationFilter.has(slot.locationId))))
     .map(person => ({ ...person, ...parseCoffeeOrder(person.coffee_order) }))
     .filter(person => person.coffeeType !== NO_COFFEE);
 
@@ -2470,6 +2514,49 @@ export default function StaffRosterView({ departmentId, staffId }) {
         </div>
       )}
 
+      {showCoffeeModal && showCoffeeLocations && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-[60]" onClick={closeCoffeeLocations}>
+          <div className="bg-white rounded-lg shadow-lg p-5 w-full max-w-sm max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <h3 className="text-lg font-bold text-gray-900 mb-1">Locations</h3>
+            <p className="text-xs text-gray-600 mb-3">Coffees for people working at these locations today, in the sessions ticked.</p>
+            <label className="flex items-center gap-2 py-2 border-b border-gray-200 text-sm font-medium text-gray-900 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={!coffeeLocationFilter}
+                onChange={(e) => chooseCoffeeLocations(e.target.checked ? null : new Set())}
+                className="w-4 h-4 accent-blue-600"
+              />
+              All locations
+            </label>
+            <div className="overflow-y-auto divide-y divide-gray-100">
+              {coffeeLocations.map(loc => (
+                <label key={loc.location_id} className="flex items-center gap-2 py-2 text-sm text-gray-800 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={!coffeeLocationFilter || coffeeLocationFilter.has(loc.location_id)}
+                    onChange={(e) => {
+                      const next = new Set(coffeeLocationFilter || coffeeLocations.map(l => l.location_id));
+                      if (e.target.checked) next.add(loc.location_id); else next.delete(loc.location_id);
+                      chooseCoffeeLocations(next.size === coffeeLocations.length ? null : next);
+                    }}
+                    className="w-4 h-4 accent-blue-600"
+                  />
+                  <span className="flex-1">{loc.name}</span>
+                  <span className="text-xs text-gray-500">{loc.count} {loc.count === 1 ? 'person' : 'people'}</span>
+                </label>
+              ))}
+            </div>
+            <button
+              onClick={() => setShowCoffeeLocations(false)}
+              disabled={coffeeLocationFilter && coffeeLocationFilter.size === 0}
+              className="mt-3 px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-medium rounded-lg"
+            >
+              {coffeeLocationFilter && coffeeLocationFilter.size === 0 ? 'Pick at least one' : 'Done'}
+            </button>
+          </div>
+        </div>
+      )}
+
       {showCoffeeModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-lg max-h-[85vh] flex flex-col">
@@ -2497,6 +2584,16 @@ export default function StaffRosterView({ departmentId, staffId }) {
                     </label>
                   ))}
                 </div>
+                {coffeeLocations.length > 1 && (
+                  <button
+                    onClick={() => setShowCoffeeLocations(true)}
+                    className={`px-2 py-1 text-xs font-medium rounded border transition ${coffeeLocationFilter ? 'bg-blue-50 border-blue-300 text-blue-800' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}
+                  >
+                    {coffeeLocationFilter
+                      ? `${coffeeLocationFilter.size} location${coffeeLocationFilter.size === 1 ? '' : 's'}`
+                      : 'All locations'}
+                  </button>
+                )}
               </div>
             </div>
 
