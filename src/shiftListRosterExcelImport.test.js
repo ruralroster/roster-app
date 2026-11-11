@@ -87,6 +87,12 @@ describe('a file', () => {
     expect(felix.days[2].resolvedShift).toMatchObject({ unmapped: 'Mystery Clinic' });
   });
 
+  test('junior shifts, and a "(2)" note marker is ignored', () => {
+    expect(resolveShiftListCode('ED Night Shift\nNo Location').segments[0]).toMatchObject({ job: 'ED Night', start: '21:45', end: '08:15' });
+    expect(resolveShiftListCode('ED Early Junior\nNo Location\n(1)').segments[0]).toMatchObject({ job: 'ED Early Junior', start: '07:30' });
+    expect(resolveShiftListCode('Ward  - South - JNR - WE\nNo Location').segments[0].job).toBe('Weekend Ward');
+  });
+
   test('newer exports\' "No Location" line is ignored', () => {
     expect(resolveShiftListCode('ED Mid Shift\nNo Location').segments[0]).toMatchObject({ job: 'ED Mid', start: '10:30' });
     expect(resolveShiftListCode('Obstetrics\n13:30 - 16:30\nNo Location').segments[0]).toMatchObject({ start: '13:30', end: '16:30' });

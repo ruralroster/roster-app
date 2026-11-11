@@ -25,8 +25,9 @@ import * as XLSX from 'xlsx';
 //     "Ward - South - SMO"), so they're read piece by piece, never split
 //     on the joined text. A piece can carry its own hours on a second line
 //     ("Chemotherapy\n08:00 - 13:00"), and newer exports add a
-//     "No Location" line to every one, which is ignored. "Available" /
-//     "Unavailable" are availability, not shifts.
+//     "No Location" line to every one and sometimes a "(2)" (a note
+//     marker), both ignored. "Available" / "Unavailable" are
+//     availability, not shifts.
 //
 // Each shift name resolves (DEFAULT_CODES, else the officer's saved code
 // mappings) to a location, activity, hours and — because ED Flow and ED
@@ -59,6 +60,20 @@ const DEFAULT_CODES = {
   'ED Late Shift Senior': at(ED, 'ED Late 1', { start: '13:30', end: '22:00' }),
   'ED Late Shift 2 Senior': at(ED, 'ED Late 2', { start: '15:30', end: '00:00' }),
   'Late Junior Cover': at(ED, 'Late Junior Cover', { start: '14:00', end: '21:30' }),
+  // Juniors (the full export, with interns, PHOs and registrars).
+  'ED Early Junior': at(ED, 'ED Early Junior', { start: '07:30', end: '17:00' }),
+  'ED Late Junior': at(ED, 'ED Late Junior', { start: '12:30', end: '23:00' }),
+  'ED Night Shift': at(ED, 'ED Night', { start: '21:45', end: '08:15' }),
+  'Ward - North - Intern': at({ location: 'Ward North', activity: 'Ward Care Cover' }, 'Ward North'),
+  'Ward - North - Medical Registrars': at({ location: 'Ward North', activity: 'Ward Care Cover' }, 'Ward North'),
+  'North': at({ location: 'Ward North', activity: 'Ward Care Cover' }, 'Ward North'),
+  'Ward - South - Intern': at({ location: 'Ward South', activity: 'Ward Care Cover' }, 'Ward South'),
+  'Ward - South - JNR': at({ location: 'Ward South', activity: 'Ward Care Cover' }, 'Ward South'),
+  'Ward - South Registrar': at({ location: 'Ward South', activity: 'Ward Care Cover' }, 'Ward South'),
+  'South': at({ location: 'Ward South', activity: 'Ward Care Cover' }, 'Ward South'),
+  // Weekend juniors: one per ward, on the weekend ward card with the SMO.
+  'Ward - North - JNR - WE': at({ location: 'Wards (Weekend Cover)', activity: 'Ward Care Cover' }, 'Weekend Ward'),
+  'Ward - South - JNR - WE': at({ location: 'Wards (Weekend Cover)', activity: 'Ward Care Cover' }, 'Weekend Ward'),
   'Ward - North - SMO': at({ location: 'Ward North', activity: 'Ward Care Cover' }, 'Ward North'),
   'North Ward': at({ location: 'Ward North', activity: 'Ward Care Cover' }, 'Ward North'),
   'Ward - South - SMO': at({ location: 'Ward South', activity: 'Ward Care Cover' }, 'Ward South'),
@@ -324,7 +339,7 @@ export function parseShiftListRange(workbook, rangeIndex, codeMap = {}) {
       const { resolvedShift, onCallDuties } = resolveDay(pieces, codeMap);
       return {
         date,
-        rawShift: pieces.map(p => p.split('\n').map(l => l.trim()).filter(l => l && !/^no location$/i.test(l)).join(' ')).join(' + '),
+        rawShift: pieces.map(p => p.split('\n').map(l => l.trim()).filter(l => l && !/^no location$/i.test(l) && !/^\(\d+\)$/.test(l)).join(' ')).join(' + '),
         resolvedShift,
         onCallDuties,
       };
