@@ -4,6 +4,7 @@ import { AlertCircle, Loader, Upload, X } from 'lucide-react';
 import { importRosterWeek, createStaff, updateStaffFTE, updateDepartmentRosterImportFormat, getRosterImportMappings, saveRosterImportMapping, deleteRosterImportMapping } from './supabaseClient';
 import { getWeekDateRanges, parseRosterWeek, applyCodeMappings, applyPrimaryAllocation, resolveShiftCode, resolveRmoShiftCode, resolveInternShiftCode, getClassicStaffRoster, matchStaffName, suggestStaffMatches, cleanStaffLabel, staffLabelKey } from './rosterExcelImport';
 import { getEdSheetNames, getEdWeekDateRanges, parseEdWeek, getEdStaffRoster, resolveEdShiftCode } from './edRosterExcelImport';
+import { getShiftListDateRanges, parseShiftListRange, getShiftListStaffRoster } from './shiftListRosterExcelImport';
 
 // The classic format has a separate code table per section (consultant /
 // RMO / intern) — the known half of a split code could be from any of
@@ -26,11 +27,14 @@ const staffMappingSource = (rawLabel) => (rawLabel || '').replace(/\s+/g, ' ').t
 const FORMATS = [
   { value: 'classic', label: 'Consultant / Registrar / Intern (longhand shift text)' },
   { value: 'ed', label: 'Shift-code (e.g. Emergency Department: "0730B", "2200A")' },
+  { value: 'shift_list', label: 'Shift list (e.g. Atherton: "ED Flow SMO - WD", several a day, with on call)' },
 ];
 
 // Officer-facing tool for importing a week of the department's Excel
-// roster (exelRosters/*.xlsx). Two layouts are supported so far — see
-// rosterExcelImport.js and edRosterExcelImport.js for what each covers.
+// roster (exelRosters/*.xlsx). Three layouts are supported so far — see
+// rosterExcelImport.js, edRosterExcelImport.js and
+// shiftListRosterExcelImport.js for what each covers. The shift-list
+// format can import its whole file in one go (a month), not just a week.
 // A future department with yet another layout needs its own parser module
 // added here the same way, not a rewrite of this component.
 //
@@ -182,6 +186,9 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
       const names = getEdSheetNames(workbook);
       setSheetNames(names);
       loadEdSheet(workbook, names[0]);
+    } else if (workbook && nextFormat === 'shift_list') {
+      setWeekRanges(getShiftListDateRanges(workbook));
+      setWeekIndex(0);
     } else if (workbook && nextFormat === 'classic') {
       setWeekRanges(getWeekDateRanges(workbook));
       setWeekIndex(0);
@@ -206,6 +213,9 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
         const names = getEdSheetNames(wb);
         setSheetNames(names);
         loadEdSheet(wb, names[0]);
+      } else if (format === 'shift_list') {
+        setWeekRanges(getShiftListDateRanges(wb));
+        setWeekIndex(0);
       } else {
         setWeekRanges(getWeekDateRanges(wb));
         setWeekIndex(0);
@@ -236,6 +246,19 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
     if (!workbook) return;
     const knownStaff = [...staffList, ...extraStaff];
     const mappedLabels = new Set(mappingList.filter(m => m.kind === 'staff' && m.staff_id).map(m => staffLabelKey(m.source)));
+    if (format === 'shift_list') {
+      // The file gives full names, FTE and phone numbers; senior roles
+      // (SMO, staff specialist) suggest the department's senior rank.
+      const missing = getShiftListStaffRoster(workbook)
+        .filter(p => !mappedLabels.has(staffLabelKey(p.name)) && !matchStaffName(p.name, knownStaff))
+        .map(p => {
+          const rank = p.senior ? suggestClassicRank('consultant') : '';
+          const suggestedStaff = suggestStaffMatches(p.name, knownStaff);
+          return { rawLabel: p.name, name: p.name, fte: p.fte ?? 0, phone: p.phone, suggestedRank: rank, rank, create: suggestedStaff.length === 0, suggestedStaff };
+        });
+      setMissingStaff(missing);
+      return;
+    }
     if (format !== 'ed') {
       // Labels carry trailing speciality words ("Linda Thomson
       // Obstetrics"), so "already has a record" uses the same matching
@@ -300,7 +323,7 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
       for (let i = 0; i < toCreate.length; i++) {
         const person = toCreate[i];
         const name = person.name.trim();
-        const { data, error: createError } = await createStaff(departmentId, name, person.rank, '');
+        const { data, error: createError } = await createStaff(departmentId, name, person.rank, person.phone || '');
         if (createError) throw new Error(`${name}: ${createError.message}`);
         if (data) created.push(data);
         const fte = parseFloat(person.fte);
@@ -332,7 +355,7 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
   // saving one, before the state update has landed.
   const runImport = async (dryRun, mappingList = mappings, extraStaff = []) => {
     if (!workbook) return;
-    if (!dryRun && !window.confirm('Write this week to the roster now? Review the dry run above first if you haven\'t already.')) {
+    if (!dryRun && !window.confirm(`Write ${format === 'shift_list' && weekIndex === 0 ? 'the whole file' : 'this week'} to the roster now? Review the dry run above first if you haven't already.`)) {
       return;
     }
 
@@ -340,10 +363,17 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
     setError(null);
     try {
       const { codeMap, nameMappings } = buildMappingLookups(mappingList);
-      const parsed = format === 'ed' ? parseEdWeek(workbook, sheetName, weekIndex) : parseRosterWeek(workbook, weekIndex);
-      const baseResolve = format === 'ed' ? resolveEdShiftCode : resolveClassicAnySection;
-      const mapped = applyCodeMappings(parsed, codeMap, baseResolve);
-      const people = usePrimaryAllocation ? applyPrimaryAllocation(mapped, codeMap, baseResolve) : mapped;
+      let people;
+      if (format === 'shift_list') {
+        // Saved code mappings are applied per shift name inside the parser,
+        // since a day can hold several.
+        people = parseShiftListRange(workbook, weekIndex, codeMap);
+      } else {
+        const parsed = format === 'ed' ? parseEdWeek(workbook, sheetName, weekIndex) : parseRosterWeek(workbook, weekIndex);
+        const baseResolve = format === 'ed' ? resolveEdShiftCode : resolveClassicAnySection;
+        const mapped = applyCodeMappings(parsed, codeMap, baseResolve);
+        people = usePrimaryAllocation ? applyPrimaryAllocation(mapped, codeMap, baseResolve) : mapped;
+      }
       setImportProgress({ current: 0, total: people.length });
       const { data, error: importError, deletionSummary: nextDeletionSummary } = await importRosterWeek(
         departmentId, people,
@@ -574,14 +604,14 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
 
       {workbook && (
         <div className="mb-4">
-          <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Week to import</label>
+          <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">{format === 'shift_list' ? 'Dates to import' : 'Week to import'}</label>
           <select
             value={weekIndex}
             onChange={(e) => { setWeekIndex(parseInt(e.target.value, 10)); setResults(null); setDeletionSummary(null); }}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
           >
             {weekRanges.map((range, i) => (
-              <option key={i} value={i}>Week {i + 1} ({range.start}–{range.end})</option>
+              <option key={i} value={i}>{range.label || `Week ${i + 1} (${range.start}–${range.end})`}</option>
             ))}
           </select>
         </div>
@@ -678,7 +708,7 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
 
       {workbook && (
         <div className="mb-4">
-          {format !== 'ed' && (
+          {format === 'classic' && (
             <label className="flex items-start gap-2 mb-3 text-sm text-gray-700 cursor-pointer select-none">
               <input
                 type="checkbox"
@@ -694,7 +724,7 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
               </span>
             </label>
           )}
-          {format !== 'ed' && (
+          {format === 'classic' && (
             <label className="flex items-start gap-2 mb-3 text-sm text-gray-700 cursor-pointer select-none">
               <input
                 type="checkbox"
@@ -750,7 +780,7 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
               </>
             ) : (
               <>
-                This file is the source of truth for these dates — writing it for real will <strong>delete {deletionSummary.existingAssignmentCount}</strong> existing assignment{deletionSummary.existingAssignmentCount === 1 ? '' : 's'} across <strong>{deletionSummary.existingCardCount}</strong> card{deletionSummary.existingCardCount === 1 ? '' : 's'}{deletionSummary.existingDutyCount > 0 && <>, and <strong>{deletionSummary.existingDutyCount}</strong> on-call slot{deletionSummary.existingDutyCount === 1 ? '' : 's'} (ED/Anaesthetics/Obstetrics on call, replaced by the sheet's CALL OBLIGATION row)</>}, before writing the roster below. Other duty slots and recorded leave are never touched by an import.
+                This file is the source of truth for these dates — writing it for real will <strong>delete {deletionSummary.existingAssignmentCount}</strong> existing assignment{deletionSummary.existingAssignmentCount === 1 ? '' : 's'} across <strong>{deletionSummary.existingCardCount}</strong> card{deletionSummary.existingCardCount === 1 ? '' : 's'}{deletionSummary.existingDutyCount > 0 && <>, and <strong>{deletionSummary.existingDutyCount}</strong> on-call slot{deletionSummary.existingDutyCount === 1 ? '' : 's'} ({format === 'shift_list' ? 'the on-call slots this file names, replaced by its on call' : 'ED/Anaesthetics/Obstetrics on call, replaced by the sheet\'s CALL OBLIGATION row'})</>}, before writing the roster below. Other duty slots and recorded leave are never touched by an import.
               </>
             )}
           </p>
@@ -768,7 +798,7 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
             <div className="mb-2 p-3 rounded-lg border bg-amber-50 border-amber-300 flex gap-2 items-start">
               <AlertCircle size={16} className="flex-shrink-0 mt-0.5 text-amber-600" />
               <p className="text-xs text-gray-700">
-                <strong>{unchosenClashCount}</strong> on-call slot{unchosenClashCount === 1 ? ' has' : 's have'} more than one person down for {unchosenClashCount === 1 ? 'it' : 'them'} on the sheet. Choose who's on call for each one below before writing — the person on the EDL + OC shift is suggested.
+                <strong>{unchosenClashCount}</strong> on-call slot{unchosenClashCount === 1 ? ' has' : 's have'} more than one person down for {unchosenClashCount === 1 ? 'it' : 'them'} on the sheet. Choose who's on call for each one below before writing{format === 'classic' ? ' — the person on the EDL + OC shift is suggested' : ''}.
               </p>
             </div>
           )}
@@ -806,7 +836,9 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
                   <span className="text-gray-700">
                     {' — '}
                     {r.action === 'mark unavailable'
-                      ? `Leave (${r.leaveCode})`
+                      ? (r.leaveCode ? `Leave (${r.leaveCode})` : 'Unavailable')
+                      : r.action === 'mark available'
+                        ? 'Available'
                       : r.action === 'on call'
                         ? `On call: ${r.dutyLabel}`
                         : `${r.job ? `${r.job}: ` : ''}${r.location} / ${r.activity} ${r.start}–${r.end}`}

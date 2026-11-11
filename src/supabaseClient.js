@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { previewFetch } from './viewAs';
 import { DEFAULT_FTE, getDatesInRange, hasLeft } from './availabilityUtils';
 import { toLocalDateStr } from './dateUtils';
 import { getSessionGroups, dedupeAssignmentsByShift, assignmentShiftKey } from './shiftSessionUtils';
@@ -27,7 +28,9 @@ if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
 }
 
 console.log('Creating Supabase client...');
-export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+// previewFetch refuses writes while a super admin is viewing as someone
+// (see viewAs.js); otherwise it's plain fetch.
+export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { global: { fetch: previewFetch } });
 console.log('Supabase client created:', !!supabase);
 console.log('=== supabaseClient.js LOADED ===');
 
@@ -5775,7 +5778,15 @@ async function replaceExistingRosterForDates(departmentId, dateStrs, dryRun, dut
 // On call: the classic format's CALL OBLIGATION notes ("Oncall", "Anaes",
 // "Obs", "Oncall + Anaes"...) and its "EDL + OC" shift become
 // duty_assignments in refLists.dutyTypes' matching on-call slots (see
-// dutyTypeForOnCallKind), replacing those slots on the file's dates.
+// dutyTypeForOnCallKind), replacing those slots on the file's dates. The
+// shift-list format (shiftListRosterExcelImport.js) names its slots
+// instead — day.onCallDuties, matched to a duty type by label — and
+// replaces the slots it names.
+//
+// A segment can name its job (segment.job, the shift-list format's ED Flow
+// vs ED Fast Track, which share location, activity and hours); otherwise
+// the job comes from the hours (jobForImportedShift). A day resolving to
+// { availability: true/false } marks the person available or unavailable.
 //
 // Two or more people down for the same slot on the same day is a clash
 // (e.g. one on "EDL + OC" with "Oncall + Anaes" and an anaesthetist on
@@ -5807,7 +5818,20 @@ export async function importRosterWeek(departmentId, people, refLists, { dryRun 
   if (fileHasOnCallNotes) {
     Object.keys(ON_CALL_KIND_LABEL).forEach(kind => { onCallDutyByKind[kind] = dutyTypeForOnCallKind(kind, dutyTypes); });
   }
-  const managedDutyKeys = Object.values(onCallDutyByKind).filter(Boolean).map(dt => dt.key);
+  const dutyTypeNamed = (label) => {
+    const want = label.trim().toLowerCase();
+    return dutyTypes.find(dt => dt.active !== false && (dt.label || '').trim().toLowerCase() === want) || null;
+  };
+  // The slots a shift-list file names, wherever it names them.
+  const namedOnCallDuties = new Map(); // label -> duty type
+  people.forEach(p => p.days.forEach(d => (d.onCallDuties || []).forEach(label => {
+    const dt = dutyTypeNamed(label);
+    if (dt) namedOnCallDuties.set(label, dt);
+  })));
+  const managedDutyKeys = [...new Set([
+    ...Object.values(onCallDutyByKind).filter(Boolean).map(dt => dt.key),
+    ...Array.from(namedOnCallDuties.values()).map(dt => dt.key),
+  ])];
 
   const staffFor = (person) => {
     const mappedStaffId = nameMappings.staff?.[staffLabelKey(person.rawLabel)];
@@ -5819,18 +5843,27 @@ export async function importRosterWeek(departmentId, people, refLists, { dryRun 
   // are left out here — they're already reported below.
   const onCallSlots = new Map(); // "dateStr|dutyKey" -> { date, dutyType, candidates: [{ staffId, staffName, rawLabel, onEdl }] }
   const onCallResults = [];
-  if (fileHasOnCallNotes) {
+  if (fileHasOnCallNotes || namedOnCallDuties.size > 0 || people.some(p => p.days.some(d => d.onCallDuties?.length))) {
     people.forEach(person => {
       if (person.unnamed) return;
       const staff = staffFor(person);
       if (!staff) return;
       person.days.forEach(day => {
-        onCallKindsForDay(day).forEach(kind => {
+        const claims = [
+          ...(fileHasOnCallNotes ? onCallKindsForDay(day) : []).map(kind => ({ dutyType: onCallDutyByKind[kind], name: ON_CALL_KIND_LABEL[kind], named: false })),
+          ...(day.onCallDuties || []).map(label => ({ dutyType: namedOnCallDuties.get(label) || null, name: label, named: true })),
+        ];
+        claims.forEach(({ dutyType, name, named }) => {
           const onCallEntry = { rawLabel: person.rawLabel, staffId: staff.staff_id, staffName: staff.name, date: day.date };
-          const dutyType = onCallDutyByKind[kind];
           const date = parseExcelDate(day.date);
           if (!dutyType) {
-            onCallResults.push({ ...onCallEntry, ok: false, reason: `On call (${ON_CALL_KIND_LABEL[kind]}) — no single matching on-call slot in the department's duty types, not imported` });
+            onCallResults.push({
+              ...onCallEntry,
+              ok: false,
+              reason: named
+                ? `On call (${name}) — no on-call slot called "${name}" in Settings → Duty Types, not imported`
+                : `On call (${name}) — no single matching on-call slot in the department's duty types, not imported`,
+            });
             return;
           }
           if (!date) {
@@ -5962,6 +5995,18 @@ export async function importRosterWeek(departmentId, people, refLists, { dryRun 
         continue;
       }
 
+      if (resolved.availability !== undefined && !resolved.segments?.length) {
+        const action = resolved.availability ? 'mark available' : 'mark unavailable';
+        if (dryRun) {
+          results.push({ ...entry, ok: true, action });
+          continue;
+        }
+        // Unavailable keeps any leave type already recorded for the day.
+        const { error } = await bulkSetStaffAvailability(departmentId, staff.staff_id, [date], resolved.availability, resolved.availability ? null : undefined);
+        results.push({ ...entry, ok: !error, action, error: error?.message });
+        continue;
+      }
+
       if (resolved.leaveCode) {
         const leaveType = leaveTypes.find(lt => lt.code === resolved.leaveCode);
         if (dryRun) {
@@ -5995,7 +6040,9 @@ export async function importRosterWeek(departmentId, people, refLists, { dryRun 
         // The sheet's Intern section, or an intern by rank (the ED format
         // has no Intern section) — see jobForImportedShift.
         const isIntern = person.section === 'intern' || /intern/i.test(staff.rank || '');
-        const job = jobForImportedShift({ location_id: location.location_id, activity_id: activity.activity_id, start_time: segment.start, end_time: segment.end }, jobTypes, isIntern);
+        const namedJob = segment.job && jobTypes.find(j => j.active !== false && j.name.trim().toLowerCase() === segment.job.trim().toLowerCase()
+          && j.location_id === location.location_id && j.activity_id === activity.activity_id);
+        const job = namedJob || jobForImportedShift({ location_id: location.location_id, activity_id: activity.activity_id, start_time: segment.start, end_time: segment.end }, jobTypes, isIntern);
         const assigned = { ...entry, action: 'assign', location: location.name, activity: activity.name, start: segment.start, end: segment.end, job: job?.name || null };
 
         if (dryRun) {

@@ -8,7 +8,8 @@ import MfaChallenge from './MfaChallenge';
 import DepartmentSwitcher from './DepartmentSwitcher';
 import SickCallAlerts from './SickCallAlerts';
 import BirthdayGreeting from './BirthdayGreeting';
-import { supabase, getMyMemberships, getMfaAssuranceLevel, getMustResetPassword, clearMustResetPassword, signOut, updateMyPreferredView, createDepartment } from './supabaseClient';
+import { supabase, getMyMemberships, getMfaAssuranceLevel, getMustResetPassword, clearMustResetPassword, signOut, updateMyPreferredView, createDepartment, getStaffList } from './supabaseClient';
+import { setViewingAs } from './viewAs';
 
 // Supabase redirects invite/password-recovery links back here with
 // ?type=invite / ?type=recovery (or, on older/implicit-flow projects,
@@ -33,6 +34,11 @@ function App() {
   // department, so switching departments always starts from that
   // department's own saved preference.
   const [viewOverride, setViewOverride] = useState(null);
+  // Super admin only: the staff member whose staff app they're looking at
+  // in the staff view ({ staffId, name } or null), read-only — see
+  // viewAs.js. viewAsList is that department's active staff to pick from.
+  const [viewAs, setViewAs] = useState(null);
+  const [viewAsList, setViewAsList] = useState([]);
   const [needsPasswordSetup, setNeedsPasswordSetup] = useState(needsPasswordSetupFromUrl);
   // Whether this account was given a one-time temporary password by an
   // officer (StaffAccountsTab's "One-Time Password" button, for when the
@@ -88,6 +94,8 @@ function App() {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
       setSession(s);
       if (!s) {
+        setViewingAs(null);
+        setViewAs(null);
         setMemberships(null);
         setActiveMembership(null);
         setNeedsMfaChallenge(null);
@@ -155,10 +163,29 @@ function App() {
     if (session && memberships === null) loadMemberships();
   }, [session, memberships, loadMemberships]);
 
+  // setViewingAs runs here, not in an effect, so it's in force before the
+  // staff app's own effects start loading (and before anything can save).
+  const chooseViewAs = (who) => {
+    setViewingAs(who);
+    setViewAs(who);
+  };
+
   const handleSwitchDepartment = () => {
     setActiveMembership(null);
     setViewOverride(null);
+    chooseViewAs(null);
   };
+
+  const viewAsDepartmentId = isSuperAdmin && activeMembership && !activeMembership.staff_id
+    && (viewOverride || activeMembership.preferredView) === 'staff' ? activeMembership.department_id : null;
+  useEffect(() => {
+    if (!viewAsDepartmentId) { setViewAsList([]); return undefined; }
+    let cancelled = false;
+    getStaffList(viewAsDepartmentId).then(({ data }) => {
+      if (!cancelled) setViewAsList((data || []).filter(st => st.active !== false));
+    });
+    return () => { cancelled = true; };
+  }, [viewAsDepartmentId]);
 
   const handlePasswordSet = () => {
     setNeedsPasswordSetup(false);
@@ -236,8 +263,9 @@ function App() {
 
   const handleToggleView = () => {
     const next = effectiveView === 'officer' ? 'staff' : 'officer';
+    if (next === 'officer') chooseViewAs(null);
     setViewOverride(next);
-    updateMyPreferredView(staffId, next);
+    if (staffId) updateMyPreferredView(staffId, next);
   };
 
   return (
@@ -260,6 +288,20 @@ function App() {
             >
               View: {effectiveView === 'officer' ? 'Officer' : 'Staff'}
             </button>
+          )}
+          {viewAsDepartmentId && (
+            <select
+              value={viewAs?.staffId || ''}
+              onChange={(e) => {
+                const st = viewAsList.find(x => x.staff_id === e.target.value);
+                chooseViewAs(st ? { staffId: st.staff_id, name: st.name } : null);
+              }}
+              className="px-2 py-2 border border-gray-300 rounded text-sm bg-white max-w-[12rem]"
+              aria-label="View as"
+            >
+              <option value="">View as…</option>
+              {viewAsList.map(st => <option key={st.staff_id} value={st.staff_id}>{st.name}</option>)}
+            </select>
           )}
           {role === 'officer' && (
             <button
@@ -289,10 +331,16 @@ function App() {
       </div>
 
       <div style={{ paddingTop: topBarHeight + 16 }}>
+        {effectiveView === 'staff' && viewAs && (
+          <div className="mx-4 mb-3 px-3 py-2 rounded bg-amber-100 border border-amber-300 text-amber-900 text-sm">
+            Viewing as <b>{viewAs.name}</b>. Preview only: nothing you do here is saved or sent.
+          </div>
+        )}
         {effectiveView === 'officer' ? (
           <OfficerRosterView departmentId={departmentId} staffId={staffId} topBarActionsRef={topBarActionsRef} isSuperAdmin={isSuperAdmin} />
         ) : (
-          <StaffApp departmentId={departmentId} staffId={staffId} />
+          // Keyed so choosing someone else starts their staff app afresh.
+          <StaffApp key={viewAs?.staffId || 'me'} departmentId={departmentId} staffId={viewAs?.staffId || staffId} />
         )}
       </div>
 
