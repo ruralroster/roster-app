@@ -12,18 +12,29 @@
 //    (email + user_id) rather than a second, duplicate row being created.
 //
 // Deploy: `supabase functions deploy invite-staff`
-// Required secret (never committed, set via the Supabase CLI or dashboard):
+// Required secrets (never committed, set via the Supabase CLI or dashboard):
 //   supabase secrets set SUPABASE_SERVICE_ROLE_KEY=<service role key>
+//   GMAIL_USER / GMAIL_APP_PASSWORD, the same ones notify-volunteering uses
 // SUPABASE_URL is provided automatically to every Edge Function.
+//
+// The invite email is Rstar's own, sent through Gmail, with a sign-up link
+// from Supabase (generateLink), written like the one-time password email
+// (StaffAccountsTab's tempPasswordMailto). That avoids Supabase's built-in
+// email limit of a few an hour, and its invite template, which is shared
+// with DR Roster.
 //
 // Request body: { departmentId, name, email, rank, role, redirectTo, staffId? }
 // Response:     { data: { staffId, invited } } | { error }
 
 import { createClient } from 'jsr:@supabase/supabase-js@2';
+import nodemailer from 'npm:nodemailer@6.9.16';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL');
 const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY');
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+const GMAIL_USER = Deno.env.get('GMAIL_USER');
+const GMAIL_APP_PASSWORD = Deno.env.get('GMAIL_APP_PASSWORD');
+const ROSTER_APP_URL = 'https://ruralroster.github.io/roster-app/';
 
 // Called from the browser (not server-to-server), so it needs to answer
 // the CORS preflight OPTIONS request and set these headers on every
@@ -110,15 +121,36 @@ Deno.serve(async (req) => {
     // Same person, another department — link without sending a second invite.
     targetUserId = existingProfile.user_id;
   } else {
-    const { data: inviteData, error: inviteError } = await adminClient.auth.admin.inviteUserByEmail(
+    if (!GMAIL_USER || !GMAIL_APP_PASSWORD) {
+      return json({ error: 'GMAIL_USER / GMAIL_APP_PASSWORD not set' }, 500);
+    }
+    const { data: link, error: inviteError } = await adminClient.auth.admin.generateLink({
+      type: 'invite',
       email,
-      redirectTo ? { redirectTo } : undefined,
-    );
+      options: redirectTo ? { redirectTo } : undefined,
+    });
     if (inviteError) {
       return json({ error: `Invite failed: ${inviteError.message}` }, 500);
     }
-    targetUserId = inviteData.user.id;
+    targetUserId = link.user.id;
     invited = true;
+
+    // Their name (the form's, or the existing row's) and the department, for
+    // the email. If it can't be sent, the new login is removed again, so
+    // trying later starts afresh rather than finding a login nobody was told
+    // about.
+    const [{ data: dept }, { data: row }] = await Promise.all([
+      adminClient.from('departments').select('name').eq('department_id', departmentId).maybeSingle(),
+      staffId
+        ? adminClient.from('staff').select('name').eq('staff_id', staffId).maybeSingle()
+        : Promise.resolve({ data: null }),
+    ]);
+    try {
+      await sendInvite(email, link.properties.action_link, name || row?.name, dept?.name);
+    } catch (e) {
+      await adminClient.auth.admin.deleteUser(targetUserId).catch(() => {});
+      return json({ error: `Invite email failed: ${e.message ?? e}` }, 500);
+    }
 
     const { error: profileError } = await adminClient
       .from('profiles')
@@ -193,4 +225,62 @@ async function seedDefaultAvailability(adminClient: ReturnType<typeof createClie
       );
     if (error) console.error('seedDefaultAvailability chunk failed:', error);
   }
+}
+
+// "Dear Sam," from "Dr Sam Smith"; "there" if there's no name.
+function firstNameOf(name?: string) {
+  const words = (name || '').split(' ').filter(Boolean).filter((w) => !/^(Dr|Mr|Mrs|Ms|Prof)\.?$/i.test(w));
+  return words[0] || 'there';
+}
+
+let transporter;
+const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+
+async function sendInvite(to: string, link: string, name?: string, departmentName?: string) {
+  transporter ??= nodemailer.createTransport({
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true,
+    auth: { user: GMAIL_USER, pass: GMAIL_APP_PASSWORD },
+  });
+  const where = departmentName ? ` at ${departmentName}` : '';
+  const intro = `You've been invited to Rstar, the roster app${where}. It shows your shifts, on call and leave, and lets you swap shifts, pick up extra ones and order your coffee from your phone.`;
+  const signIn = `After that, sign in at ${ROSTER_APP_URL} using this email address as your username and the password you chose.`;
+  const iphone = 'iPhone: open ' + ROSTER_APP_URL + ' in Safari (not Chrome or the Gmail browser), tap the Share button (the square with an arrow), then "Add to Home Screen" and "Add". Open Rstar from your Home Screen from then on: phone notifications only work from there.';
+  const android = 'Android: open ' + ROSTER_APP_URL + ' in Chrome and tap "Install App" on the sign-in screen. If it isn\'t there, tap the ⋮ menu (top right), then "Install app" or "Add to Home screen".';
+  const help = "If there are any issues, or anything you'd like changed or added to the app, please don't hesitate to get in touch at ruralroster@gmail.com.";
+  const text = [
+    `Dear ${firstNameOf(name)},`,
+    '',
+    intro,
+    '',
+    'Tap the link below to choose your password:',
+    '',
+    link,
+    '',
+    signIn,
+    '',
+    'To put Rstar on your phone like an app:',
+    '',
+    iphone,
+    '',
+    android,
+    '',
+    help,
+    '',
+    'Cheers,',
+    'Rural Roster Team',
+  ].join('\n');
+  const html = [
+    `<p>Dear ${escapeHtml(firstNameOf(name))},</p>`,
+    `<p>${escapeHtml(intro)}</p>`,
+    `<p><a href="${link}" style="display:inline-block;padding:10px 18px;background:#1f6fb2;color:#fff;border-radius:6px;text-decoration:none;font-weight:600">Choose your password</a></p>`,
+    `<p>${escapeHtml(signIn)}</p>`,
+    '<p>To put Rstar on your phone like an app:</p>',
+    `<p>${escapeHtml(iphone)}</p>`,
+    `<p>${escapeHtml(android)}</p>`,
+    `<p>${escapeHtml(help)}</p>`,
+    '<p>Cheers,<br>Rural Roster Team</p>',
+  ].join('\n');
+  await transporter.sendMail({ from: `"Rstar" <${GMAIL_USER}>`, to, subject: "You're invited to Rstar", text, html });
 }
