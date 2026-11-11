@@ -24,8 +24,9 @@ import * as XLSX from 'xlsx';
 //     text with nothing between them ("Remote On-Call Obstetrics" then
 //     "Ward - South - SMO"), so they're read piece by piece, never split
 //     on the joined text. A piece can carry its own hours on a second line
-//     ("Chemotherapy\n08:00 - 13:00"). "Available" / "Unavailable" are
-//     availability, not shifts.
+//     ("Chemotherapy\n08:00 - 13:00"), and newer exports add a
+//     "No Location" line to every one, which is ignored. "Available" /
+//     "Unavailable" are availability, not shifts.
 //
 // Each shift name resolves (DEFAULT_CODES, else the officer's saved code
 // mappings) to a location, activity, hours and — because ED Flow and ED
@@ -94,9 +95,16 @@ const DEFAULT_ON_CALL = {
 };
 const ON_CALL_RE = /on.?call/i;
 
-// Role heading (or a person's role line) -> rank suggestion for a new
-// staff record: these are all senior.
-const SENIOR_ROLES = /senior medical officer|staff specialist|consultant|physician/i;
+// Role heading (or a person's role line) -> the grade a new staff
+// record's rank is suggested from (the import tab picks the department's
+// own rank for it).
+const ROLE_GRADES = [
+  [/senior medical officer|staff specialist|consultant|physician/i, 'senior'],
+  [/registrar/i, 'registrar'],
+  [/house officer|resident|\bpho\b|\bsho\b|\brmo\b/i, 'house officer'],
+  [/intern/i, 'intern'],
+];
+const gradeForRole = (role) => (ROLE_GRADES.find(([re]) => re.test(role || '')) || [])[1] || null;
 
 // Whitespace inside a shift name isn't consistent ("Ward  - SMO - WE").
 const codeKey = (s) => (s || '').replace(/\s+/g, ' ').trim();
@@ -316,7 +324,7 @@ export function parseShiftListRange(workbook, rangeIndex, codeMap = {}) {
       const { resolvedShift, onCallDuties } = resolveDay(pieces, codeMap);
       return {
         date,
-        rawShift: pieces.map(p => p.replace(/\n/g, ' ')).join(' + '),
+        rawShift: pieces.map(p => p.split('\n').map(l => l.trim()).filter(l => l && !/^no location$/i.test(l)).join(' ')).join(' + '),
         resolvedShift,
         onCallDuties,
       };
@@ -325,9 +333,8 @@ export function parseShiftListRange(workbook, rangeIndex, codeMap = {}) {
 }
 
 // Everyone in the file, for the "missing staff" step: full name, FTE,
-// phone, and a rank suggestion from their role ('senior' for SMOs and
-// specialists, for the import tab to turn into the department's own
-// senior rank).
+// phone, and the grade their role suggests (gradeForRole), for the import
+// tab to turn into one of the department's own ranks.
 export function getShiftListStaffRoster(workbook) {
   const { people } = readWorkbook(workbook);
   return Array.from(people.values())
@@ -336,7 +343,7 @@ export function getShiftListStaffRoster(workbook) {
       fte: person.fte,
       phone: person.phone,
       role: person.role || section,
-      senior: SENIOR_ROLES.test(person.role || section || ''),
+      grade: gradeForRole(person.role || section),
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
 }

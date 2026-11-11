@@ -240,6 +240,19 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
     return junior.find(r => !/intern/i.test(r.rank))?.rank || '';
   };
 
+  // Shift-list format: a role's grade (getShiftListStaffRoster) -> this
+  // department's rank for it. A house officer takes a rank named for one
+  // (house officer / resident / basic trainee), else the registrar's.
+  const shiftListRank = (grade) => {
+    if (grade === 'senior') return suggestClassicRank('consultant');
+    if (grade === 'intern') return suggestClassicRank('intern');
+    if (grade === 'house officer') {
+      return staffRanks.find(r => r.requires_supervision !== false && /house|resident|basic|pho|rmo/i.test(r.rank))?.rank || suggestClassicRank('registrar');
+    }
+    if (grade === 'registrar') return suggestClassicRank('registrar');
+    return '';
+  };
+
   // extraStaff / mappingList cover records and mappings just created,
   // before the parent's staffList prop and the mappings state catch up.
   const checkMissingStaff = (extraStaff = [], mappingList = mappings) => {
@@ -247,12 +260,12 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
     const knownStaff = [...staffList, ...extraStaff];
     const mappedLabels = new Set(mappingList.filter(m => m.kind === 'staff' && m.staff_id).map(m => staffLabelKey(m.source)));
     if (format === 'shift_list') {
-      // The file gives full names, FTE and phone numbers; senior roles
-      // (SMO, staff specialist) suggest the department's senior rank.
+      // The file gives full names, FTE and phone numbers, and each role
+      // suggests one of the department's ranks (shiftListRank).
       const missing = getShiftListStaffRoster(workbook)
         .filter(p => !mappedLabels.has(staffLabelKey(p.name)) && !matchStaffName(p.name, knownStaff))
         .map(p => {
-          const rank = p.senior ? suggestClassicRank('consultant') : '';
+          const rank = shiftListRank(p.grade);
           const suggestedStaff = suggestStaffMatches(p.name, knownStaff);
           return { rawLabel: p.name, name: p.name, fte: p.fte ?? 0, phone: p.phone, suggestedRank: rank, rank, create: suggestedStaff.length === 0, suggestedStaff };
         });

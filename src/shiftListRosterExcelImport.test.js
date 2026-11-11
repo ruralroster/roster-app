@@ -87,10 +87,15 @@ describe('a file', () => {
     expect(felix.days[2].resolvedShift).toMatchObject({ unmapped: 'Mystery Clinic' });
   });
 
-  test('the staff list has full names, FTE, phone and a senior flag', () => {
+  test('newer exports\' "No Location" line is ignored', () => {
+    expect(resolveShiftListCode('ED Mid Shift\nNo Location').segments[0]).toMatchObject({ job: 'ED Mid', start: '10:30' });
+    expect(resolveShiftListCode('Obstetrics\n13:30 - 16:30\nNo Location').segments[0]).toMatchObject({ start: '13:30', end: '16:30' });
+  });
+
+  test('the staff list has full names, FTE, phone and the grade their role suggests', () => {
     expect(getShiftListStaffRoster(sample())).toEqual([
-      { name: 'Felix Okoro', fte: 1, phone: '0400 000 002', role: 'Senior Medical Officer', senior: true },
-      { name: 'Tessa Quinlan', fte: 0.8, phone: '0400 000 001', role: 'Senior Medical Officer', senior: true },
+      { name: 'Felix Okoro', fte: 1, phone: '0400 000 002', role: 'Senior Medical Officer', grade: 'senior' },
+      { name: 'Tessa Quinlan', fte: 0.8, phone: '0400 000 001', role: 'Senior Medical Officer', grade: 'senior' },
     ]);
   });
 });
