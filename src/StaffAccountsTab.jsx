@@ -1,52 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { AlertCircle, Loader, CheckCircle2, CircleDashed } from 'lucide-react';
-import { getStaffList, inviteStaff, updateStaffRole, generateTempPassword, supabase } from './supabaseClient';
+import { getStaffList, inviteStaff, updateStaffRole, generateTempPassword, emailTempPassword, supabase } from './supabaseClient';
 
 const ROLE_OPTIONS = [
   { value: 'staff', label: 'Staff' },
   { value: 'officer', label: 'Officer' },
   { value: 'intern', label: 'Intern' },
 ];
-
-const ROSTER_APP_URL = 'https://ruralroster.github.io/roster-app/';
-
-// "Dr Sarah Jones" -> "Sarah", for the temp-password email's greeting.
-function firstNameOf(name) {
-  if (!name) return 'there';
-  const words = name.split(' ').filter(Boolean).filter(w => !/^(Dr|Mr|Mrs|Ms|Prof)\.?$/i.test(w));
-  return words[0] || 'there';
-}
-
-// A mailto: link pre-filling subject/body so the officer reviews and sends
-// from their own mail client — deliberately not server-sent email, so this
-// needs no new infrastructure (no transactional email provider/secret) on
-// top of the temp password the Edge Function already generates.
-function tempPasswordMailto({ name, email, password }) {
-  const subject = 'Your Rstar one-time password';
-  const body = [
-    `Dear ${firstNameOf(name)},`,
-    '',
-    'Please find below your one-time password for Rstar:',
-    '',
-    password,
-    '',
-    `Sign in at ${ROSTER_APP_URL} using this email address as your username and the password above.`,
-    '',
-    "The first time you sign in, Rstar will ask you to choose a new password of your own. The one-time password won't work after that.",
-    '',
-    'To put Rstar on your phone like an app:',
-    '',
-    'iPhone: open the link above in Safari (not Chrome or the Gmail browser), tap the Share button (the square with an arrow), then "Add to Home Screen" and "Add". Open Rstar from your Home Screen from then on: phone notifications only work from there.',
-    '',
-    'Android: open the link above in Chrome and tap "Install App" on the sign-in screen. If it isn\'t there, tap the ⋮ menu (top right), then "Install app" or "Add to Home screen".',
-    '',
-    "If there are any issues, or anything you'd like changed or added to the app, please don't hesitate to get in touch at ruralroster@gmail.com.",
-    '',
-    'Cheers,',
-    'Rural Roster Team',
-  ].join('\n');
-  return `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-}
 
 // Officer-facing tool for creating logins. Deliberately separate from
 // StaffProfilesTab (which edits contact/coffee/activity-restriction fields
@@ -94,6 +54,18 @@ export default function StaffAccountsTab({ departmentId, refreshKey, staffRanks 
   // shape as reinviteResult above.
   const [generatingPwId, setGeneratingPwId] = useState(null);
   const [tempPasswordResult, setTempPasswordResult] = useState(null); // { staffId, password, error }
+  // Emailing it from ruralroster@gmail.com: null, 'sending', 'sent' or an error message.
+  const [tempEmailStatus, setTempEmailStatus] = useState(null);
+
+  const sendTempPasswordEmail = async () => {
+    setTempEmailStatus('sending');
+    const { error: sendErr } = await emailTempPassword(departmentId, tempPasswordResult.staffId, tempPasswordResult.password);
+    setTempEmailStatus(sendErr ? sendErr.message : 'sent');
+  };
+  const closeTempPassword = () => {
+    setTempPasswordResult(null);
+    setTempEmailStatus(null);
+  };
 
   const loadStaff = async () => {
     setLoading(true);
@@ -474,31 +446,46 @@ export default function StaffAccountsTab({ departmentId, refreshKey, staffRanks 
                 </p>
 
                 {tempPasswordResult.email ? (
-                  <>
-                    <p className="text-sm text-gray-800 mb-3">
-                      Would you like to email this one-time password to: {tempPasswordResult.name}?
-                    </p>
-                    <div className="flex gap-2">
-                      <a
-                        href={tempPasswordMailto(tempPasswordResult)}
-                        onClick={() => setTempPasswordResult(null)}
-                        className="flex-1 text-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition text-sm"
-                      >
-                        Yes
-                      </a>
+                  tempEmailStatus === 'sent' ? (
+                    <>
+                      <p className="text-sm text-green-700 mb-3">Emailed to {tempPasswordResult.email} from ruralroster@gmail.com.</p>
                       <button
-                        onClick={() => setTempPasswordResult(null)}
-                        className="flex-1 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-lg transition text-sm"
+                        onClick={closeTempPassword}
+                        className="w-full px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-lg transition text-sm"
                       >
-                        No
+                        Close
                       </button>
-                    </div>
-                  </>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-sm text-gray-800 mb-3">
+                        Would you like to email this one-time password to {tempPasswordResult.name} ({tempPasswordResult.email})? It's sent from ruralroster@gmail.com.
+                      </p>
+                      {tempEmailStatus && tempEmailStatus !== 'sending' && (
+                        <p className="text-sm text-red-700 mb-3">Couldn't send: {tempEmailStatus}. Copy the password and send it another way.</p>
+                      )}
+                      <div className="flex gap-2">
+                        <button
+                          onClick={sendTempPasswordEmail}
+                          disabled={tempEmailStatus === 'sending'}
+                          className="flex-1 text-center px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-medium rounded-lg transition text-sm"
+                        >
+                          {tempEmailStatus === 'sending' ? 'Sending…' : 'Yes'}
+                        </button>
+                        <button
+                          onClick={closeTempPassword}
+                          className="flex-1 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-lg transition text-sm"
+                        >
+                          No
+                        </button>
+                      </div>
+                    </>
+                  )
                 ) : (
                   <>
                     <p className="text-xs text-amber-700 mb-2">No email on file — share this password with them directly instead.</p>
                     <button
-                      onClick={() => setTempPasswordResult(null)}
+                      onClick={closeTempPassword}
                       className="w-full px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-lg transition text-sm"
                     >
                       Close
@@ -510,7 +497,7 @@ export default function StaffAccountsTab({ departmentId, refreshKey, staffRanks 
 
             {tempPasswordResult.error && (
               <button
-                onClick={() => setTempPasswordResult(null)}
+                onClick={closeTempPassword}
                 className="w-full px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-lg transition text-sm"
               >
                 Close

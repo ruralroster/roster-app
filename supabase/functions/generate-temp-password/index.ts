@@ -31,12 +31,25 @@
 //
 // Request body: { departmentId, staffId, email? }  (email required only if not yet linked)
 // Response:     { data: { tempPassword, name, mfaWasReset } } | { error }
+//
+// Emailing it (the modal's "Yes"): sent from GMAIL_USER (ruralroster@
+// gmail.com, the GMAIL_USER / GMAIL_APP_PASSWORD secrets notify-volunteering
+// uses), so it works on any device and a copy is in that account's Sent.
+// Request body: { departmentId, staffId, emailPassword }
+// Response:     { data: { emailed: true, email } } | { error }
+// Only a password in this function's own format, to someone who still has
+// to change theirs (must_reset_password), so it can't be used to email
+// anything else.
 
 import { createClient } from 'jsr:@supabase/supabase-js@2';
+import nodemailer from 'npm:nodemailer@6.9.16';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL');
 const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY');
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+const GMAIL_USER = Deno.env.get('GMAIL_USER');
+const GMAIL_APP_PASSWORD = Deno.env.get('GMAIL_APP_PASSWORD');
+const ROSTER_APP_URL = 'https://ruralroster.github.io/roster-app/';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -75,14 +88,14 @@ Deno.serve(async (req) => {
     return json({ error: 'Missing Authorization header' }, 401);
   }
 
-  let body: { departmentId?: string; staffId?: string; email?: string };
+  let body: { departmentId?: string; staffId?: string; email?: string; emailPassword?: string };
   try {
     body = await req.json();
   } catch {
     return json({ error: 'Invalid JSON body' }, 400);
   }
 
-  const { departmentId, staffId, email } = body;
+  const { departmentId, staffId, email, emailPassword } = body;
   if (!departmentId || !staffId) {
     return json({ error: 'departmentId and staffId are required' }, 400);
   }
@@ -115,13 +128,35 @@ Deno.serve(async (req) => {
 
   const { data: staffRow, error: staffError } = await adminClient
     .from('staff')
-    .select('staff_id, user_id, name')
+    .select('staff_id, user_id, name, email')
     .eq('staff_id', staffId)
     .eq('department_id', departmentId)
     .single();
 
   if (staffError || !staffRow) {
     return json({ error: 'No matching staff row in this department' }, 404);
+  }
+
+  if (emailPassword !== undefined) {
+    if (!new RegExp(`^[${TEMP_PASSWORD_CHARS}]{${TEMP_PASSWORD_LENGTH}}$`).test(emailPassword)) {
+      return json({ error: "That isn't a one-time password" }, 400);
+    }
+    if (!staffRow.user_id || !staffRow.email) {
+      return json({ error: 'They have no login or email yet' }, 400);
+    }
+    const { data: profile } = await adminClient.from('profiles').select('must_reset_password').eq('user_id', staffRow.user_id).maybeSingle();
+    if (!profile?.must_reset_password) {
+      return json({ error: "They've already chosen their own password" }, 409);
+    }
+    if (!GMAIL_USER || !GMAIL_APP_PASSWORD) {
+      return json({ error: 'GMAIL_USER / GMAIL_APP_PASSWORD not set' }, 500);
+    }
+    try {
+      await sendTempPassword(staffRow.email, staffRow.name, emailPassword);
+    } catch (e) {
+      return json({ error: `Email failed: ${e.message ?? e}` }, 500);
+    }
+    return json({ data: { emailed: true, email: staffRow.email } });
   }
 
   let targetUserId = staffRow.user_id;
@@ -217,3 +252,51 @@ Deno.serve(async (req) => {
 
   return json({ data: { tempPassword, name: staffRow.name, mfaWasReset: existingFactors.length > 0 } });
 });
+
+// "Dear Sam," from "Dr Sam Smith"; "there" if there's no name.
+function firstNameOf(name?: string) {
+  const words = (name || '').split(' ').filter(Boolean).filter((w) => !/^(Dr|Mr|Mrs|Ms|Prof)\.?$/i.test(w));
+  return words[0] || 'there';
+}
+
+const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+
+// The wording StaffAccountsTab used to open in the officer's own mail app.
+async function sendTempPassword(to: string, name: string, password: string) {
+  const transporter = nodemailer.createTransport({
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true,
+    auth: { user: GMAIL_USER, pass: GMAIL_APP_PASSWORD },
+  });
+  const lines = [
+    `Dear ${firstNameOf(name)},`,
+    '',
+    'Please find below your one-time password for Rstar:',
+    '',
+    password,
+    '',
+    `Sign in at ${ROSTER_APP_URL} using this email address as your username and the password above.`,
+    '',
+    "The first time you sign in, Rstar will ask you to choose a new password of your own. The one-time password won't work after that.",
+    '',
+    'To put Rstar on your phone like an app:',
+    '',
+    `iPhone: open ${ROSTER_APP_URL} in Safari (not Chrome or the Gmail browser), tap the Share button (the square with an arrow), then "Add to Home Screen" and "Add". Open Rstar from your Home Screen from then on: phone notifications only work from there.`,
+    '',
+    `Android: open ${ROSTER_APP_URL} in Chrome and tap "Install App" on the sign-in screen. If it isn't there, tap the ⋮ menu (top right), then "Install app" or "Add to Home screen".`,
+    '',
+    "If there are any issues, or anything you'd like changed or added to the app, please don't hesitate to get in touch at ruralroster@gmail.com.",
+    '',
+    'Cheers,',
+    'Rural Roster Team',
+  ];
+  const html = lines
+    .join('\n')
+    .split('\n\n')
+    .map((para) => para === password
+      ? `<p style="font-family:monospace;font-size:20px;letter-spacing:0.08em"><strong>${escapeHtml(para)}</strong></p>`
+      : `<p>${escapeHtml(para).replace(/\n/g, '<br>')}</p>`)
+    .join('\n');
+  await transporter.sendMail({ from: `"Rstar" <${GMAIL_USER}>`, to, subject: 'Your Rstar one-time password', text: lines.join('\n'), html });
+}

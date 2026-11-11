@@ -6946,6 +6946,26 @@ export async function generateTempPassword(departmentId, staffId, email = null) 
   }
 }
 
+// Emails a one-time password (from generateTempPassword) to the staff
+// member, from ruralroster@gmail.com — see generate-temp-password's
+// emailPassword mode.
+export async function emailTempPassword(departmentId, staffId, password) {
+  try {
+    const { data, error } = await supabase.functions.invoke('generate-temp-password', {
+      body: { departmentId, staffId, emailPassword: password },
+    });
+    if (error) {
+      let message = error.message;
+      try { message = (await error.context.json()).error ?? message; } catch { /* keep the generic one */ }
+      throw new Error(message);
+    }
+    if (data?.error) throw new Error(data.error);
+    return { data: data?.data ?? data, error: null };
+  } catch (err) {
+    return { data: null, error: err };
+  }
+}
+
 // Whether the current session's account was just given a temporary
 // password by an officer and hasn't chosen its own yet — checked by App.js
 // alongside the invite/recovery-link check to force SetPassword either way.
