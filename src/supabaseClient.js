@@ -6579,6 +6579,8 @@ export async function validateShiftAssignment(staffId, date, shiftId, department
         .select('date, shift_id')
         .eq('department_id', departmentId)
         .eq('staff_id', staffId)
+        // On call isn't a shift worked, so it never counts towards a rule.
+        .eq('on_call', false)
         .gte('date', lookbackStartStr)
         .lt('date', dateStr),
       supabase.from('shifts').select('shift_id').eq('department_id', departmentId).eq('name', 'Day Off').maybeSingle(),

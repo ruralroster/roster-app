@@ -4,6 +4,7 @@ import {
   getJobTypesAndPlaces,
   getPlannerRange,
   getDaysBooked,
+  getShiftPatternRules,
   createPlannerCard,
   deleteTheatreActivity,
   bookPlannerPlace,
@@ -41,6 +42,7 @@ import {
 } from './plannerUtils';
 import { payFortnightRange, fortnightLoad, fteFull, hoursBooked, formatHours, FULL_TIME_HOURS_PER_WEEK, FTE_FULL_LABEL } from './fteFortnight';
 import { buildFairness, exposureKey, formatFairShare, isCasual } from './fairness';
+import { suggestFill, patternProblem, shiftsByPerson } from './autoFill';
 
 // ============================================================
 // PLANNER — Officer view tab
@@ -55,6 +57,8 @@ import { buildFairness, exposureKey, formatFairShare, isCasual } from './fairnes
 //      shows in the place (their other bookings that pay fortnight ringed
 //      in blue); tap it again for everyone free and qualified, fairest
 //      first, and tap a name to book them.
+//      Or Suggest: every empty place shown gets the fairest person who can
+//      take it (autoFill.js), as purple drafts to check, then Book them all.
 // Writes the same theatre_activities / staff_assignments / duty_assignments
 // rows the Day and Fortnight views use, so everything else keeps working.
 // A short job from today on can be offered for volunteering straight from
@@ -114,6 +118,12 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
   const [meetingPick, setMeetingPick] = useState(null); // the meeting dialog: { meeting, draft }
   // Last 12 months of who did what, for ranking jobs in the Fill step.
   const [exposure, setExposure] = useState(null);
+  // Settings → Shift Pattern Rules: booking by hand honours BLOCK rules,
+  // Suggest WARN ones too.
+  const [patternRules, setPatternRules] = useState([]);
+  // Suggest's drafts: { drafts: Map(slotKey -> { staffId, name, reason, moved }), unfilled: [slotKey], total }.
+  const [fillDrafts, setFillDrafts] = useState(null);
+  const [suggesting, setSuggesting] = useState(false);
   // Height of the officer view's bottom tab bar, so the people picker can
   // sit just above it.
   const [navHeight, setNavHeight] = useState(64);
@@ -176,13 +186,26 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
   useEffect(() => {
     if (!departmentId) return;
     let cancelled = false;
-    getDaysBooked(departmentId, payFortnightRange(startStr).from, payFortnightRange(endStr).to).then(res => {
+    // Six days either side too, for the Shift Pattern Rules.
+    getDaysBooked(departmentId, addDays(payFortnightRange(startStr).from, -6), addDays(payFortnightRange(endStr).to, 6)).then(res => {
       if (cancelled) return;
       if (res.error) setError(`Failed to load fortnight totals: ${res.error.message}`);
       else setFortnightBookings(res.data);
     });
     return () => { cancelled = true; };
   }, [departmentId, startStr, endStr, refreshKey]);
+
+  useEffect(() => {
+    if (!departmentId) return;
+    let cancelled = false;
+    getShiftPatternRules(departmentId).then(res => {
+      if (!cancelled) setPatternRules(res.data || []);
+    });
+    return () => { cancelled = true; };
+  }, [departmentId]);
+
+  // Suggestions are for the days they were made on.
+  useEffect(() => { setFillDrafts(null); }, [startStr, numDays]);
 
   useEffect(() => {
     if (!departmentId) return;
@@ -415,6 +438,8 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
 
   // ---------- render helpers ----------
 
+  const offShiftId = refData.shifts.find(sh => sh.name === 'Day Off')?.shift_id ?? null;
+  const shiftsByStaff = useMemo(() => shiftsByPerson(fortnightBookings), [fortnightBookings]);
   const isAdminCard = (card) => isAdminJob(jobForCard(card, jobTypes)?.name, card.locations?.name || locationName(card.location_id), activityName(card.activity_id));
   // Why staffId can't go on card: they've left by then, a clash, leave, or
   // their FTE for that pay fortnight already allocated. null = free.
@@ -423,7 +448,10 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
     cardId: card.theatre_activity_id, assignments, unavailable, cardLabel: assignmentLabel,
     clashFree: isAdminCard(card),
     isClashFree: (a) => { const c = cardById.get(a.theatre_activity_id); return !!c && isAdminCard(c); },
-  }) || (!isAdminCard(card) && fteFull(staffById.get(staffId), card.date, fortnightBookings) ? FTE_FULL_LABEL : null);
+  }) || (!isAdminCard(card) && fteFull(staffById.get(staffId), card.date, fortnightBookings) ? FTE_FULL_LABEL : null)
+    || (!isAdminCard(card) && patternRules.length
+      ? patternProblem(patternRules, offShiftId, shiftsByStaff.get(staffId) || new Map(), card.date, card.shift_id, ['BLOCK'])
+      : null);
 
   const dutyKeysFor = (staffId, dateStr) => duties.filter(d => d.staff_id === staffId && d.date === dateStr).map(d => d.duty_type);
 
@@ -476,6 +504,20 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
 
     // Empty place.
     const base = 'block w-full text-left px-1.5 py-0.5 rounded border border-dashed text-xs truncate transition';
+    const draft = mode === 'fill' && !locked(card.date) && fillDrafts?.drafts.get(slotKey(card, place, slot));
+    if (draft) {
+      return (
+        <button
+          key={key}
+          disabled={busy}
+          onClick={() => dropDraft(slotKey(card, place, slot))}
+          className={`${base} border-purple-600 bg-purple-100 text-purple-900 font-semibold hover:bg-purple-200`}
+          title={`Suggested for ${place.role}: ${draft.name} (${draft.reason}). Tap to drop this suggestion.`}
+        >
+          {firstName(draft.name)}?
+        </button>
+      );
+    }
     if (mode !== 'fill' || locked(card.date)) {
       return <span key={key} className={`${base} border-gray-400 text-gray-500`}>{place.role}</span>;
     }
@@ -639,6 +681,91 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
       });
     return rankJobsForPerson(selectedStaff.staff_id, candidates, planned.fairness, planned.history.statsByStaffActivity);
   })();
+
+  // ---------- Suggest ----------
+
+  const slotKey = (card, place, slot) => `${card.theatre_activity_id}|${place.place_id}|${slot.index}`;
+  const sameJobAs = (a, b) => {
+    const job = jobForCard(b, jobTypes);
+    return job ? jobForCard(a, jobTypes)?.job_type_id === job.job_type_id : a.location_id === b.location_id && a.activity_id === b.activity_id;
+  };
+
+  // Every empty staff place shown from today on, except Admin time and a
+  // role that's out for volunteering (its volunteers come first).
+  const openSlots = () => cards
+    .filter(card => days.includes(card.date) && card.date >= todayStr && !locked(card.date) && !isAdminCard(card))
+    .flatMap(card => {
+      const job = jobForCard(card, jobTypes);
+      if (!job) return [];
+      const cardAssignments = assignments.filter(a => a.theatre_activity_id === card.theatre_activity_id);
+      const layout = layOutCard(card, job, places, cardAssignments, visitors.filter(v => v.theatre_activity_id === card.theatre_activity_id), staffById, rankRows);
+      const offered = (role) => offers.some(o => o.theatre_activity_id === card.theatre_activity_id && o.role === role
+        && !offerIsFilled(o, cardAssignments.filter(a => a.role === role).length));
+      return layout.places
+        .filter(({ place }) => place.kind === 'staff' && !offered(place.grade === 'senior' ? 'consultant' : 'registrar'))
+        .flatMap(({ place, slots }) => slots
+          .filter(slot => !slot.assignment && !slot.visitor)
+          .map(slot => ({ key: slotKey(card, place, slot), card, job, place })));
+    });
+
+  const runSuggest = () => {
+    if (!exposure) { setError('Still loading the fairness figures. Try again in a moment.'); return; }
+    const slots = openSlots();
+    if (!slots.length) { setError('There are no empty places to fill in the days shown.'); return; }
+    setSuggesting(true);
+    setSelectedStaffId(null);
+    clearSuggest();
+    // Let "Suggesting…" show before the work starts.
+    setTimeout(() => {
+      try {
+        const result = suggestFill(slots, {
+          staff: refData.staff.filter(st => st.active !== false && (!staffOnly || (st.fte ?? DEFAULT_FTE) > 0)),
+          rankRows, todayStr, assignments, unavailable, bookings: fortnightBookings,
+          rules: patternRules, offShiftId, exposure,
+          isAdminCard, sameJob: sameJobAs, cardLabel: assignmentLabel,
+          cardOf: (a) => cardById.get(a.theatre_activity_id),
+          activityKeyOf: (a) => {
+            const card = cardById.get(a.theatre_activity_id);
+            return card ? exposureKey(card.activity_id, a.place_id && places.find(pl => pl.place_id === a.place_id)) : null;
+          },
+          isClashFree: (a) => { const c = cardById.get(a.theatre_activity_id); return !!c && isAdminCard(c); },
+        });
+        setFillDrafts({ drafts: new Map(result.drafts.map(d => [d.key, d])), unfilled: result.unfilled, total: slots.length });
+        setError(null);
+      } catch (err) {
+        setError(`Couldn't suggest: ${err.message}`);
+      } finally {
+        setSuggesting(false);
+      }
+    }, 0);
+  };
+
+  const dropDraft = (key) => setFillDrafts(f => {
+    const drafts = new Map(f.drafts);
+    drafts.delete(key);
+    return { ...f, drafts };
+  });
+
+  // Books every draft still standing, one at a time (each may make the
+  // shift it needs). Anything that's stopped fitting since is skipped.
+  const bookDrafts = () => {
+    const list = [...fillDrafts.drafts.entries()];
+    setFillDrafts(null);
+    run("Couldn't book everyone", async () => {
+      const skipped = [];
+      for (const [key, d] of list) {
+        const [cardId, placeId] = key.split('|');
+        const card = cardById.get(cardId);
+        const staff = staffById.get(d.staffId);
+        const job = card && jobForCard(card, jobTypes);
+        if (!card || !staff || conflictFor(staff.staff_id, card)) { skipped.push(d.name); continue; }
+        const res = await bookPlannerPlace(departmentId, card, staff.staff_id, placeId, roleFor(staff), job?.name);
+        if (res.error) return res;
+      }
+      if (skipped.length) return { error: new Error(`booked the rest; ${skipped.join(', ')} no longer fit and were left out`) };
+      return null;
+    });
+  };
 
   const renderCard = (card) => {
     const job = jobForCard(card, jobTypes);
@@ -947,6 +1074,36 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
           <AlertCircle size={18} className="text-red-600 flex-shrink-0 mt-0.5" />
           <p className="text-sm text-red-700 flex-1">{error}</p>
           <button onClick={() => setError(null)} className="text-red-600" aria-label="Dismiss"><X size={16} /></button>
+        </div>
+      )}
+
+      {mode === 'fill' && (
+        <div className="bg-white rounded-lg shadow-sm p-3 mb-4 text-sm">
+          {fillDrafts ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="flex-1 min-w-[14rem] text-gray-800">
+                <span className="font-semibold text-purple-800">{fillDrafts.drafts.size} suggested</span>
+                {' '}of {fillDrafts.total} empty place{fillDrafts.total === 1 ? '' : 's'}
+                {fillDrafts.unfilled.length > 0 && <>; {fillDrafts.unfilled.length} with nobody free who fits (offer {fillDrafts.unfilled.length === 1 ? 'it' : 'them'} for volunteering)</>}.
+                {' '}<span className="text-xs text-gray-600">Nothing is booked yet. Purple names are suggestions: tap one to drop it.</span>
+              </p>
+              <button onClick={bookDrafts} disabled={busy || fillDrafts.drafts.size === 0} className="px-3 py-1.5 bg-purple-700 hover:bg-purple-800 disabled:opacity-40 text-white rounded-lg font-medium">
+                Book them all
+              </button>
+              <button onClick={() => setFillDrafts(null)} disabled={busy} className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-lg font-medium">
+                Discard
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="flex-1 min-w-[14rem] text-xs text-gray-600">
+                <span className="font-semibold text-gray-800">Suggest</span> fills every empty place shown with the fairest person who can take it: right grade and skills, available, 10 hours' rest, within their FTE and the Shift Pattern Rules, and days kept together where it can. You check them before anything's booked.
+              </p>
+              <button onClick={runSuggest} disabled={busy || suggesting || loading} className="px-3 py-1.5 bg-purple-700 hover:bg-purple-800 disabled:opacity-40 text-white rounded-lg font-medium">
+                {suggesting ? 'Suggesting…' : 'Suggest'}
+              </button>
+            </div>
+          )}
         </div>
       )}
 

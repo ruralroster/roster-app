@@ -198,8 +198,12 @@ export function isAdminJob(...texts) {
   return texts.some(t => t && /non.?clinical|\badmin\b/i.test(t));
 }
 
+export const MIN_REST_HOURS = 10;
+
 // Why staffId can't take a booking for [startTime, endTime) on dateStr,
-// or null if they're free. On-call slots (duty_assignments) never clash —
+// or null if they're free: unavailable, already on the job, hours that
+// overlap another booking, or under MIN_REST_HOURS off between it and
+// work on the day before or after. On-call slots (duty_assignments) never clash —
 // someone can be on call while working a job — and neither does Admin:
 // clashFree (the card being booked is Admin) skips the hours check, and
 // isClashFree(assignment) leaves existing Admin bookings out of it.
@@ -218,8 +222,18 @@ export function dayConflict({ staffId, dateStr, startTime, endTime, cardId, assi
     const st = a.shifts?.start_time;
     const en = a.shifts?.end_time;
     if (!st || !en) continue;
-    if (intervalsOverlap(want, intervalOn(a.date, st, en))) {
+    const other = intervalOn(a.date, st, en);
+    if (intervalsOverlap(want, other)) {
       return `Busy: ${cardLabel ? cardLabel(a) : 'another job'} ${hhmm(st)}–${hhmm(en)}`;
+    }
+    // 10 hours off between one day's work and the next (a morning and an
+    // afternoon list on the same day are one day's work).
+    if (a.date !== dateStr) {
+      const after = want.start >= other.end;
+      const gap = after ? want.start - other.end : other.start - want.end;
+      if (gap < MIN_REST_HOURS * 60) {
+        return `Under ${MIN_REST_HOURS} hours ${after ? 'after' : 'before'} ${cardLabel ? cardLabel(a) : 'another job'} ${hhmm(st)}–${hhmm(en)}`;
+      }
     }
   }
   return null;
