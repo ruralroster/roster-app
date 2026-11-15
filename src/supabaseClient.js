@@ -1056,6 +1056,29 @@ export async function copyWeekActivities(departmentId, fromWeekStart, toWeekStar
 
   return { data: { copied: totalCopied, skipped: totalSkipped }, error: null };
 }
+
+// The Calendar view's Clear: takes everyone off a week (whole false) or
+// blanks it, cards and all (whole true). Only days after today; leave and
+// anything linked to DR App stay (migrations/2026-11-16_clear_week.sql).
+// apply false just counts what would go, for the preview. apply true
+// returns { counts, snapshot }; the snapshot is what restoreRosterWeek puts
+// back.
+export async function clearRosterWeek(departmentId, weekStart, whole, apply) {
+  console.log('clearRosterWeek called', departmentId, weekStart, whole, apply);
+  const { data, error } = await supabase.rpc('roster_week_clear', {
+    p_department_id: departmentId,
+    p_week_start: toLocalDateStr(weekStart),
+    p_whole: whole,
+    p_apply: apply,
+  });
+  return { data, error };
+}
+
+export async function restoreRosterWeek(departmentId, snapshot) {
+  console.log('restoreRosterWeek called', departmentId);
+  const { data, error } = await supabase.rpc('roster_week_restore', { p_department_id: departmentId, p_snapshot: snapshot });
+  return { data, error };
+}
 // ============================================================
 // STAFF MANAGEMENT
 // ============================================================

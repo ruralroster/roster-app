@@ -41,6 +41,8 @@ import { createTheatreActivity,
   updateTheatreActivityTimes,
   copyLastWeekActivities,
   copyWeekActivities,
+  clearRosterWeek,
+  restoreRosterWeek,
   createShift,
   updateShift,
   deactivateShift,
@@ -164,6 +166,11 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   // hit on any week row, same shape as the template-apply picker above.
   const [copyFromWeekInput, setCopyFromWeekInput] = useState('');
   const [copyingWeek, setCopyingWeek] = useState(null);
+  // Clear on a week row: { weekStart, weekStartStr, whole, previews: { staff, whole }, working }.
+  const [clearingWeek, setClearingWeek] = useState(null);
+  // The last week cleared, until the page is left: { weekStartStr, whole, snapshot }.
+  const [clearedWeek, setClearedWeek] = useState(null);
+  const [restoringWeek, setRestoringWeek] = useState(false);
   // Rule Violations report state lives here, not inside
   // RuleViolationsReport itself — that component unmounts whenever the
   // officer switches away from the Settings tab (e.g. via Investigate, to
@@ -2315,6 +2322,52 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     }
   };
 
+  // Clear opens a preview of both choices; nothing goes until it's confirmed.
+  const handleOpenClearWeek = async (weekStart) => {
+    const weekStartStr = toLocalDateStr(weekStart);
+    setClearingWeek({ weekStart, weekStartStr, whole: false, previews: null, working: false });
+    const [staffRes, wholeRes] = await Promise.all([
+      clearRosterWeek(departmentId, weekStart, false, false),
+      clearRosterWeek(departmentId, weekStart, true, false),
+    ]);
+    const failed = staffRes.error || wholeRes.error;
+    if (failed) {
+      setClearingWeek(null);
+      setError(`Failed to check the week: ${failed.message}`);
+      return;
+    }
+    setClearingWeek(c => c && c.weekStartStr === weekStartStr
+      ? { ...c, previews: { staff: staffRes.data.counts, whole: wholeRes.data.counts } }
+      : c);
+  };
+
+  const handleClearWeek = async () => {
+    const { weekStart, weekStartStr, whole } = clearingWeek;
+    setClearingWeek(c => ({ ...c, working: true }));
+    const { data, error } = await clearRosterWeek(departmentId, weekStart, whole, true);
+    setClearingWeek(null);
+    if (error) {
+      setError(`Failed to clear the week: ${error.message}`);
+      return;
+    }
+    setClearedWeek({ weekStartStr, whole, snapshot: data.snapshot });
+    setCalendarRefreshKey(k => k + 1);
+    setError(null);
+  };
+
+  const handleRestoreWeek = async () => {
+    setRestoringWeek(true);
+    const { error } = await restoreRosterWeek(departmentId, clearedWeek.snapshot);
+    setRestoringWeek(false);
+    if (error) {
+      setError(`Failed to put the week back: ${error.message}`);
+      return;
+    }
+    setClearedWeek(null);
+    setCalendarRefreshKey(k => k + 1);
+    setError(null);
+  };
+
   // Sick-call banner handlers (Calendar and Day tabs)
   const handleResolveSickReport = async (sickReportId, status) => {
     try {
@@ -2940,6 +2993,26 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
           <div className="max-w-2xl mx-auto">
             {renderSickReportsBanner()}
             {renderVolunteeringPanel()}
+            {clearedWeek && (
+              <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg flex flex-wrap items-center gap-2 text-sm">
+                <span className="text-amber-900">
+                  {clearedWeek.whole ? 'Blanked' : 'Took everyone off'} the week of{' '}
+                  {new Date(`${clearedWeek.weekStartStr}T00:00:00`).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}.
+                </span>
+                <div className="ml-auto flex gap-2">
+                  <button
+                    onClick={handleRestoreWeek}
+                    disabled={restoringWeek}
+                    className="px-3 py-1 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-medium rounded-lg transition"
+                  >
+                    {restoringWeek ? 'Putting it back…' : 'Put it back'}
+                  </button>
+                  <button onClick={() => setClearedWeek(null)} className="p-1 hover:bg-amber-100 rounded-lg" aria-label="Dismiss">
+                    <X size={16} />
+                  </button>
+                </div>
+              </div>
+            )}
             <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
               <div className="flex items-center justify-between mb-6">
                 <button
@@ -2995,6 +3068,14 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                           className="text-xs px-2 py-0.5 bg-blue-100 hover:bg-blue-200 disabled:opacity-40 text-blue-900 font-medium rounded transition"
                         >
                           {copyingWeek === week.weekStartStr ? 'Copying…' : 'Copy'}
+                        </button>
+                        <button
+                          onClick={() => handleOpenClearWeek(week.weekStart)}
+                          disabled={week.days[6] <= today}
+                          title={week.days[6] <= today ? 'This week has already happened' : 'Take everyone off, or blank the week'}
+                          className="text-xs px-2 py-0.5 bg-red-50 hover:bg-red-100 disabled:opacity-40 text-red-800 font-medium rounded transition"
+                        >
+                          Clear
                         </button>
                         {refData.weekTemplates.length > 0 && (
                           <button
@@ -3106,6 +3187,98 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
               </p>
             </div>
           </div>
+
+          {clearingWeek && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+              <div className="bg-white rounded-lg shadow-lg w-full max-w-sm">
+                <div className="p-4 border-b border-gray-200 flex items-center justify-between">
+                  <h2 className="text-lg font-bold text-gray-900">
+                    Clear the week of {clearingWeek.weekStart.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}
+                  </h2>
+                  <button onClick={() => setClearingWeek(null)} className="p-1 hover:bg-gray-100 rounded-lg" aria-label="Close">
+                    <X size={20} />
+                  </button>
+                </div>
+                <div className="p-4 space-y-3">
+                  {!clearingWeek.previews ? (
+                    <p className="text-sm text-gray-500">Checking the week…</p>
+                  ) : (
+                    <>
+                      {[
+                        [false, 'Take everyone off', 'Keeps the cards, ready to fill again.'],
+                        [true, 'Blank the whole week', 'The cards go too, so you can copy or apply a template from scratch.'],
+                      ].map(([whole, label, hint]) => {
+                        const c = clearingWeek.previews[whole ? 'whole' : 'staff'];
+                        const parts = [
+                          c.allocations > 0 && `${c.allocations} allocation${c.allocations === 1 ? '' : 's'}`,
+                          c.visitors > 0 && `${c.visitors} visitor${c.visitors === 1 ? '' : 's'}`,
+                          c.on_call > 0 && `${c.on_call} on-call`,
+                          whole && c.cards > 0 && `${c.cards} card${c.cards === 1 ? '' : 's'}`,
+                          c.offers > 0 && `${c.offers} volunteering offer${c.offers === 1 ? '' : 's'}`,
+                        ].filter(Boolean);
+                        return (
+                          <label
+                            key={label}
+                            className={`block p-3 border rounded-lg cursor-pointer ${clearingWeek.whole === whole ? 'border-red-400 bg-red-50' : 'border-gray-300'}`}
+                          >
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="radio"
+                                name="clear-week"
+                                checked={clearingWeek.whole === whole}
+                                onChange={() => setClearingWeek(cw => ({ ...cw, whole }))}
+                              />
+                              <span className="font-medium text-sm text-gray-900">{label}</span>
+                            </div>
+                            <p className="text-xs text-gray-600 mt-1">{hint}</p>
+                            <p className="text-xs text-gray-900 mt-1">
+                              {parts.length ? `Removes ${parts.join(', ')}${c.people > 0 ? ` (${c.people} ${c.people === 1 ? 'person' : 'people'})` : ''}.` : 'Nothing to remove.'}
+                            </p>
+                          </label>
+                        );
+                      })}
+                      {(() => {
+                        const c = clearingWeek.previews[clearingWeek.whole ? 'whole' : 'staff'];
+                        const notes = [
+                          c.from !== clearingWeek.weekStartStr &&
+                            `Only from ${new Date(`${c.from}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'short' })}: days that have started stay as they are.`,
+                          c.kept_for_dr_app > 0 &&
+                            `${c.kept_for_dr_app} allocation${c.kept_for_dr_app === 1 ? ' is' : 's are'} kept because ${c.kept_for_dr_app === 1 ? "it's" : "they're"} linked to DR App (booked from there, or listed for swap). Remove those by hand.`,
+                          c.escalated_cards > 0 &&
+                            `${c.escalated_cards} card${c.escalated_cards === 1 ? ' has' : 's have'} a gap on DR App, so ${c.escalated_cards === 1 ? 'it stays' : 'they stay'}, with ${c.escalated_cards === 1 ? 'its' : 'their'} offer.`,
+                          clearingWeek.whole && c.cards_kept > c.escalated_cards &&
+                            'Cards with someone still on them stay.',
+                          c.leave_kept > 0 && `Leave stays (${c.leave_kept}).`,
+                          'Nobody is told.',
+                        ].filter(Boolean);
+                        return (
+                          <ul className="text-xs text-gray-600 list-disc pl-4 space-y-1">
+                            {notes.map(n => <li key={n}>{n}</li>)}
+                          </ul>
+                        );
+                      })()}
+                      <div className="flex gap-2 pt-1">
+                        <button
+                          onClick={handleClearWeek}
+                          disabled={clearingWeek.working}
+                          className="px-4 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white font-medium rounded-lg transition text-sm"
+                        >
+                          {clearingWeek.working ? 'Clearing…' : clearingWeek.whole ? 'Blank the week' : 'Take everyone off'}
+                        </button>
+                        <button
+                          onClick={() => setClearingWeek(null)}
+                          className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-800 font-medium rounded-lg transition text-sm"
+                        >
+                          Keep it
+                        </button>
+                      </div>
+                      <p className="text-xs text-gray-500">You can put it back afterwards, until you leave this page.</p>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
 
           {showPayrollModal && (
             <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
