@@ -5,7 +5,7 @@ import StaffAccountsTab from './StaffAccountsTab';
 import StaffAvailabilityTab from './StaffAvailabilityTab';
 import ShiftPatternRulesUI from './ShiftPatternRulesUI';
 import CaseMixReport from './CaseMixReport';
-import { payFortnightRange, fteFull, hoursBooked, fortnightTargetHours, formatHours, FTE_FULL_LABEL } from './fteFortnight';
+import { payFortnightRange, fteFull, hoursBooked, leaveDayHours, fortnightTargetHours, formatHours, FTE_FULL_LABEL } from './fteFortnight';
 import { addDays, withBookings } from './plannerUtils';
 import { formatFairShare, goesWithOnCall, buildFairness, isCasual } from './fairness';
 import FairnessReport from './FairnessReport';
@@ -856,7 +856,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     }
 
     // Their FTE's hours for this pay fortnight are all allocated (fteFortnight.js).
-    const fullLabel = fteFull(refData.staff.find(s => s.staff_id === staffId), toLocalDateStr(selectedDate), fortnightBookings)
+    const fullLabel = fteFull(refData.staff.find(s => s.staff_id === staffId), toLocalDateStr(selectedDate), fortnightBookings, leaveDayHours(refData.staff, fortnightBookings))
       ? ` — ${FTE_FULL_LABEL}${volunteer ? ' (volunteered, an extra shift)' : ''}` : '';
     if (fullLabel && !volunteer) {
       return { blocked: true, overridable: false, blockType: 'fte_full', label: fullLabel, fatigueRisk };
@@ -3531,8 +3531,10 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
       // this pay fortnight at 1.0 FTE. Once it's all allocated, no more days.
       const fnFromStr = toLocalDateStr(days[0]);
       const fnToStr = toLocalDateStr(days[13]);
+      // A leave day counts as the average shift for their rank.
+      const fnLeaveHours = leaveDayHours(refData.staff, fortnightAllocations);
       const fnLoad = (s) => {
-        const hours = hoursBooked(s.staff_id, fnFromStr, fnToStr, fortnightAllocations);
+        const hours = hoursBooked(s.staff_id, fnFromStr, fnToStr, fortnightAllocations, fnLeaveHours);
         const target = fortnightTargetHours(s.fte);
         // FTE 0 (casual or locum): no cap, and listed last.
         return { hours, target, left: target > 0 ? Math.max(0, 1 - hours / target) : 0, full: target > 0 && hours >= target - 0.01 };

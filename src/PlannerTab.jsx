@@ -40,7 +40,7 @@ import { JOB_COLOURS, jobCategoryFor, jobCategoryRank, jobCardStyle, jobBoxStyle
 import {
   hhmm, addDays, firstName, jobForCard, isAdminJob, isSenior, hasAnySkill, placeMismatch, layOutCard, dayConflict, rankJobsForPerson, rankPeopleForPlace, withBookings,
 } from './plannerUtils';
-import { payFortnightRange, fortnightLoad, fteFull, hoursBooked, formatHours, FULL_TIME_HOURS_PER_WEEK, FTE_FULL_LABEL } from './fteFortnight';
+import { payFortnightRange, fortnightLoad, fteFull, hoursBooked, leaveDayHours, formatHours, FULL_TIME_HOURS_PER_WEEK, FTE_FULL_LABEL } from './fteFortnight';
 import { buildFairness, exposureKey, formatFairShare, isCasual } from './fairness';
 import { suggestFill, patternProblem, shiftsByPerson } from './autoFill';
 
@@ -440,6 +440,8 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
 
   const offShiftId = refData.shifts.find(sh => sh.name === 'Day Off')?.shift_id ?? null;
   const shiftsByStaff = useMemo(() => shiftsByPerson(fortnightBookings), [fortnightBookings]);
+  // A leave day counts as the average shift for their rank (fteFortnight.js).
+  const leaveHours = useMemo(() => leaveDayHours(refData.staff, fortnightBookings), [refData.staff, fortnightBookings]);
   const isAdminCard = (card) => isAdminJob(jobForCard(card, jobTypes)?.name, card.locations?.name || locationName(card.location_id), activityName(card.activity_id));
   // Why staffId can't go on card: they've left by then, a clash, leave, or
   // their FTE for that pay fortnight already allocated. null = free.
@@ -448,7 +450,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
     cardId: card.theatre_activity_id, assignments, unavailable, cardLabel: assignmentLabel,
     clashFree: isAdminCard(card),
     isClashFree: (a) => { const c = cardById.get(a.theatre_activity_id); return !!c && isAdminCard(c); },
-  }) || (!isAdminCard(card) && fteFull(staffById.get(staffId), card.date, fortnightBookings) ? FTE_FULL_LABEL : null)
+  }) || (!isAdminCard(card) && fteFull(staffById.get(staffId), card.date, fortnightBookings, leaveHours) ? FTE_FULL_LABEL : null)
     || (!isAdminCard(card) && patternRules.length
       ? patternProblem(patternRules, offShiftId, shiftsByStaff.get(staffId) || new Map(), card.date, card.shift_id, ['BLOCK'])
       : null);
@@ -628,7 +630,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
       .filter(s => s.active !== false && (!staffOnly || (s.fte ?? DEFAULT_FTE) > 0))
       .filter(s => !placeMismatch(place, s, rankRows) && !conflictFor(s.staff_id, card))
       .map(s => {
-        const load = fortnightLoad(s, card.date, fortnightBookings);
+        const load = fortnightLoad(s, card.date, fortnightBookings, leaveHours);
         return { staffId: s.staff_id, name: s.name, share: load.target > 0 ? load.hours / load.target : Infinity, casual: isCasual(s) };
       });
     return rankPeopleForPlace(people, exposureKey(card.activity_id, place), card.date, planned.fairness, planned.history.statsByStaffActivity, yesterday);
@@ -721,7 +723,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
         const result = suggestFill(slots, {
           staff: refData.staff.filter(st => st.active !== false && (!staffOnly || (st.fte ?? DEFAULT_FTE) > 0)),
           rankRows, todayStr, assignments, unavailable, bookings: fortnightBookings,
-          rules: patternRules, offShiftId, exposure,
+          rules: patternRules, offShiftId, exposure, leaveHours, viewFrom: startStr, viewTo: endStr,
           isAdminCard, sameJob: sameJobAs, cardLabel: assignmentLabel,
           cardOf: (a) => cardById.get(a.theatre_activity_id),
           activityKeyOf: (a) => {
@@ -730,7 +732,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
           },
           isClashFree: (a) => { const c = cardById.get(a.theatre_activity_id); return !!c && isAdminCard(c); },
         });
-        setFillDrafts({ drafts: new Map(result.drafts.map(d => [d.key, d])), unfilled: result.unfilled, total: slots.length });
+        setFillDrafts({ drafts: new Map(result.drafts.map(d => [d.key, d])), unfilled: result.unfilled, shortfalls: result.shortfalls, total: slots.length });
         setError(null);
       } catch (err) {
         setError(`Couldn't suggest: ${err.message}`);
@@ -989,7 +991,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
   const awayAllDays = (s) => days.every(d => unavailable.some(u => u.staff_id === s.staff_id && u.date === d));
   const shareBooked = (s) => {
     const target = targetHours(s);
-    return target > 0 ? hoursBooked(s.staff_id, startStr, endStr, fortnightBookings) / target : Infinity;
+    return target > 0 ? hoursBooked(s.staff_id, startStr, endStr, fortnightBookings, leaveHours) / target : Infinity;
   };
   const orderedStaff = filteredStaff
     .map(s => ({ s, away: awayAllDays(s), share: shareBooked(s) }))
@@ -1087,6 +1089,26 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
                 {fillDrafts.unfilled.length > 0 && <>; {fillDrafts.unfilled.length} with nobody free who fits (offer {fillDrafts.unfilled.length === 1 ? 'it' : 'them'} for volunteering)</>}.
                 {' '}<span className="text-xs text-gray-600">Nothing is booked yet. Purple names are suggestions: tap one to drop it.</span>
               </p>
+              {fillDrafts.shortfalls?.length > 0 && (
+                <details className="w-full order-last text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                  <summary className="cursor-pointer font-semibold">
+                    {new Set(fillDrafts.shortfalls.map(f => f.staffId)).size} still short of their FTE with these suggestions
+                  </summary>
+                  <ul className="mt-1 space-y-0.5">
+                    {fillDrafts.shortfalls.map(f => {
+                      const offScreen = f.from < startStr || f.to > endStr;
+                      const fmt = (d) => new Date(`${d}T00:00:00`).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
+                      return (
+                        <li key={`${f.staffId}|${f.from}`}>
+                          <span className="font-semibold">{f.name}</span>: {formatHours(f.hours)} of {formatHours(f.target)} h, pay fortnight {fmt(f.from)}–{fmt(f.to)}
+                          {offScreen && <span className="text-amber-700"> (part of this fortnight isn't shown)</span>}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  <p className="mt-1 text-amber-800">There weren't places left that they're free and qualified for. Add places, check their availability, or show both weeks of the pay fortnight and Suggest again.</p>
+                </details>
+              )}
               <button onClick={bookDrafts} disabled={busy || fillDrafts.drafts.size === 0} className="px-3 py-1.5 bg-purple-700 hover:bg-purple-800 disabled:opacity-40 text-white rounded-lg font-medium">
                 Book them all
               </button>
@@ -1097,7 +1119,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
           ) : (
             <div className="flex flex-wrap items-center gap-2">
               <p className="flex-1 min-w-[14rem] text-xs text-gray-600">
-                <span className="font-semibold text-gray-800">Suggest</span> fills every empty place shown with the fairest person who can take it: right grade and skills, available, 10 hours' rest, within their FTE and the Shift Pattern Rules, and days kept together where it can. You check them before anything's booked.
+                <span className="font-semibold text-gray-800">Suggest</span> fills every empty place shown with the fairest person who can take it: right grade and skills, available, 10 hours' rest, within their FTE and the Shift Pattern Rules, and days kept together where it can. Anyone who needs a place to reach their FTE for the pay fortnight gets it first, when the whole fortnight is shown. You check them before anything's booked.
               </p>
               <button onClick={runSuggest} disabled={busy || suggesting || loading} className="px-3 py-1.5 bg-purple-700 hover:bg-purple-800 disabled:opacity-40 text-white rounded-lg font-medium">
                 {suggesting ? 'Suggesting…' : 'Suggest'}
@@ -1326,13 +1348,13 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
           </div>
           <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto">
             {orderedStaff.map(s => {
-              const worked = hoursBooked(s.staff_id, startStr, endStr, fortnightBookings);
+              const worked = hoursBooked(s.staff_id, startStr, endStr, fortnightBookings, leaveHours);
               const target = targetHours(s);
               const on = s.staff_id === selectedStaffId;
               // The fullest pay fortnight in view: "full" in red once their
               // FTE's hours there are all allocated (they can't be booked).
               const loads = [...new Set(days.map(d => payFortnightRange(d).from))]
-                .map(from => fortnightLoad(s, from, fortnightBookings));
+                .map(from => fortnightLoad(s, from, fortnightBookings, leaveHours));
               const fullest = loads.reduce((a, b) => (b.target - b.hours < a.target - a.hours ? b : a));
               // FTE 0 (casual or locum): no target, never full.
               const left = fullest.target > 0 ? fullest.target - fullest.hours : Infinity;
@@ -1379,7 +1401,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
             <div className="space-y-1">
               {suggestion.list.map((p, i) => {
                 const staff = staffById.get(p.staffId);
-                const load = fortnightLoad(staff, suggestion.card.date, fortnightBookings);
+                const load = fortnightLoad(staff, suggestion.card.date, fortnightBookings, leaveHours);
                 const left = load.target > 0 ? Math.max(0, Math.round((1 - load.hours / load.target) * 100)) : null;
                 return (
                   <button

@@ -1,4 +1,5 @@
 import { suggestFill, patternProblem, shiftsByPerson, stretches } from './autoFill';
+import { hoursBooked, leaveDayHours } from './fteFortnight';
 
 const DAY = 'shift-day';
 const NIGHT = 'shift-night';
@@ -106,5 +107,47 @@ describe('suggestFill', () => {
     expect(drafts.find(d => d.key === wed.key).staffId).toBe('alice');
     expect(drafts.find(d => d.key === fri.key).staffId).toBe('bob');
     expect(drafts.every(d => d.moved)).toBe(true);
+  });
+
+  describe('FTE', () => {
+    // Pay fortnight 9-22 Nov 2026. Aaron (full time) has 80 of his 88 h
+    // already; Alice (0.25, 22 h) has nothing. Four 5.5 h places, 9-12 Nov.
+    const staff = [person('aaron'), person('alice', { fte: 0.25 })];
+    const days = ['2026-11-09', '2026-11-10', '2026-11-11', '2026-11-12'];
+    const slots = days.map(d => slot(card(`c-${d}`, d, { start_time: '08:00', end_time: '13:30' })));
+    const aaronDays = Array.from({ length: 10 }, (_, i) => booked('aaron', `2026-11-${13 + i}`, DAY, '08:00', '16:00'));
+    const ctx = (extra) => ctxFor(staff, { assignments: aaronDays, bookings: aaronDays, ...extra });
+
+    it('gives the places to whoever needs them to reach their FTE', () => {
+      const { drafts, shortfalls } = suggestFill(slots, ctx({ viewFrom: '2026-11-09', viewTo: '2026-11-22' }));
+      expect(drafts.map(d => d.staffId)).toEqual(['alice', 'alice', 'alice', 'alice']);
+      expect(drafts[0].reason).toMatch(/reach their FTE/);
+      expect(shortfalls.map(f => [f.name, f.hours, f.target])).toEqual([['aaron', 80, 88]]);
+    });
+
+    it("only puts FTE first when the whole pay fortnight is shown", () => {
+      const { drafts } = suggestFill(slots, ctx({ viewFrom: '2026-11-09', viewTo: '2026-11-15' }));
+      expect(drafts.some(d => /reach their FTE/.test(d.reason))).toBe(false);
+    });
+  });
+});
+
+describe('leave hours', () => {
+  const staff = [person('a', { rank: 'SMO' }), person('b', { rank: 'SMO' }), person('r', { rank: 'RMO' }), person('n', { rank: 'Intern' })];
+  const rows = [
+    booked('a', '2026-11-09', DAY, '08:00', '18:00'), // 10 h
+    booked('b', '2026-11-09', DAY, '08:00', '16:30'), // 8.5 h
+    booked('r', '2026-11-09', DAY, '07:00', '19:00'), // 12 h
+    { ...booked('a', '2026-11-10', 'leave', '00:00', '00:00'), leave_code: 'AL' }, // a 24 h-looking leave row
+  ];
+  it('counts a leave day as the average shift for their rank', () => {
+    const leave = leaveDayHours(staff, rows);
+    expect(leave('a')).toBe(9); // 9.25, rounded down
+    expect(leave('r')).toBe(12);
+    expect(leave('n')).toBe(10); // no Intern shifts: everyone's average, 10.17 rounded down
+    expect(hoursBooked('a', '2026-11-09', '2026-11-22', rows, leave)).toBe(19);
+  });
+  it('falls back to a fifth of the full-time week, rounded down, with nothing to average', () => {
+    expect(leaveDayHours(staff, [])('a')).toBe(8); // 8.8, rounded down
   });
 });
