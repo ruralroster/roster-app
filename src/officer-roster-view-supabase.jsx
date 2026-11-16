@@ -2300,12 +2300,22 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   };
 
   const handleCopyWeek = async (weekStartDate) => {
-    if (!copyFromWeekInput || !departmentId) return;
+    if (!departmentId) return;
     const weekStartStr = toLocalDateStr(weekStartDate);
-    const fromWeekStart = new Date(`${copyFromWeekInput}T00:00:00`);
-    if (weekStartStr === copyFromWeekInput) return; // copying a week onto itself would be a no-op anyway
+    // With no source picked at the bottom, copy the week before. A picked
+    // date that isn't a Monday means the week it falls in.
+    const fromWeekStart = copyFromWeekInput
+      ? new Date(`${copyFromWeekInput}T00:00:00`)
+      : new Date(weekStartDate);
+    if (copyFromWeekInput) fromWeekStart.setDate(fromWeekStart.getDate() - ((fromWeekStart.getDay() + 6) % 7));
+    else fromWeekStart.setDate(fromWeekStart.getDate() - 7);
+    const fromWeekStr = toLocalDateStr(fromWeekStart);
+    if (weekStartStr === fromWeekStr) {
+      window.alert("That's the same week. Pick a different week to copy from at the bottom of the page.");
+      return;
+    }
 
-    if (!window.confirm(`Copy the week of ${copyFromWeekInput}'s cards onto the week of ${weekStartStr}? Only empty location/activity cards come across — no staff — and anything the destination week already has stays untouched.`)) return;
+    if (!window.confirm(`Copy the week of ${fromWeekStr}'s cards onto the week of ${weekStartStr}?${copyFromWeekInput ? '' : ' (To copy a different week, pick it in "Copy from week starting" at the bottom of the page.)'} Only empty location/activity cards come across — no staff — and anything the destination week already has stays untouched.`)) return;
 
     setCopyingWeek(weekStartStr);
     try {
@@ -3063,8 +3073,8 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                       <div className="flex gap-1.5">
                         <button
                           onClick={() => handleCopyWeek(week.weekStart)}
-                          disabled={!copyFromWeekInput || copyFromWeekInput === week.weekStartStr || copyingWeek === week.weekStartStr}
-                          title={!copyFromWeekInput ? 'Pick a source week above first' : undefined}
+                          disabled={copyingWeek === week.weekStartStr}
+                          title={copyFromWeekInput ? `Copy the week of ${copyFromWeekInput}'s cards here` : "Copy the week before's cards here (or pick a week at the bottom)"}
                           className="text-xs px-2 py-0.5 bg-blue-100 hover:bg-blue-200 disabled:opacity-40 text-blue-900 font-medium rounded transition"
                         >
                           {copyingWeek === week.weekStartStr ? 'Copying…' : 'Copy'}
@@ -3183,7 +3193,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                 )}
               </div>
               <p className="text-xs text-gray-500 mt-2">
-                Copying a week brings across that week's actual location/activity cards (no staff, no template needed) — pick any Monday above, then hit <strong>Copy</strong> on whichever week row above should receive it.
+                Copying a week brings across that week's actual location/activity cards (no staff, no template needed) — <strong>Copy</strong> on a week row brings across the week before, or the week you pick here.
               </p>
             </div>
           </div>
