@@ -10,6 +10,7 @@ import {
   bookPlannerPlace,
   deleteStaffAssignment,
   setPlannerVisitor,
+  setCardExtraPlaces,
   renamePlannerVisitor,
   deletePlannerVisitor,
   updateDutyAssignment,
@@ -38,7 +39,7 @@ import { toLocalDateStr } from './dateUtils';
 import { DEFAULT_FTE, hasLeft, leftLabel } from './availabilityUtils';
 import { JOB_COLOURS, jobCategoryFor, jobCategoryRank, jobCardStyle, jobBoxStyle, holdsOnCallDuty } from './jobColours';
 import {
-  hhmm, addDays, firstName, jobForCard, isAdminJob, isSenior, hasAnySkill, placeMismatch, layOutCard, dayConflict, rankJobsForPerson, rankPeopleForPlace, withBookings,
+  hhmm, addDays, firstName, jobForCard, isAdminJob, isSenior, hasAnySkill, placeMismatch, layOutCard, dayConflict, rankJobsForPerson, rankPeopleForPlace, withBookings, extraPlacesFor,
 } from './plannerUtils';
 import { payFortnightRange, fortnightLoad, fteFull, hoursBooked, leaveDayHours, formatHours, FULL_TIME_HOURS_PER_WEEK, FTE_FULL_LABEL } from './fteFortnight';
 import { buildFairness, exposureKey, formatFairShare, isCasual } from './fairness';
@@ -124,6 +125,8 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
   // Suggest's drafts: { drafts: Map(slotKey -> { staffId, name, reason, moved }), unfilled: [slotKey], total }.
   const [fillDrafts, setFillDrafts] = useState(null);
   const [suggesting, setSuggesting] = useState(false);
+  // The + menu on a card (add or take off an extra place): its card id.
+  const [placeMenuFor, setPlaceMenuFor] = useState(null);
   // Height of the officer view's bottom tab bar, so the people picker can
   // sit just above it.
   const [navHeight, setNavHeight] = useState(64);
@@ -647,7 +650,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
     if (!suggest || mode !== 'fill' || selectedStaff) return null;
     const card = cardById.get(suggest.cardId);
     const job = card && jobForCard(card, jobTypes);
-    const place = job && places.find(p => p.place_id === suggest.placeId);
+    const place = card && [...(job ? places : []), ...extraPlacesFor(card)].find(p => p.place_id === suggest.placeId);
     if (!place) return null;
     const layout = layOutCard(card, job, places, assignments.filter(a => a.theatre_activity_id === card.theatre_activity_id),
       visitors.filter(v => v.theatre_activity_id === card.theatre_activity_id), staffById, rankRows);
@@ -698,7 +701,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
     .filter(card => days.includes(card.date) && card.date >= todayStr && !locked(card.date) && !isAdminCard(card))
     .flatMap(card => {
       const job = jobForCard(card, jobTypes);
-      if (!job) return [];
+      if (!job && !extraPlacesFor(card).length) return [];
       const cardAssignments = assignments.filter(a => a.theatre_activity_id === card.theatre_activity_id);
       const layout = layOutCard(card, job, places, cardAssignments, visitors.filter(v => v.theatre_activity_id === card.theatre_activity_id), staffById, rankRows);
       const offered = (role) => offers.some(o => o.theatre_activity_id === card.theatre_activity_id && o.role === role
@@ -821,6 +824,18 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
               {!job && <span className="ml-1 italic">not a job</span>}
             </p>
           </div>
+          {!locked(card.date) && (
+            <button
+              onClick={() => setPlaceMenuFor(placeMenuFor === card.theatre_activity_id ? null : card.theatre_activity_id)}
+              disabled={busy}
+              className="px-1 text-sm leading-none font-bold text-gray-600 hover:text-gray-900 flex-shrink-0"
+              aria-label={`Add a place to ${cardTitle(card, job)}`}
+              aria-expanded={placeMenuFor === card.theatre_activity_id}
+              title="Add a senior or junior place to this card (just this day)"
+            >
+              +
+            </button>
+          )}
           {mode === 'layout' && !locked(card.date) && (
             <button
               onClick={() => removeCard(card, job, cardAssignments.length)}
@@ -832,6 +847,21 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
             </button>
           )}
         </div>
+        {placeMenuFor === card.theatre_activity_id && !locked(card.date) && (() => {
+          // Take off only an extra place that's still empty.
+          const emptyExtra = (grade) => layout.places.some(p => p.place.extra === grade && p.slots.some(slot => !slot.assignment && !slot.visitor));
+          const senior = card.extra_senior_places || 0;
+          const junior = card.extra_junior_places || 0;
+          const save = (s2, j2) => run("Couldn't change the card's places", () => setCardExtraPlaces(card.theatre_activity_id, s2, j2));
+          return (
+            <div className="flex flex-wrap gap-1 text-[10px]">
+              <button onClick={() => save(senior + 1, junior)} disabled={busy || senior >= 10} className="px-1.5 py-0.5 rounded border border-gray-400 bg-white hover:bg-gray-50">+ Senior place</button>
+              <button onClick={() => save(senior, junior + 1)} disabled={busy || junior >= 10} className="px-1.5 py-0.5 rounded border border-gray-400 bg-white hover:bg-gray-50">+ Junior place</button>
+              {senior > 0 && emptyExtra('senior') && <button onClick={() => save(senior - 1, junior)} disabled={busy} className="px-1.5 py-0.5 rounded border border-red-300 text-red-700 bg-white hover:bg-red-50">− Senior</button>}
+              {junior > 0 && emptyExtra('junior') && <button onClick={() => save(senior, junior - 1)} disabled={busy} className="px-1.5 py-0.5 rounded border border-red-300 text-red-700 bg-white hover:bg-red-50">− Junior</button>}
+            </div>
+          );
+        })()}
         {layout.places.map(p => (
           <div key={p.place.place_id} className="space-y-0.5">
             {p.slots.map(slot => renderSlot(card, job, category, { place: p.place, slot }))}

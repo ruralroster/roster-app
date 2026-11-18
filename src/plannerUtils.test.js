@@ -353,3 +353,30 @@ describe('withBookings', () => {
     expect(out.weekendShiftsByStaff.get('me')).toBe(2);
   });
 });
+
+describe('a card\'s own extra places', () => {
+  const { layOutCard: lay, extraPlacesFor: extras, realPlaceId: real } = require('./plannerUtils');
+  const rankRows = [{ rank: 'SMO', requires_supervision: false }, { rank: 'RMO', requires_supervision: true }];
+  const staffById = new Map([['r1', { staff_id: 'r1', rank: 'RMO' }], ['r2', { staff_id: 'r2', rank: 'RMO' }], ['r3', { staff_id: 'r3', rank: 'RMO' }]]);
+  const job = { job_type_id: 'gp' };
+  const jobPlaces = [{ place_id: 'p1', job_type_id: 'gp', role: 'RMO', kind: 'staff', grade: 'junior', min_count: 1, required_advanced_skills: [] }];
+  const card = { theatre_activity_id: 'c1', extra_junior_places: 2, extra_senior_places: 0 };
+
+  it('adds empty places on top of the job\'s', () => {
+    const layout = lay(card, job, jobPlaces, [], [], staffById, rankRows);
+    expect(layout.needed).toBe(3);
+    expect(layout.places.map(p => p.place.extra || 'job')).toEqual(['job', 'junior']);
+  });
+
+  it('fills them with people booked without a place', () => {
+    const booked = [{ staff_id: 'r1', place_id: 'p1' }, { staff_id: 'r2', place_id: null }];
+    const layout = lay(card, job, jobPlaces, booked, [], staffById, rankRows);
+    expect(layout.filled).toBe(2);
+    expect(layout.extras).toHaveLength(0);
+  });
+
+  it('never stores the made-up place id', () => {
+    expect(real(extras(card)[0].place_id)).toBeNull();
+    expect(real('p1')).toBe('p1');
+  });
+});

@@ -129,11 +129,29 @@ export function placeMismatch(place, staff, rankRows) {
 //
 // Returns { places: [{ place, slots: [{ index, assignment, visitor }] }],
 // extras: [assignment], extraVisitors: [visitor], filled, needed }.
+// A card's own extra places (theatre_activities.extra_senior_places /
+// extra_junior_places, the + on a Planner card), as places like a job's.
+// Their place_id isn't a job_places row: bookings in them carry no
+// place_id (realPlaceId), and fill them by grade like anyone unplaced.
+export const EXTRA_PLACE_PREFIX = 'extra:';
+export function extraPlacesFor(card) {
+  const make = (grade, count) => (count > 0 ? [{
+    place_id: `${EXTRA_PLACE_PREFIX}${grade}:${card.theatre_activity_id}`,
+    role: grade === 'senior' ? 'Senior (added)' : 'Junior (added)',
+    kind: 'staff', grade, min_count: count, required_advanced_skills: [], extra: grade, sort_order: 1000,
+  }] : []);
+  return [...make('senior', card?.extra_senior_places || 0), ...make('junior', card?.extra_junior_places || 0)];
+}
+export const realPlaceId = (placeId) => (placeId && !String(placeId).startsWith(EXTRA_PLACE_PREFIX) ? placeId : null);
+
 export function layOutCard(card, job, allPlaces, cardAssignments, cardVisitors, staffById, rankRows) {
-  const jobPlaces = job
-    ? allPlaces.filter(p => p.job_type_id === job.job_type_id)
-      .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
-    : [];
+  const jobPlaces = [
+    ...(job
+      ? allPlaces.filter(p => p.job_type_id === job.job_type_id)
+        .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+      : []),
+    ...extraPlacesFor(card),
+  ];
   const places = jobPlaces.map(place => ({
     place,
     slots: Array.from({ length: place.min_count || 1 }, (_, index) => ({ index, assignment: null, visitor: null })),

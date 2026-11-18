@@ -4795,7 +4795,7 @@ export async function getPlannerRange(departmentId, rangeStartDate, numDays) {
     const [cardsRes, assignRes, dutyRes, availRes] = await Promise.all([
       supabase
         .from('theatre_activities')
-        .select('theatre_activity_id, date, location_id, activity_id, shift_id, start_time, end_time, job_type_id, locations(name)')
+        .select('*, locations(name)')
         .eq('department_id', departmentId)
         .gte('date', fromStr)
         .lte('date', toStr),
@@ -4900,6 +4900,9 @@ export async function createPlannerCard(departmentId, dateStr, job, extra = {}) 
 // Books staffId onto a card — into placeId, or as an extra when placeId is
 // null — working the card's own hours.
 export async function bookPlannerPlace(departmentId, card, staffId, placeId, role, jobName) {
+  // A card's own extra place isn't a job_places row (plannerUtils
+  // extraPlacesFor): booked without one, it fills the place by grade.
+  if (placeId && String(placeId).startsWith('extra:')) placeId = null;
   try {
     const shiftId = await shiftForHours(departmentId, card.start_time, card.end_time, jobName);
     const { data, error } = await supabase
@@ -4921,6 +4924,20 @@ export async function bookPlannerPlace(departmentId, card, staffId, placeId, rol
   } catch (err) {
     console.error('bookPlannerPlace error:', err);
     return { data: null, error: err };
+  }
+}
+
+// The + on a Planner card: how many extra senior and junior places that
+// one card has on top of its job's (migrations/2026-11-19b_card_extra_places.sql).
+export async function setCardExtraPlaces(theatreActivityId, seniorCount, juniorCount) {
+  try {
+    const { error } = await supabase
+      .from('theatre_activities')
+      .update({ extra_senior_places: Math.max(0, seniorCount), extra_junior_places: Math.max(0, juniorCount) })
+      .eq('theatre_activity_id', theatreActivityId);
+    return { error };
+  } catch (err) {
+    return { error: err };
   }
 }
 
