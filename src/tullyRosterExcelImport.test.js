@@ -1,5 +1,5 @@
 import * as XLSX from 'xlsx';
-import { parseTullyRange, getTullyWeekRanges, getTullySheets, getTullyStaffRoster, resolveTullyDay, parseTullyName, applyTullyMappings, SBOC_DUTY_LABEL } from './tullyRosterExcelImport';
+import { standardTullyShift, TULLY_SHIFTS, parseTullyRange, getTullyWeekRanges, getTullySheets, getTullyStaffRoster, resolveTullyDay, parseTullyName, applyTullyMappings, SBOC_DUTY_LABEL } from './tullyRosterExcelImport';
 
 // A made-up fortnight in Tully's layout (names are invented).
 const MON1 = 46335; // 09/11/2026
@@ -64,7 +64,7 @@ describe('Tully roster import', () => {
     expect(ann.payroll).toBe('111111');
     expect(ann.fte).toBe(0.4);
     expect(ann.days).toHaveLength(14);
-    expect(ann.days[0].resolvedShift).toEqual({ segments: [{ location: 'Emergency Department', activity: 'SMO Cover', start: '08:00', end: '17:00' }] });
+    expect(ann.days[0].resolvedShift.segments[0]).toMatchObject({ location: 'Emergency Department', activity: 'SMO Cover', start: '08:00', end: '17:00' });
     expect(ann.days[1].resolvedShift.segments[0].location).toBe('Ward & ED');
     expect(ann.days[1].onCallDuties).toEqual([SBOC_DUTY_LABEL]);
     expect(ann.days[2].resolvedShift).toEqual({ leaveCode: 'AL' }); // hours over A/L are leave
@@ -76,7 +76,7 @@ describe('Tully roster import', () => {
   it('keeps Locum Needed as an unfilled shift', () => {
     const locum = parseTullyRange(workbook(), '09.11.26', 0).find(p => p.unnamed);
     expect(locum.section).toBe('consultant');
-    expect(locum.days[0].resolvedShift.segments[0]).toMatchObject({ start: '12:00', end: '22:00' });
+    expect(locum.days[0].resolvedShift.segments[0]).toMatchObject({ start: '12:00', end: '22:00', sheetHours: '12:00–22:00' });
   });
 
   it('reads RMOs: nights, unavailable, public-holiday stand-down', () => {
@@ -97,7 +97,7 @@ describe('Tully roster import', () => {
     const people = applyTullyMappings(parseTullyRange(workbook(), '09.11.26', 0), {
       senate: { segments: [{ location: 'Non-clinical', activity: 'Meeting', start: '09:00', end: '10:00' }] },
     });
-    expect(people.find(p => p.rawLabel === 'Ann Example').days[7].resolvedShift.segments[0]).toEqual({ location: 'Non-clinical', activity: 'Meeting', start: '08:00', end: '17:00' });
+    expect(people.find(p => p.rawLabel === 'Ann Example').days[7].resolvedShift.segments[0]).toMatchObject({ location: 'Non-clinical', activity: 'Meeting', start: '08:00', end: '17:00' });
   });
 
   it('lists staff from the latest fortnights, not placeholders', () => {
@@ -111,5 +111,19 @@ describe('Tully roster import', () => {
     expect(resolveTullyDay('', '', '')).toBeNull();
     expect(resolveTullyDay('0800-1700', '', '')).toEqual({ unmapped: 'No work area' });
     expect(resolveTullyDay('0800-1700', "carer's leave", 'ED')).toEqual({ leaveCode: 'CL' });
+  });
+
+  it('puts shifts on the standard shifts', () => {
+    const smo = (weekend, start) => standardTullyShift('consultant', weekend, { start }).name;
+    const rmo = (weekend, start) => standardTullyShift('rmo', weekend, { start }).name;
+    expect([smo(false, '08:00'), smo(false, '13:00'), smo(true, '08:00')]).toEqual(['Weekday Day SMO', 'Weekday Late SMO', 'Weekend SMO']);
+    expect([rmo(false, '08:00'), rmo(false, '10:00'), rmo(true, '10:30'), rmo(false, '21:30'), rmo(true, '21:00')])
+      .toEqual(['Weekday Day RMO', 'Weekday ED RMO', 'Weekend RMO', 'Night RMO', 'Night RMO']);
+    expect(Object.keys(TULLY_SHIFTS)).toHaveLength(7);
+  });
+
+  it('imports an 08:00-18:00 SMO weekday as the standard day', () => {
+    const r = resolveTullyDay('0800-1800', '', 'Ward', 'consultant');
+    expect(r.segments[0].end).toBe('18:00'); // the sheet's own, before the standard shift
   });
 });

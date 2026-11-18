@@ -31,6 +31,9 @@ import * as XLSX from 'xlsx';
 //     column S (10 = full time).
 //   - "Locum Needed" / "NO RMO" are unfilled shifts, imported as empty
 //     cards (unnamed) so they show as gaps.
+//   - Every shift goes on the nearest of Tully's seven standard shifts
+//     (TULLY_SHIFTS) for its rank, weekday or weekend and time of day,
+//     not the exact hours on the sheet.
 //   - A leave code in the Work Area wins over the hours above it (hours
 //     over "A/L" are the leave day's). "stddown" is rostered leave on a
 //     public holiday (reduced staffing); CST is admin time.
@@ -66,6 +69,55 @@ const WARD_ED_GP = at('Ward, ED & GP');
 const GP = at('GP Clinic');
 const JUMBUN = at('Jumbun Clinic');
 const NON_CLINICAL = 'Non-clinical';
+
+// Tully's standard shifts (confirmed 2026-11-19: fewer shifts, everyone on
+// the nearest one, rather than every variation on the sheet). By rank,
+// weekday or weekend, and time of day; set up as named shifts by
+// migrations/2026-11-19_tully_shifts.sql.
+export const TULLY_SHIFTS = {
+  smoDay: { name: 'Weekday Day SMO', start: '08:00', end: '17:00' },
+  smoLate: { name: 'Weekday Late SMO', start: '12:00', end: '22:00' },
+  smoWeekend: { name: 'Weekend SMO', start: '08:00', end: '18:00' },
+  rmoDay: { name: 'Weekday Day RMO', start: '08:00', end: '16:30' },
+  rmoEd: { name: 'Weekday ED RMO', start: '10:00', end: '21:30' },
+  rmoWeekend: { name: 'Weekend RMO', start: '10:30', end: '22:00' },
+  rmoNight: { name: 'Night RMO', start: '21:00', end: '08:30' },
+};
+
+const minutes = (hhmm) => { const [h, m] = hhmm.split(':').map(Number); return h * 60 + m; };
+
+// The standard shift for a shift on the sheet. weekend: Saturday or
+// Sunday. Nights start from 19:00; an SMO's late or an RMO's ED shift
+// starts from 10:00 on a weekday.
+export function standardTullyShift(section, weekend, { start }) {
+  const s = minutes(start);
+  if (section === 'rmo') {
+    if (s >= 19 * 60) return TULLY_SHIFTS.rmoNight;
+    if (weekend) return TULLY_SHIFTS.rmoWeekend;
+    return s >= 10 * 60 ? TULLY_SHIFTS.rmoEd : TULLY_SHIFTS.rmoDay;
+  }
+  if (weekend) return TULLY_SHIFTS.smoWeekend;
+  return s >= 10 * 60 ? TULLY_SHIFTS.smoLate : TULLY_SHIFTS.smoDay;
+}
+
+const isWeekendDate = (ddmmyyyy) => {
+  const [d, m, y] = (ddmmyyyy || '').split('/').map(Number);
+  if (!d) return false;
+  const day = new Date(y, m - 1, d).getDay();
+  return day === 0 || day === 6;
+};
+
+// A day's segments put on their standard shift's hours.
+function onStandardShift(resolvedShift, section, date) {
+  if (!resolvedShift?.segments) return resolvedShift;
+  return {
+    ...resolvedShift,
+    segments: resolvedShift.segments.map(seg => {
+      const std = standardTullyShift(section, isWeekendDate(date), seg);
+      return { ...seg, start: std.start, end: std.end, sheetHours: `${seg.start}–${seg.end}` };
+    }),
+  };
+}
 
 // Work Area text (lower case, spaces tidied) -> where the day is spent.
 const AREA_MAP = {
@@ -238,7 +290,7 @@ function personWeek(block, week, dates, section) {
     const hours = cell(block.nameRow, first + i);
     const note = cell(block.noteRow, first + i);
     const area = cell(block.areaRow, first + i);
-    const resolvedShift = resolveTullyDay(hours, note, area, section);
+    const resolvedShift = onStandardShift(resolveTullyDay(hours, note, area, section), section, dates[i]);
     const time = parseTime(hours);
     return {
       label,
@@ -299,7 +351,8 @@ export function applyTullyMappings(people, codeMap) {
       const seg = mapped.segments?.[0];
       if (!seg) return day;
       const hours = day.hours || { start: seg.start, end: seg.end };
-      return { ...day, resolvedShift: { segments: [{ location: seg.location, activity: seg.activity, start: hours.start, end: hours.end }] } };
+      const resolved = { segments: [{ location: seg.location, activity: seg.activity, start: hours.start, end: hours.end }] };
+      return { ...day, resolvedShift: onStandardShift(resolved, person.section, day.date) };
     }),
   }));
 }
