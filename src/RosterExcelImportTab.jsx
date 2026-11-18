@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { AlertCircle, Loader, Upload, X } from 'lucide-react';
-import { importRosterWeek, createStaff, updateStaffFTE, updateDepartmentRosterImportFormat, getRosterImportMappings, saveRosterImportMapping, deleteRosterImportMapping } from './supabaseClient';
+import { importRosterWeek, createStaff, updateStaffFTE, updateStaffPayrollNumber, updateDepartmentRosterImportFormat, getRosterImportMappings, saveRosterImportMapping, deleteRosterImportMapping } from './supabaseClient';
 import { getWeekDateRanges, parseRosterWeek, applyCodeMappings, applyPrimaryAllocation, resolveShiftCode, resolveRmoShiftCode, resolveInternShiftCode, getClassicStaffRoster, matchStaffName, suggestStaffMatches, cleanStaffLabel, staffLabelKey } from './rosterExcelImport';
 import { getEdSheetNames, getEdWeekDateRanges, parseEdWeek, getEdStaffRoster, resolveEdShiftCode } from './edRosterExcelImport';
 import { getShiftListDateRanges, parseShiftListRange, getShiftListStaffRoster } from './shiftListRosterExcelImport';
+import { getTullySheets, getTullyWeekRanges, parseTullyRange, applyTullyMappings, getTullyStaffRoster, tullyStaffTabs } from './tullyRosterExcelImport';
 
 // The classic format has a separate code table per section (consultant /
 // RMO / intern) — the known half of a split code could be from any of
@@ -28,7 +29,30 @@ const FORMATS = [
   { value: 'classic', label: 'Consultant / Registrar / Intern (longhand shift text)' },
   { value: 'ed', label: 'Shift-code (e.g. Emergency Department: "0730B", "2200A")' },
   { value: 'shift_list', label: 'Shift list (e.g. Atherton: "ED Flow SMO - WD", several a day, with on call)' },
+  { value: 'tully', label: 'Fortnight tabs (e.g. Tully: hours over a Work Area, SBOC on call)' },
 ];
+
+// Formats with one tab per roster period, picked from a Sheet list.
+const SHEET_FORMATS = ['ed', 'tully'];
+
+// Tully's "All fortnights up to now" choice in the tab list: every
+// fortnight tab that has started, imported one after another — a year of
+// history for fairness in one go.
+const ALL_TULLY_TABS = '__all_started__';
+const todayIso = () => {
+  const today = new Date();
+  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+};
+const startedTullySheets = (wb) => getTullySheets(wb).filter(t => t.monday <= todayIso()).map(t => t.sheetName);
+
+// Tully: the fortnight tab that's on now (the latest that has started),
+// else the first.
+const currentTullySheet = (wb) => {
+  const today = new Date();
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  const tabs = getTullySheets(wb);
+  return (tabs.filter(t => t.monday <= todayStr).pop() || tabs[0])?.sheetName;
+};
 
 // Officer-facing tool for importing a week of the department's Excel
 // roster (exelRosters/*.xlsx). Three layouts are supported so far — see
@@ -168,9 +192,11 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
     return { codeMap, nameMappings };
   };
 
-  const loadEdSheet = (wb, name) => {
+  const loadEdSheet = (wb, name, sheetFormat = format) => {
     setSheetName(name);
-    setWeekRanges(getEdWeekDateRanges(wb, name));
+    setWeekRanges(sheetFormat === 'tully'
+      ? (name === ALL_TULLY_TABS ? [{ label: `The whole of each (${startedTullySheets(wb).length} fortnights)` }] : getTullyWeekRanges(wb, name))
+      : getEdWeekDateRanges(wb, name));
     setWeekIndex(0);
     setMissingStaff(null);
     setResults(null);
@@ -185,7 +211,10 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
     if (workbook && nextFormat === 'ed') {
       const names = getEdSheetNames(workbook);
       setSheetNames(names);
-      loadEdSheet(workbook, names[0]);
+      loadEdSheet(workbook, names[0], nextFormat);
+    } else if (workbook && nextFormat === 'tully') {
+      setSheetNames(getTullySheets(workbook).map(t => t.sheetName));
+      loadEdSheet(workbook, currentTullySheet(workbook), nextFormat);
     } else if (workbook && nextFormat === 'shift_list') {
       setWeekRanges(getShiftListDateRanges(workbook));
       setWeekIndex(0);
@@ -213,6 +242,11 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
         const names = getEdSheetNames(wb);
         setSheetNames(names);
         loadEdSheet(wb, names[0]);
+      } else if (format === 'tully') {
+        const tabs = getTullySheets(wb);
+        if (!tabs.length) throw new Error("no fortnight tabs found (tabs are named by their Monday, e.g. \"09.11.26\")");
+        setSheetNames(tabs.map(t => t.sheetName));
+        loadEdSheet(wb, currentTullySheet(wb));
       } else if (format === 'shift_list') {
         setWeekRanges(getShiftListDateRanges(wb));
         setWeekIndex(0);
@@ -268,6 +302,20 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
           const rank = shiftListRank(p.grade);
           const suggestedStaff = suggestStaffMatches(p.name, knownStaff);
           return { rawLabel: p.name, name: p.name, fte: p.fte ?? 0, phone: p.phone, suggestedRank: rank, rank, create: suggestedStaff.length === 0, suggestedStaff };
+        });
+      setMissingStaff(missing);
+      return;
+    }
+    if (format === 'tully') {
+      // The three latest fortnights that have started: names, payroll
+      // numbers and FTE (SMOs from their shifts a fortnight) come from the
+      // file; the section suggests the rank.
+      const missing = getTullyStaffRoster(workbook)
+        .filter(p => !mappedLabels.has(staffLabelKey(p.name)) && !matchStaffName(p.name, knownStaff))
+        .map(p => {
+          const rank = suggestClassicRank(p.section);
+          const suggestedStaff = suggestStaffMatches(p.name, knownStaff);
+          return { rawLabel: p.name, name: p.name, fte: p.fte ?? 1, payroll: p.payroll, suggestedRank: rank, rank, create: suggestedStaff.length === 0, suggestedStaff };
         });
       setMissingStaff(missing);
       return;
@@ -344,6 +392,10 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
           const { error: fteError } = await updateStaffFTE(data.staff_id, fte);
           if (fteError) throw new Error(`${name}: created, but failed to set FTE: ${fteError.message}`);
         }
+        if (person.payroll && data) {
+          const { error: payrollError } = await updateStaffPayrollNumber(data.staff_id, person.payroll);
+          if (payrollError) throw new Error(`${name}: created, but failed to set the payroll number: ${payrollError.message}`);
+        }
         // A corrected name no longer matches the sheet's label on its own
         // (e.g. "Rach Boland Obstetrics" created as "Rachel Boland"), so
         // remember which record that label means.
@@ -368,7 +420,10 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
   // saving one, before the state update has landed.
   const runImport = async (dryRun, mappingList = mappings, extraStaff = []) => {
     if (!workbook) return;
-    if (!dryRun && !window.confirm(`Write ${format === 'shift_list' && weekIndex === 0 ? 'the whole file' : 'this week'} to the roster now? Review the dry run above first if you haven't already.`)) {
+    const allTabs = format === 'tully' && sheetName === ALL_TULLY_TABS;
+    const what = allTabs ? `all ${startedTullySheets(workbook).length} fortnights up to now`
+      : format === 'shift_list' && weekIndex === 0 ? 'the whole file' : format === 'tully' && weekIndex === 0 ? 'this fortnight' : 'this week';
+    if (!dryRun && !window.confirm(`Write ${what} to the roster now? Review the dry run above first if you haven't already.`)) {
       return;
     }
 
@@ -376,11 +431,40 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
     setError(null);
     try {
       const { codeMap, nameMappings } = buildMappingLookups(mappingList);
+      const refs = { staffList: [...staffList, ...extraStaff], locations, activities, leaveTypes, dutyTypes, nameMappings };
+      if (allTabs) {
+        // One tab at a time, each replacing just its own dates.
+        const tabs = startedTullySheets(workbook);
+        const allResults = [];
+        const summary = { dateStrs: [], existingAssignmentCount: 0, existingCardCount: 0, existingDutyCount: 0, applied: !dryRun };
+        for (let t = 0; t < tabs.length; t++) {
+          const tabPeople = applyTullyMappings(parseTullyRange(workbook, tabs[t], 0), codeMap);
+          const { data, error: importError, deletionSummary: tabSummary } = await importRosterWeek(departmentId, tabPeople, refs, {
+            dryRun, addUnnamedAsUnfilled, onCallChoices,
+            onProgress: (current, total) => setImportProgress({ current, total, label: `Fortnight ${t + 1} of ${tabs.length} (${tabs[t]}): ${current} of ${total} people` }),
+          });
+          if (importError) throw new Error(`${tabs[t]}: ${importError.message}`);
+          allResults.push(...data);
+          if (tabSummary) {
+            summary.dateStrs.push(...tabSummary.dateStrs);
+            summary.existingAssignmentCount += tabSummary.existingAssignmentCount;
+            summary.existingCardCount += tabSummary.existingCardCount;
+            summary.existingDutyCount += tabSummary.existingDutyCount;
+          }
+        }
+        setResults(allResults);
+        setDeletionSummary(summary);
+        setWasDryRun(dryRun);
+        return;
+      }
       let people;
       if (format === 'shift_list') {
         // Saved code mappings are applied per shift name inside the parser,
         // since a day can hold several.
         people = parseShiftListRange(workbook, weekIndex, codeMap);
+      } else if (format === 'tully') {
+        // A mapped work area keeps the sheet's hours for that day.
+        people = applyTullyMappings(parseTullyRange(workbook, sheetName, weekIndex), codeMap);
       } else {
         const parsed = format === 'ed' ? parseEdWeek(workbook, sheetName, weekIndex) : parseRosterWeek(workbook, weekIndex);
         const baseResolve = format === 'ed' ? resolveEdShiftCode : resolveClassicAnySection;
@@ -600,14 +684,15 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
         <input type="file" accept=".xlsx" onChange={handleFileChange} className="hidden" />
       </label>
 
-      {workbook && format === 'ed' && (
+      {workbook && SHEET_FORMATS.includes(format) && (
         <div className="mb-4">
-          <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Sheet</label>
+          <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">{format === 'tully' ? 'Fortnight (tab)' : 'Sheet'}</label>
           <select
             value={sheetName}
             onChange={(e) => loadEdSheet(workbook, e.target.value)}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
           >
+            {format === 'tully' && <option value={ALL_TULLY_TABS}>All fortnights up to now ({startedTullySheets(workbook).length} tabs, for a year of fairness history)</option>}
             {sheetNames.map(name => (
               <option key={name} value={name}>{name}</option>
             ))}
@@ -617,7 +702,7 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
 
       {workbook && (
         <div className="mb-4">
-          <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">{format === 'shift_list' ? 'Dates to import' : 'Week to import'}</label>
+          <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">{format === 'shift_list' || format === 'tully' ? 'Dates to import' : 'Week to import'}</label>
           <select
             value={weekIndex}
             onChange={(e) => { setWeekIndex(parseInt(e.target.value, 10)); setResults(null); setDeletionSummary(null); }}
@@ -638,6 +723,9 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
           >
             Check for Missing Staff
           </button>
+          {format === 'tully' && (
+            <p className="text-xs text-gray-500 mt-1">Looks at the three latest fortnights that have started ({tullyStaffTabs(workbook).join(', ')}), with payroll numbers and FTE from the file (SMOs: 10 shifts a fortnight is 1.0).</p>
+          )}
 
           {missingStaff && (
             missingStaff.length === 0 ? (
@@ -771,7 +859,7 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
               Write to Roster
             </button>
           </div>
-          {importProgress && <ProgressBar current={importProgress.current} total={importProgress.total} label={`${importProgress.current} of ${importProgress.total} people`} />}
+          {importProgress && <ProgressBar current={importProgress.current} total={importProgress.total} label={importProgress.label || `${importProgress.current} of ${importProgress.total} people`} />}
         </div>
       )}
 
@@ -793,7 +881,7 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
               </>
             ) : (
               <>
-                This file is the source of truth for these dates — writing it for real will <strong>delete {deletionSummary.existingAssignmentCount}</strong> existing assignment{deletionSummary.existingAssignmentCount === 1 ? '' : 's'} across <strong>{deletionSummary.existingCardCount}</strong> card{deletionSummary.existingCardCount === 1 ? '' : 's'}{deletionSummary.existingDutyCount > 0 && <>, and <strong>{deletionSummary.existingDutyCount}</strong> on-call slot{deletionSummary.existingDutyCount === 1 ? '' : 's'} ({format === 'shift_list' ? 'the on-call slots this file names, replaced by its on call' : 'ED/Anaesthetics/Obstetrics on call, replaced by the sheet\'s CALL OBLIGATION row'})</>}, before writing the roster below. Other duty slots and recorded leave are never touched by an import.
+                This file is the source of truth for these dates — writing it for real will <strong>delete {deletionSummary.existingAssignmentCount}</strong> existing assignment{deletionSummary.existingAssignmentCount === 1 ? '' : 's'} across <strong>{deletionSummary.existingCardCount}</strong> card{deletionSummary.existingCardCount === 1 ? '' : 's'}{deletionSummary.existingDutyCount > 0 && <>, and <strong>{deletionSummary.existingDutyCount}</strong> on-call slot{deletionSummary.existingDutyCount === 1 ? '' : 's'} ({format === 'shift_list' || format === 'tully' ? 'the on-call slots this file names, replaced by its on call' : 'ED/Anaesthetics/Obstetrics on call, replaced by the sheet\'s CALL OBLIGATION row'})</>}, before writing the roster below. Other duty slots and recorded leave are never touched by an import.
               </>
             )}
           </p>
