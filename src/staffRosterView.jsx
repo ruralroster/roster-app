@@ -1539,6 +1539,13 @@ export default function StaffRosterView({ departmentId, staffId }) {
                     loc.assignments = Array.from(loc.assignmentsByStaff.values())
                       .sort((a, b) => (a.shifts?.start_time || '').localeCompare(b.shifts?.start_time || ''));
                   });
+                  // Where you are first: the card you're on, then the rest
+                  // of that location, then everything else in the order
+                  // above.
+                  const yourLocations = new Set(byLocationActivity
+                    .filter(loc => loc.assignmentsByStaff.has(staffId)).map(loc => loc.locationId));
+                  const placeOf = (loc) => (loc.assignmentsByStaff.has(staffId) ? 0 : yourLocations.has(loc.locationId) ? 1 : 2);
+                  byLocationActivity.sort((a, b) => placeOf(a) - placeOf(b));
 
                   return (
                     <CollapsibleSection key={groupKey} title={SESSION_GROUP_LABELS[groupKey]}>
