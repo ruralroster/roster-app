@@ -139,6 +139,10 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
   // Write to Roster stays disabled until every clash has a pick. See
   // importRosterWeek.
   const [onCallChoices, setOnCallChoices] = useState({});
+  // The results list: just the errors, just the on-call clashes, or both;
+  // neither shows everything. Kept across re-runs (e.g. after a Map… fix).
+  const [showErrors, setShowErrors] = useState(false);
+  const [showClashes, setShowClashes] = useState(false);
   useEffect(() => { setOnCallChoices({}); }, [workbook, sheetName, weekIndex, format]);
 
   // Saved fixes for import errors (roster_import_mappings) — applied to
@@ -645,6 +649,9 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
   const unfilledCount = results?.filter(r => r.ok && r.action?.startsWith('unfilled')).length ?? 0;
   const errorCount = results?.filter(r => !isClash(r) && !r.ok).length ?? 0;
   const clashCount = results?.filter(isClash).length ?? 0;
+  const shownResults = (results || [])
+    .map((r, i) => ({ r, i }))
+    .filter(({ r }) => (!showErrors && !showClashes) || (showErrors && !isClash(r) && !r.ok) || (showClashes && isClash(r)));
 
   return (
     <div>
@@ -895,6 +902,26 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
               {wasDryRun ? 'Dry run result' : 'Import result'} — {okCount} would {wasDryRun ? '' : 'did '}succeed, {unfilledCount > 0 ? `${unfilledCount} unfilled, ` : ''}{clashCount > 0 ? `${clashCount} on-call clash${clashCount === 1 ? '' : 'es'}, ` : ''}{errorCount} error{errorCount === 1 ? '' : 's'}
             </p>
           </div>
+          <div className="flex flex-wrap items-center gap-2 mb-2 text-xs">
+            <span className="text-gray-600">Show only:</span>
+            <button
+              onClick={() => setShowErrors(v => !v)}
+              aria-pressed={showErrors}
+              className={`px-2.5 py-1 rounded-full border font-medium ${showErrors ? 'bg-red-600 border-red-600 text-white' : 'bg-white border-red-300 text-red-700 hover:bg-red-50'}`}
+            >
+              Errors ({errorCount})
+            </button>
+            <button
+              onClick={() => setShowClashes(v => !v)}
+              aria-pressed={showClashes}
+              className={`px-2.5 py-1 rounded-full border font-medium ${showClashes ? 'bg-amber-600 border-amber-600 text-white' : 'bg-white border-amber-300 text-amber-800 hover:bg-amber-50'}`}
+            >
+              On-call clashes ({clashCount})
+            </button>
+            {(showErrors || showClashes) && (
+              <span className="text-gray-500">{shownResults.length} of {results.length} shown · tap again to show everything</span>
+            )}
+          </div>
           {wasDryRun && unchosenClashCount > 0 && (
             <div className="mb-2 p-3 rounded-lg border bg-amber-50 border-amber-300 flex gap-2 items-start">
               <AlertCircle size={16} className="flex-shrink-0 mt-0.5 text-amber-600" />
@@ -904,7 +931,8 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
             </div>
           )}
           <div className="max-h-96 overflow-y-auto border border-gray-200 rounded-lg divide-y divide-gray-100">
-            {results.map((r, i) => (
+            {shownResults.length === 0 && <p className="p-2 text-xs text-gray-500">Nothing to show with this filter.</p>}
+            {shownResults.map(({ r, i }) => (
               <div key={i} className={`p-2 text-xs ${isClash(r) ? (r.clashKey in onCallChoices ? 'bg-white' : 'bg-amber-50') : !r.ok ? 'bg-red-50' : r.action?.startsWith('unfilled') ? 'bg-amber-50' : 'bg-white'}`}>
                 <span className="font-semibold text-gray-900">{isClash(r) ? r.dutyLabel : (r.staffName || r.rawLabel)}</span>
                 {r.date && <span className="text-gray-500"> · {r.date}</span>}
