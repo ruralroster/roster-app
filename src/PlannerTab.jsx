@@ -107,7 +107,10 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
   const [peopleListOpen, setPeopleListOpen] = useState(false);
   // Past days unlocked for a correction this session.
   const [unlockedDays, setUnlockedDays] = useState(() => new Set());
-  const [staffFilter, setStaffFilter] = useState('all'); // 'all' | 'senior' | 'junior' | rank name
+  const [staffFilter, setStaffFilter] = useState('all'); // 'all' | rank name
+  // The people picker's Senior / Junior boxes, both ticked to start.
+  const [showSeniors, setShowSeniors] = useState(true);
+  const [showJuniors, setShowJuniors] = useState(true);
   const [staffOnly, setStaffOnly] = useState(true); // hide people with 0 FTE (locums, casuals)
   const [templateIdForWeek, setTemplateIdForWeek] = useState({});
   const [meetingTypes, setMeetingTypes] = useState([]);
@@ -1008,10 +1011,8 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
   const activeStaff = refData.staff.filter(s => s.active !== false);
   const filteredStaff = activeStaff.filter(s => {
     if (staffOnly && !((s.fte ?? DEFAULT_FTE) > 0)) return false;
-    if (staffFilter === 'all') return true;
-    if (staffFilter === 'senior') return isSenior(s, rankRows);
-    if (staffFilter === 'junior') return !isSenior(s, rankRows);
-    return s.rank === staffFilter;
+    if (!(isSenior(s, rankRows) ? showSeniors : showJuniors)) return false;
+    return staffFilter === 'all' || s.rank === staffFilter;
   });
   // Hours for the weeks shown: 44 a week at full time (fteFortnight.js).
   const targetHours = (s) => (s.fte ?? DEFAULT_FTE) * FULL_TIME_HOURS_PER_WEEK * weeksShown;
@@ -1360,16 +1361,24 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
       {mode === 'fill' && (
         <div style={{ bottom: navHeight }} className="fixed left-0 right-0 z-30 bg-white border-t border-gray-300 shadow-[0_-4px_12px_rgba(0,0,0,0.08)] p-3">
           <div className="flex flex-wrap items-center gap-2 mb-2">
-            <select value={staffFilter} onChange={(e) => setStaffFilter(e.target.value)} className="px-2 py-1 border border-gray-300 rounded text-xs" aria-label="Show">
-              <option value="all">Everyone</option>
-              <option value="senior">Seniors</option>
-              <option value="junior">Juniors</option>
-              {rankRows.map(r => <option key={r.rule_id} value={r.rank}>{r.rank}</option>)}
-            </select>
+            <label className="flex items-center gap-1 text-xs text-gray-700 whitespace-nowrap cursor-pointer">
+              <input type="checkbox" checked={showSeniors} onChange={(e) => setShowSeniors(e.target.checked)} className="w-3.5 h-3.5 accent-blue-600" />
+              Senior
+            </label>
+            <label className="flex items-center gap-1 text-xs text-gray-700 whitespace-nowrap cursor-pointer">
+              <input type="checkbox" checked={showJuniors} onChange={(e) => setShowJuniors(e.target.checked)} className="w-3.5 h-3.5 accent-blue-600" />
+              Junior
+            </label>
             <label className="flex items-center gap-1 text-xs text-gray-700 whitespace-nowrap cursor-pointer">
               <input type="checkbox" checked={staffOnly} onChange={(e) => setStaffOnly(e.target.checked)} className="w-3.5 h-3.5 accent-blue-600" />
               Staff only
             </label>
+            {rankRows.length > 2 && (
+              <select value={staffFilter} onChange={(e) => setStaffFilter(e.target.value)} className="px-2 py-1 border border-gray-300 rounded text-xs" aria-label="Rank">
+                <option value="all">Any rank</option>
+                {rankRows.map(r => <option key={r.rule_id} value={r.rank}>{r.rank}</option>)}
+              </select>
+            )}
             <p className="text-xs text-gray-600">
               {selectedStaff
                 ? <>Booking <span className="font-semibold text-gray-900">{selectedStaff.name}</span> — green places are theirs to take; 1 is the fairest job for them. Once their FTE's hours for a pay fortnight are booked (44 h a week full time), that fortnight's places stay grey. Tap their name again to stop.</>
