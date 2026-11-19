@@ -5,6 +5,7 @@ import StaffAccountsTab from './StaffAccountsTab';
 import StaffAvailabilityTab from './StaffAvailabilityTab';
 import ShiftPatternRulesUI from './ShiftPatternRulesUI';
 import CaseMixReport from './CaseMixReport';
+import { staffHoverText } from './staffHover';
 import { payFortnightRange, fteFull, hoursBooked, leaveDayHours, fortnightTargetHours, formatHours, FTE_FULL_LABEL } from './fteFortnight';
 import { addDays, withBookings } from './plannerUtils';
 import { formatFairShare, goesWithOnCall, buildFairness, isCasual } from './fairness';
@@ -2689,9 +2690,19 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
 
   // style: the card's job-type box colour (see jobColours.js); without
   // one it keeps the original plain blue.
-  const StaffBadge = ({ name, clickable = true, style }) => (
+  // Hovering a name: rank, FTE allocated this pay fortnight, ASTs.
+  const staffHover = (staffId) => {
+    const s = staffId && refData.staff.find(st => st.staff_id === staffId);
+    if (!s) return undefined;
+    const { from, to } = payFortnightRange(toLocalDateStr(selectedDate));
+    const load = { hours: hoursBooked(staffId, from, to, fortnightBookings, leaveDayHours(refData.staff, fortnightBookings)), target: fortnightTargetHours(s.fte) };
+    return staffHoverText(s, load, refData.advancedSkills);
+  };
+
+  const StaffBadge = ({ name, staffId, clickable = true, style }) => (
     <button
       onClick={() => clickable && setSelectedStaff(name)}
+      title={staffHover(staffId)}
       style={style}
       className={`px-3 py-2 text-sm rounded font-medium transition hover:brightness-95 ${style ? '' : 'bg-blue-100 text-blue-900 hover:bg-blue-200'}`}
     >
@@ -4518,7 +4529,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                         const shift = refData.shifts.find(s => s.shift_id === entry.shiftId);
                         return (
                           <div key={entry.localId} className="flex items-center gap-2 flex-wrap p-2 bg-white/60 rounded-lg border border-black/10">
-                            <StaffBadge name={entry.staffName} style={badgeStyleFor(entry)} />
+                            <StaffBadge name={entry.staffName} staffId={entry.staffId} style={badgeStyleFor(entry)} />
                             <span className="text-xs text-gray-500">({getConsultantAllocationCount(entry.staffId)}/2)</span>
                             {shift && (
                               <span className="text-xs text-gray-500">
@@ -4657,7 +4668,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                         const shift = refData.shifts.find(s => s.shift_id === entry.shiftId);
                         return (
                           <div key={entry.localId} className="flex items-center gap-2 flex-wrap p-2 bg-white/60 rounded-lg border border-black/10">
-                            <StaffBadge name={entry.staffName} style={badgeStyleFor(entry)} />
+                            <StaffBadge name={entry.staffName} staffId={entry.staffId} style={badgeStyleFor(entry)} />
                             {shift && (
                               <span className="text-xs text-gray-500">
                                 {shift.name} ({shift.start_time?.slice(0, 5)}–{shift.end_time?.slice(0, 5)})

@@ -34,6 +34,7 @@ import {
 import { MeetingForm, meetingDraft, meetingFields, meetingProblem, remindersLabel } from './MeetingEditor';
 import { audienceLabel } from './meetingAudience';
 import { offerIsFilled } from './offerEligibility';
+import { staffHoverText } from './staffHover';
 import { getMondayOfWeek } from './payrollExport';
 import { toLocalDateStr } from './dateUtils';
 import { DEFAULT_FTE, hasLeft, leftLabel } from './availabilityUtils';
@@ -463,8 +464,16 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
 
   const dutyKeysFor = (staffId, dateStr) => duties.filter(d => d.staff_id === staffId && d.date === dateStr).map(d => d.duty_type);
 
+  // Hovering a name: rank, FTE allocated that pay fortnight, ASTs.
+  const hoverFor = (staffId, dateStr) => {
+    const s = staffById.get(staffId);
+    if (!s) return undefined;
+    const text = staffHoverText(s, fortnightLoad(s, dateStr, fortnightBookings, leaveHours), refData.advancedSkills || []);
+    return mode === 'fill' && !locked(dateStr) ? `${text} — tap to remove` : text;
+  };
   const namePill = (staffId, name, category, dateStr, extraClass = '') => (
     <span
+      title={hoverFor(staffId, dateStr)}
       className={`inline-block max-w-full truncate px-1.5 py-0.5 rounded text-xs font-medium ${extraClass}`}
       style={jobBoxStyle(category, holdsOnCallDuty(dutyKeysFor(staffId, dateStr), refData.dutyTypes))}
     >
