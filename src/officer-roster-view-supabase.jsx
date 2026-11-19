@@ -11,10 +11,12 @@ import { addDays, withBookings } from './plannerUtils';
 import { formatFairShare, goesWithOnCall, buildFairness, isCasual } from './fairness';
 import FairnessReport from './FairnessReport';
 import CallbacksReport from './CallbacksReport';
+import BusinessCaseReport from './BusinessCaseReport';
 import RuleViolationsReport, { createDefaultRuleCheckState } from './RuleViolationsReport';
 import InvestigateViolationModal from './InvestigateViolationModal';
 import DayReviewModal from './DayReviewModal';
 import RosterExcelImportTab from './RosterExcelImportTab';
+import useScreenTime from './useScreenTime';
 import RosterExcelExportTab from './RosterExcelExportTab';
 import CollapsibleSection from './CollapsibleSection';
 import ChangePassword from './ChangePassword';
@@ -156,6 +158,8 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
 
   // UI State
   const [activeTab, setActiveTab] = useState('calendar');
+  // Officer time on each screen, for Reports > Business case.
+  useScreenTime(departmentId, activeTab);
   const [calendarWeekStart, setCalendarWeekStart] = useState(() => getMondayOfWeek(new Date()));
   const [calendarAllocationStatus, setCalendarAllocationStatus] = useState({}); // dateStr -> { status: 'none'|'green'|'orange'|'red', missingOnCallAbbrevs: string[] }
   const [weekTemplateApplications, setWeekTemplateApplications] = useState({}); // week_start_date -> { week_template_id, week_templates: { name } }
@@ -6271,6 +6275,10 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
                 their Variation tab */}
             <CollapsibleSection title="Pay Variations">
               <CallbacksReport departmentId={departmentId} refreshKey={staffVersion} />
+            </CollapsibleSection>
+
+            <CollapsibleSection title="Business case">
+              <BusinessCaseReport departmentId={departmentId} departmentName={refData.department?.name} />
             </CollapsibleSection>
 
             {/* Rule Violations Section — ED-specific hard scheduling rules

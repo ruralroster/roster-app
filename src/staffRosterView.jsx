@@ -8,6 +8,7 @@ import SwapShiftOffer from './SwapShiftOffer';
 import AvailableShifts from './AvailableShifts';
 import MyMeetings from './MyMeetings';
 import { CallbackBanner, MyCallbacks } from './CallbackPanel';
+import useScreenTime from './useScreenTime';
 import {
   getStaffById,
   getStaffAssignmentsForStaffDate,
@@ -137,6 +138,8 @@ function startOfWeek(date) {
 }
 
 export default function StaffRosterView({ departmentId, staffId }) {
+  // Staff using the app, for Reports > Business case (adoption).
+  useScreenTime(departmentId, 'staff_app');
   // A notification about an offered shift links to ?tab=volunteer (see
   // supabase/functions/notify-volunteering), opening Variation directly.
   const [activeTab, setActiveTab] = useState(() => (

@@ -5,6 +5,7 @@ import { importRosterWeek, createStaff, updateStaffFTE, updateStaffPayrollNumber
 import { getWeekDateRanges, parseRosterWeek, applyCodeMappings, applyPrimaryAllocation, resolveShiftCode, resolveRmoShiftCode, resolveInternShiftCode, getClassicStaffRoster, matchStaffName, suggestStaffMatches, cleanStaffLabel, staffLabelKey } from './rosterExcelImport';
 import { getEdSheetNames, getEdWeekDateRanges, parseEdWeek, getEdStaffRoster, resolveEdShiftCode } from './edRosterExcelImport';
 import { getShiftListDateRanges, parseShiftListRange, getShiftListStaffRoster } from './shiftListRosterExcelImport';
+import useScreenTime from './useScreenTime';
 import { getTullySheets, getTullyWeekRanges, parseTullyRange, applyTullyMappings, getTullyStaffRoster, tullyStaffTabs } from './tullyRosterExcelImport';
 
 // The classic format has a separate code table per section (consultant /
@@ -75,6 +76,8 @@ const currentTullySheet = (wb) => {
 // re-marks the same availability row.
 export default function RosterExcelImportTab({ departmentId, department, staffList, locations, activities, leaveTypes, dutyTypes = [], staffRanks = [], onStaffChanged, isSuperAdmin = false, onDepartmentChanged }) {
   const [format, setFormat] = useState(() => department?.roster_import_format || 'classic');
+  // Time spent importing counts as rostering (Reports > Business case).
+  useScreenTime(departmentId, 'import');
   const [savingFormat, setSavingFormat] = useState(false);
 
   // Keeps format in sync if `department` loads/changes after this
