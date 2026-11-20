@@ -5731,7 +5731,9 @@ function rosterDateStrsFromPeople(people) {
 // importRosterWeek) — their duty_assignments rows on these dates are
 // replaced too, so a re-import never leaves a previous import's on-call
 // behind. Other duty types (e.g. "Anaesthetics (AM)") are never touched.
-async function replaceExistingRosterForDates(departmentId, dateStrs, dryRun, dutyKeys = []) {
+// keepOnCall: on-call bookings (staff_assignments.on_call) stay, with the
+// cards they're on; dutyKeys is empty then too (see importRosterWeek).
+async function replaceExistingRosterForDates(departmentId, dateStrs, dryRun, dutyKeys = [], keepOnCall = false) {
   if (dateStrs.length === 0) return { existingAssignmentCount: 0, existingCardCount: 0, existingDutyCount: 0 };
 
   let existingDutyCount = 0;
@@ -5746,18 +5748,33 @@ async function replaceExistingRosterForDates(departmentId, dateStrs, dryRun, dut
     existingDutyCount = count || 0;
   }
 
-  const { count: existingAssignmentCount, error: assignCountError } = await supabase
+  const notOnCall = (q) => (keepOnCall ? q.or('on_call.is.null,on_call.eq.false') : q);
+  // Cards holding an on-call booking that's being kept stay too.
+  let keptCardIds = [];
+  if (keepOnCall) {
+    const { data: onCallRows, error: onCallError } = await supabase
+      .from('staff_assignments')
+      .select('theatre_activity_id')
+      .eq('department_id', departmentId)
+      .in('date', dateStrs)
+      .eq('on_call', true);
+    if (onCallError) throw onCallError;
+    keptCardIds = [...new Set((onCallRows || []).map(r => r.theatre_activity_id).filter(Boolean))];
+  }
+  const notKeptCard = (q) => (keptCardIds.length ? q.not('theatre_activity_id', 'in', `(${keptCardIds.join(',')})`) : q);
+
+  const { count: existingAssignmentCount, error: assignCountError } = await notOnCall(supabase
     .from('staff_assignments')
     .select('assignment_id', { count: 'exact', head: true })
     .eq('department_id', departmentId)
-    .in('date', dateStrs);
+    .in('date', dateStrs));
   if (assignCountError) throw assignCountError;
 
-  const { count: existingCardCount, error: cardCountError } = await supabase
+  const { count: existingCardCount, error: cardCountError } = await notKeptCard(supabase
     .from('theatre_activities')
     .select('theatre_activity_id', { count: 'exact', head: true })
     .eq('department_id', departmentId)
-    .in('date', dateStrs);
+    .in('date', dateStrs));
   if (cardCountError) throw cardCountError;
 
   if (!dryRun) {
@@ -5767,18 +5784,18 @@ async function replaceExistingRosterForDates(departmentId, dateStrs, dryRun, dut
     // theatre_activity_id) wouldn't be reached by that cascade anyway;
     // deleting both directly by department+date covers every row either
     // way.
-    const { error: deleteAssignError } = await supabase
+    const { error: deleteAssignError } = await notOnCall(supabase
       .from('staff_assignments')
       .delete()
       .eq('department_id', departmentId)
-      .in('date', dateStrs);
+      .in('date', dateStrs));
     if (deleteAssignError) throw deleteAssignError;
 
-    const { error: deleteCardsError } = await supabase
+    const { error: deleteCardsError } = await notKeptCard(supabase
       .from('theatre_activities')
       .delete()
       .eq('department_id', departmentId)
-      .in('date', dateStrs);
+      .in('date', dateStrs));
     if (deleteCardsError) throw deleteCardsError;
 
     if (dutyKeys.length > 0) {
@@ -5836,7 +5853,7 @@ async function replaceExistingRosterForDates(departmentId, dateStrs, dryRun, dut
 // suggestion; the officer picks one in the preview, passed back as
 // onCallChoices ({ clashKey: staff_id, or '' for nobody }). A real run
 // with any clash still unchosen writes nothing at all.
-export async function importRosterWeek(departmentId, people, refLists, { dryRun = true, onProgress, addUnnamedAsUnfilled = false, onCallChoices = {} } = {}) {
+export async function importRosterWeek(departmentId, people, refLists, { dryRun = true, onProgress, addUnnamedAsUnfilled = false, onCallChoices = {}, keepOnCall = false } = {}) {
   const { staffList, locations, activities, leaveTypes, dutyTypes = [], nameMappings = { location: {}, activity: {}, staff: {} } } = refLists;
   const findLocation = (name) => {
     const key = name.trim().toLowerCase();
@@ -5853,6 +5870,9 @@ export async function importRosterWeek(departmentId, people, refLists, { dryRun 
   // Only a file with a notes row (the classic format's consultant/locum
   // sections) speaks for on-call at all — an ED-format import leaves the
   // duty roster exactly as it is.
+  // keepOnCall: the file's on call is ignored and the department's stays
+  // exactly as it is (nothing deleted, nothing written).
+  if (keepOnCall) people = people.map(p => ({ ...p, days: p.days.map(({ rawOnCall, onCallDuties, ...d }) => d) }));
   const fileHasOnCallNotes = people.some(p => p.days.some(d => 'rawOnCall' in d));
   const onCallDutyByKind = {};
   if (fileHasOnCallNotes) {
@@ -5969,7 +5989,7 @@ export async function importRosterWeek(departmentId, people, refLists, { dryRun 
   let jobTypes;
   try {
     jobTypes = await jobTypesForMatching(departmentId);
-    const { existingAssignmentCount, existingCardCount, existingDutyCount } = await replaceExistingRosterForDates(departmentId, dateStrs, dryRun, managedDutyKeys);
+    const { existingAssignmentCount, existingCardCount, existingDutyCount } = await replaceExistingRosterForDates(departmentId, dateStrs, dryRun, managedDutyKeys, keepOnCall);
     deletionSummary = { dateStrs, existingAssignmentCount, existingCardCount, existingDutyCount, applied: !dryRun && dateStrs.length > 0 };
   } catch (err) {
     return { data: [], error: err, deletionSummary: null };

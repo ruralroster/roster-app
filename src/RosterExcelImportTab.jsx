@@ -132,6 +132,9 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
   // sheet section (unfilled, ready to offer for volunteering); off → an
   // error and nothing written. See importRosterWeek.
   const [addUnnamedAsUnfilled, setAddUnnamedAsUnfilled] = useState(true);
+  // On: the import leaves on call exactly as it is (doesn't delete it, and
+  // doesn't write the file's). See importRosterWeek.
+  const [keepOnCall, setKeepOnCall] = useState(false);
   // A dual allocation like "Ward 2/ED": on (the trial, from 2026-10-16) →
   // the first allocation for the whole day; off → split AM/PM as before.
   // See applyPrimaryAllocation.
@@ -447,7 +450,7 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
         for (let t = 0; t < tabs.length; t++) {
           const tabPeople = applyTullyMappings(parseTullyRange(workbook, tabs[t], 0), codeMap);
           const { data, error: importError, deletionSummary: tabSummary } = await importRosterWeek(departmentId, tabPeople, refs, {
-            dryRun, addUnnamedAsUnfilled, onCallChoices,
+            dryRun, addUnnamedAsUnfilled, onCallChoices, keepOnCall,
             onProgress: (current, total) => setImportProgress({ current, total, label: `Fortnight ${t + 1} of ${tabs.length} (${tabs[t]}): ${current} of ${total} people` }),
           });
           if (importError) throw new Error(`${tabs[t]}: ${importError.message}`);
@@ -482,7 +485,7 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
       const { data, error: importError, deletionSummary: nextDeletionSummary } = await importRosterWeek(
         departmentId, people,
         { staffList: [...staffList, ...extraStaff], locations, activities, leaveTypes, dutyTypes, nameMappings },
-        { dryRun, addUnnamedAsUnfilled, onCallChoices, onProgress: (current, total) => setImportProgress({ current, total }) }
+        { dryRun, addUnnamedAsUnfilled, onCallChoices, keepOnCall, onProgress: (current, total) => setImportProgress({ current, total }) }
       );
       if (importError) throw importError;
       setResults(data);
@@ -819,6 +822,20 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
 
       {workbook && (
         <div className="mb-4">
+          <label className="flex items-start gap-2 mb-3 text-sm text-gray-700 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={keepOnCall}
+              onChange={(e) => { setKeepOnCall(e.target.checked); setResults(null); setDeletionSummary(null); }}
+              className="mt-0.5"
+            />
+            <span>
+              Keep on call as it is
+              <span className="block text-xs text-gray-500">
+                The import doesn't delete anyone's on call for these dates, and doesn't add the file's: on call stays exactly as it is in Rstar. Untick to replace it with the file's.
+              </span>
+            </span>
+          </label>
           {format === 'classic' && (
             <label className="flex items-start gap-2 mb-3 text-sm text-gray-700 cursor-pointer select-none">
               <input
