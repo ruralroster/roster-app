@@ -380,3 +380,16 @@ describe('a card\'s own extra places', () => {
     expect(real('p1')).toBe('p1');
   });
 });
+
+describe('on call is for seniors', () => {
+  const { onCallSeniorProblem } = require('./plannerUtils');
+  const rankRows = [{ rank: 'SMO', requires_supervision: false }, { rank: 'RMO', requires_supervision: true }];
+  it('keeps juniors off on call, at any site', () => {
+    expect(onCallSeniorProblem({ counts_as_on_call: true }, { rank: 'RMO' }, rankRows)).toMatch(/seniors/);
+    expect(onCallSeniorProblem({ counts_as_on_call: true }, { rank: 'SMO' }, rankRows)).toBeNull();
+    expect(onCallSeniorProblem({ counts_as_on_call: true }, { rank: 'RMO', advanced_skills: ['anaes'] }, rankRows)).toBeNull();
+  });
+  it('leaves duties that aren\'t on call open to anyone', () => {
+    expect(onCallSeniorProblem({ counts_as_on_call: false }, { rank: 'RMO' }, rankRows)).toBeNull();
+  });
+});

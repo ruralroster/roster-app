@@ -7,7 +7,7 @@ import ShiftPatternRulesUI from './ShiftPatternRulesUI';
 import CaseMixReport from './CaseMixReport';
 import { staffHoverText } from './staffHover';
 import { payFortnightRange, fteFull, hoursBooked, leaveDayHours, fortnightTargetHours, formatHours, FTE_FULL_LABEL } from './fteFortnight';
-import { addDays, withBookings } from './plannerUtils';
+import { addDays, withBookings, onCallSeniorProblem } from './plannerUtils';
 import { formatFairShare, goesWithOnCall, buildFairness, isCasual } from './fairness';
 import FairnessReport from './FairnessReport';
 import CallbacksReport from './CallbacksReport';
@@ -922,8 +922,10 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     const dutyTypeRow = refData.dutyTypes.find(d => d.key === dutyType);
     const requiredSkillIds = dutyTypeRow?.required_advanced_skills;
     return refData.staff
+      // On call is for seniors only (plannerUtils onCallSeniorProblem).
       .filter(s => s.staff_id === currentStaffId || (
         s.active !== false && isAvailableForDuty(s.staff_id) && hasRequiredAdvancedSkill(s.staff_id, requiredSkillIds)
+        && !onCallSeniorProblem(dutyTypeRow, s, refData.staffRanks)
       ))
       .map(s => ({
         ...s,

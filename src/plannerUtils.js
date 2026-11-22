@@ -103,6 +103,15 @@ export function isSenior(staff, rankRows) {
   return row ? row.requires_supervision === false : false;
 }
 
+// On call, at every site, is for seniors only (confirmed 2026-11-22), and
+// anyone with an advanced skill (AST) counts as senior for it. A duty type
+// that isn't on call (a coordinator, say) is open to anyone.
+export function onCallSeniorProblem(dutyType, staff, rankRows) {
+  if (!dutyType?.counts_as_on_call) return null;
+  if (isSenior(staff, rankRows) || (staff?.advanced_skills || []).length > 0) return null;
+  return 'On call is for seniors (or anyone with an AST)';
+}
+
 export function hasAnySkill(staff, requiredSkillIds) {
   if (!requiredSkillIds || requiredSkillIds.length === 0) return true;
   const held = staff?.advanced_skills || [];

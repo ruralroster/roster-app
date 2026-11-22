@@ -5,6 +5,7 @@ import {
   getPlannerRange,
   getDaysBooked,
   getOtherSiteBookings,
+  getDutyFairness,
   bulkSetStaffAvailability,
   clearStaffUnavailabilityRange,
   getShiftPatternRules,
@@ -43,7 +44,7 @@ import { toLocalDateStr } from './dateUtils';
 import { DEFAULT_FTE, hasLeft, leftLabel } from './availabilityUtils';
 import { JOB_COLOURS, jobCategoryFor, jobCategoryRank, jobCardStyle, jobBoxStyle, holdsOnCallDuty } from './jobColours';
 import {
-  hhmm, addDays, firstName, jobForCard, isAdminJob, isSenior, hasAnySkill, placeMismatch, layOutCard, dayConflict, rankJobsForPerson, rankPeopleForPlace, withBookings, extraPlacesFor,
+  hhmm, addDays, firstName, jobForCard, isAdminJob, isSenior, hasAnySkill, onCallSeniorProblem, placeMismatch, layOutCard, dayConflict, rankJobsForPerson, rankPeopleForPlace, withBookings, extraPlacesFor,
 } from './plannerUtils';
 import { payFortnightRange, fortnightLoad, fteFull, hoursBooked, leaveDayHours, formatHours, FULL_TIME_HOURS_PER_WEEK, FTE_FULL_LABEL } from './fteFortnight';
 import { buildFairness, exposureKey, formatFairShare, isCasual } from './fairness';
@@ -141,6 +142,9 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
   // (bookings that day to take them off), current (their leave type, when
   // changing it) }. lastLeaveTypeId: the type picked last, offered first.
   const [leavePick, setLeavePick] = useState(null);
+  // An on-call slot tapped with nobody picked: { dateStr, dutyType, holder,
+  // scores (staffId -> on-call fairness, lower = more due) }.
+  const [dutyPick, setDutyPick] = useState(null);
   const [lastLeaveTypeId, setLastLeaveTypeId] = useState(null);
   // Height of the officer view's bottom tab bar, so the people picker can
   // sit just above it.
@@ -377,7 +381,36 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
     else run("Couldn't save the visitor", () => setPlannerVisitor(departmentId, card.theatre_activity_id, place.place_id, slot.index, name));
   };
 
+  // Tapping an on-call slot with nobody picked: everyone who can take it,
+  // most due first (the on-call fairness the Day view's pickers use).
+  const openDutyPick = (dateStr, dutyType, holder) => {
+    setDutyPick({ dateStr, dutyType, holder, scores: null });
+    getDutyFairness(departmentId, new Date(`${dateStr}T00:00:00`)).then(({ data }) => {
+      setDutyPick(p => (p && p.dateStr === dateStr && p.dutyType.key === dutyType.key ? { ...p, scores: data?.get(dutyType.key) || new Map() } : p));
+    });
+  };
+  const dutyCandidates = (dateStr, dutyType, scores) => refData.staff
+    .filter(s => s.active !== false && !hasLeft(s, dateStr) && hasAnySkill(s, dutyType.required_advanced_skills) && !onCallSeniorProblem(dutyType, s, rankRows)
+      && !unavailable.some(u => u.staff_id === s.staff_id && u.date === dateStr))
+    .filter(s => !staffOnly || (s.fte ?? DEFAULT_FTE) > 0)
+    .map(s => ({ s, score: scores?.get(s.staff_id) }))
+    .sort((a, b) => (a.score ?? Infinity) - (b.score ?? Infinity) || a.s.name.localeCompare(b.s.name));
+  const bookDuty = (staff) => {
+    const { dateStr, dutyType } = dutyPick;
+    setDutyPick(null);
+    run(`Couldn't put ${staff.name} on ${dutyType.label}`, () => updateDutyAssignment(departmentId, new Date(`${dateStr}T00:00:00`), dutyType.key, staff.staff_id));
+  };
+  const clearDuty = () => {
+    const { dateStr, dutyType } = dutyPick;
+    setDutyPick(null);
+    run("Couldn't clear the slot", () => updateDutyAssignment(departmentId, new Date(`${dateStr}T00:00:00`), dutyType.key, null));
+  };
+
   const setDuty = (dateStr, dutyType, holder) => {
+    if (!selectedStaff) {
+      openDutyPick(dateStr, dutyType, holder);
+      return;
+    }
     if (selectedStaff) {
       if (holder && holder.staff_id === selectedStaff.staff_id) return;
       if (holder && !window.confirm(`Replace ${holder.staff?.name} with ${selectedStaff.name} for ${dutyType.label}?`)) return;
@@ -1039,11 +1072,12 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
           if (mode === 'fill' && selectedStaff && !locked(dateStr)) {
             if (hasLeft(selectedStaff, dateStr)) reason = leftLabel(selectedStaff);
             else if (unavailable.some(u => u.staff_id === selectedStaff.staff_id && u.date === dateStr)) reason = 'Unavailable';
+            else if (onCallSeniorProblem(dt, selectedStaff, rankRows)) reason = onCallSeniorProblem(dt, selectedStaff, rankRows);
             else if (!hasAnySkill(selectedStaff, dt.required_advanced_skills)) reason = 'Missing the skill';
             else if (holder?.staff_id === selectedStaff.staff_id) reason = 'Already on it';
             eligible = !reason;
           }
-          const clickable = mode === 'fill' && !locked(dateStr) && (eligible || (!selectedStaff && holder));
+          const clickable = mode === 'fill' && !locked(dateStr) && (eligible || !selectedStaff);
           return (
             <button
               key={dt.key}
@@ -1055,7 +1089,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
               <span className={`truncate ${dt.counts_as_on_call ? 'text-fuchsia-800 font-semibold' : 'text-gray-600'}`}>{label}</span>
               {holder
                 ? <span className={`truncate font-medium text-gray-900 ${bookingRing(holder.staff_id, dateStr) ? 'underline' : ''}`}>{firstName(holder.staff?.name)}</span>
-                : <span className="text-gray-400">{eligible ? '+ book' : '—'}</span>}
+                : <span className="text-gray-400">{eligible || (mode === 'fill' && !selectedStaff && !locked(dateStr)) ? '+ book' : '—'}</span>}
             </button>
           );
         })}
@@ -1514,6 +1548,46 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
           </div>
         </div>
       )}
+
+      {dutyPick && (() => {
+        const list = dutyCandidates(dutyPick.dateStr, dutyPick.dutyType, dutyPick.scores);
+        return (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50" onClick={() => setDutyPick(null)}>
+            <div className="bg-white rounded-lg shadow-lg p-5 w-full max-w-md max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+              <div className="flex justify-between items-start mb-3">
+                <div>
+                  <h2 className="text-lg font-bold text-gray-900">{dutyPick.dutyType.label}</h2>
+                  <p className="text-sm text-gray-600">
+                    {new Date(`${dutyPick.dateStr}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long' })}
+                    {dutyPick.holder ? ` · now ${dutyPick.holder.staff?.name}` : ''} · most due first
+                  </p>
+                </div>
+                <button onClick={() => setDutyPick(null)} className="p-1 hover:bg-gray-100 rounded-lg" aria-label="Close"><X size={20} /></button>
+              </div>
+              {!dutyPick.scores && <p className="text-xs text-gray-500 mb-2">Working out who's most due…</p>}
+              {list.length === 0 && <p className="text-sm text-gray-600">Nobody available has the skills for this.</p>}
+              <div className="space-y-1">
+                {list.map(({ s, score }, i) => (
+                  <button
+                    key={s.staff_id}
+                    disabled={busy || s.staff_id === dutyPick.holder?.staff_id}
+                    onClick={() => bookDuty(s)}
+                    className={`w-full flex items-center justify-between gap-2 text-left px-3 py-2 rounded-lg border text-sm disabled:opacity-50 ${i === 0 && dutyPick.scores ? 'border-fuchsia-400 bg-fuchsia-50 hover:bg-fuchsia-100' : 'border-gray-200 hover:bg-gray-50'}`}
+                  >
+                    <span className="font-semibold text-gray-900">{s.name}{s.staff_id === dutyPick.holder?.staff_id ? ' (on it now)' : ''}</span>
+                    <span className="text-xs text-gray-500">{s.rank}{score !== undefined && score !== null ? ` · ${formatFairShare(score) || ''}` : ''}</span>
+                  </button>
+                ))}
+              </div>
+              {dutyPick.holder && (
+                <button onClick={clearDuty} disabled={busy} className="mt-3 px-3 py-1.5 text-sm text-red-700 border border-red-300 rounded-lg hover:bg-red-50">
+                  Take {firstName(dutyPick.holder.staff?.name)} off
+                </button>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {leavePick && (() => {
         const s = staffById.get(leavePick.staffId);
