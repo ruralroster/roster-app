@@ -4962,6 +4962,34 @@ export async function createPlannerCard(departmentId, dateStr, job, extra = {}) 
   }
 }
 
+// The Planner's + One-off card: a card for one day that isn't a job (a
+// visiting clinic, an extra list), with its own senior and junior places
+// (theatre_activities.extra_*_places), so it's filled, offered and
+// suggested like any other.
+export async function createOneOffCard(departmentId, dateStr, { locationId, activityId, startTime, endTime, seniorPlaces, juniorPlaces }) {
+  try {
+    const shiftId = await shiftForHours(departmentId, startTime, endTime, 'One-off');
+    const { data, error } = await supabase
+      .from('theatre_activities')
+      .insert([{
+        department_id: departmentId,
+        date: dateStr,
+        location_id: locationId,
+        activity_id: activityId,
+        shift_id: shiftId,
+        start_time: startTime,
+        end_time: endTime,
+        extra_senior_places: seniorPlaces,
+        extra_junior_places: juniorPlaces,
+      }])
+      .select()
+      .single();
+    return { data, error };
+  } catch (err) {
+    return { data: null, error: err };
+  }
+}
+
 // Books staffId onto a card — into placeId, or as an extra when placeId is
 // null — working the card's own hours.
 export async function bookPlannerPlace(departmentId, card, staffId, placeId, role, jobName) {

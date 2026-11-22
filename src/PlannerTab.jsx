@@ -16,6 +16,7 @@ import {
   setPlannerVisitor,
   setCardExtraPlaces,
   setBookingHours,
+  createOneOffCard,
   renamePlannerVisitor,
   deletePlannerVisitor,
   updateDutyAssignment,
@@ -149,6 +150,8 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
   // A booked name tapped: { a, card, job, start, end } — change their hours
   // that day, or take them off.
   const [bookingMenu, setBookingMenu] = useState(null);
+  // + One-off card (Layout step): the form, or null.
+  const [oneOff, setOneOff] = useState(null);
   const [lastLeaveTypeId, setLastLeaveTypeId] = useState(null);
   // Height of the officer view's bottom tab bar, so the people picker can
   // sit just above it.
@@ -315,6 +318,26 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
   const roleFor = (staff) => (isSenior(staff, rankRows) ? 'consultant' : 'registrar');
 
   // ---------- writes ----------
+
+  const openOneOff = (dateStr) => setOneOff({ dateStr, locationId: '', activityId: '', start: '08:00', end: '17:00', senior: 1, junior: 0 });
+  const saveOneOff = () => {
+    const o = oneOff;
+    setOneOff(null);
+    run("Couldn't add the card", () => createOneOffCard(departmentId, o.dateStr, {
+      locationId: o.locationId, activityId: o.activityId, startTime: `${o.start}:00`, endTime: `${o.end}:00`,
+      seniorPlaces: Math.max(0, Math.min(10, Number(o.senior) || 0)), juniorPlaces: Math.max(0, Math.min(10, Number(o.junior) || 0)),
+    }));
+  };
+  const oneOffButton = (dateStr, small) => mode === 'layout' && !locked(dateStr) && (
+    <button
+      onClick={() => openOneOff(dateStr)}
+      disabled={busy}
+      className={`w-full ${small ? 'py-0.5 text-[10px]' : 'py-1.5 text-xs'} border border-dashed border-gray-400 text-gray-600 rounded-lg hover:bg-gray-50`}
+      title="A card for this day only that isn't a job: pick where, the hours and its places"
+    >
+      + One-off card
+    </button>
+  );
 
   const addJobToDay = (dateStr) => {
     if (!selectedJob) return;
@@ -1398,6 +1421,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
               + {selectedMeetingType.name}
             </button>
           )}
+          {mode === 'layout' && !locked(startStr) && <div className="max-w-sm">{oneOffButton(startStr, false)}</div>}
           {dutyTypes.length > 0 && (
             <div className="max-w-sm">{renderDuties(startStr)}</div>
           )}
@@ -1491,6 +1515,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
                         </button>
                       )}
                       {dayCards.map(renderCard)}
+                      {oneOffButton(dateStr, true)}
                       {renderDuties(dateStr)}
                       {renderMeetings(dateStr)}
                       {renderLeave(dateStr)}
@@ -1569,6 +1594,53 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
           </div>
         </div>
       )}
+
+      {oneOff && (() => {
+        const valid = oneOff.locationId && oneOff.activityId && oneOff.start && oneOff.end && oneOff.start !== oneOff.end
+          && (Number(oneOff.senior) || 0) + (Number(oneOff.junior) || 0) > 0;
+        const set = (field) => (e) => setOneOff(o => ({ ...o, [field]: e.target.value }));
+        return (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50" onClick={() => setOneOff(null)}>
+            <div className="bg-white rounded-lg shadow-lg p-5 w-full max-w-sm space-y-3" onClick={(e) => e.stopPropagation()}>
+              <div>
+                <h2 className="text-lg font-bold text-gray-900">One-off card</h2>
+                <p className="text-sm text-gray-600">
+                  {new Date(`${oneOff.dateStr}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long' })} only · not added to your jobs
+                </p>
+              </div>
+              <label className="block text-xs font-semibold text-gray-600 uppercase">Location
+                <select value={oneOff.locationId} onChange={set('locationId')} className="mt-1 w-full px-2 py-1.5 border border-gray-300 rounded text-sm normal-case font-normal">
+                  <option value="">Choose…</option>
+                  {refData.locations.filter(l => l.active !== false).map(l => <option key={l.location_id} value={l.location_id}>{l.name}</option>)}
+                </select>
+              </label>
+              <label className="block text-xs font-semibold text-gray-600 uppercase">Activity
+                <select value={oneOff.activityId} onChange={set('activityId')} className="mt-1 w-full px-2 py-1.5 border border-gray-300 rounded text-sm normal-case font-normal">
+                  <option value="">Choose…</option>
+                  {refData.activities.filter(a => a.active !== false).map(a => <option key={a.activity_id} value={a.activity_id}>{a.name}</option>)}
+                </select>
+              </label>
+              <div className="flex items-center gap-2 text-sm">
+                <input type="time" value={oneOff.start} onChange={set('start')} className="px-2 py-1 border border-gray-300 rounded" aria-label="Start" />
+                <span>to</span>
+                <input type="time" value={oneOff.end} onChange={set('end')} className="px-2 py-1 border border-gray-300 rounded" aria-label="Finish" />
+              </div>
+              <div className="flex items-center gap-3 text-sm">
+                <label className="flex items-center gap-1">Senior places
+                  <input type="number" min="0" max="10" value={oneOff.senior} onChange={set('senior')} className="w-14 px-2 py-1 border border-gray-300 rounded" />
+                </label>
+                <label className="flex items-center gap-1">Junior places
+                  <input type="number" min="0" max="10" value={oneOff.junior} onChange={set('junior')} className="w-14 px-2 py-1 border border-gray-300 rounded" />
+                </label>
+              </div>
+              <div className="flex gap-2 pt-1">
+                <button onClick={saveOneOff} disabled={busy || !valid} className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white rounded-lg font-medium">Add card</button>
+                <button onClick={() => setOneOff(null)} className="px-3 py-1.5 text-sm bg-gray-100 hover:bg-gray-200 rounded-lg">Cancel</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {bookingMenu && (() => {
         const { a, card, job, start, end } = bookingMenu;
