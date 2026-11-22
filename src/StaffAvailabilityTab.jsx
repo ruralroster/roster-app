@@ -19,7 +19,10 @@ import {
   updateStaffLeavingDate,
   getBookingsAfter,
   clearBookingsAfter,
+  getStaffLeaveDays,
 } from './supabaseClient';
+import { leaveBlockHoursPerDay, formatHours } from './fteFortnight';
+import { leaveBlocks } from './leaveBlocks';
 import {
   FTE_OPTIONS,
   DEFAULT_FTE,
@@ -99,6 +102,12 @@ export default function StaffAvailabilityTab({ departmentId, staffList = [], lea
   const [showFortnightlyModal, setShowFortnightlyModal] = useState(false);
   const [fortnightlySlots, setFortnightlySlots] = useState(new Set()); // "weekIndex-dayOfWeek" keys
   const [showLeaveModal, setShowLeaveModal] = useState(false);
+  // Add leave: its type (required). editingBlock: the block Review leave's
+  // Change is replacing ({ start, end }), else null for a new one.
+  const [leaveTypeId, setLeaveTypeId] = useState('');
+  const [editingBlock, setEditingBlock] = useState(null);
+  // Review leave: null when closed, else the person's leave blocks.
+  const [reviewBlocks, setReviewBlocks] = useState(null);
   const [leaveStart, setLeaveStart] = useState('');
   const [leaveEnd, setLeaveEnd] = useState('');
   const [showOffWeekModal, setShowOffWeekModal] = useState(false);
@@ -127,6 +136,9 @@ export default function StaffAvailabilityTab({ departmentId, staffList = [], lea
     setShowLeaveModal(false);
     setLeaveStart('');
     setLeaveEnd('');
+    setLeaveTypeId('');
+    setEditingBlock(null);
+    setReviewBlocks(null);
     setShowOffWeekModal(false);
     setOffWeekLeaveTypeId('');
   }, [selectedStaffId]);
@@ -578,8 +590,12 @@ export default function StaffAvailabilityTab({ departmentId, staffList = [], lea
     }
   };
 
+  // Add leave: every day from start to end, with its type and its share of
+  // the person's FTE (leaveBlockHoursPerDay: 44 h a week x FTE, spread over
+  // every day). Changing a block from Review leave takes the old dates off
+  // first.
   const handleSubmitLeave = async () => {
-    if (!selectedStaffId || !leaveStart || !leaveEnd) return;
+    if (!selectedStaffId || !leaveStart || !leaveEnd || !leaveTypeId) return;
 
     const start = new Date(`${leaveStart}T00:00:00`);
     const end = new Date(`${leaveEnd}T00:00:00`);
@@ -590,14 +606,22 @@ export default function StaffAvailabilityTab({ departmentId, staffList = [], lea
 
     setApplyingRule(true);
     try {
+      if (editingBlock) {
+        const { error: clearError } = await clearStaffUnavailabilityRange(selectedStaffId, new Date(`${editingBlock.start}T00:00:00`), new Date(`${editingBlock.end}T00:00:00`));
+        if (clearError) throw clearError;
+      }
       const dates = getDatesInRange(start, end);
-      const { error: bulkError } = await bulkSetStaffAvailability(departmentId, selectedStaffId, dates, false);
+      const { error: bulkError } = await bulkSetStaffAvailability(departmentId, selectedStaffId, dates, false, leaveTypeId, leaveBlockHoursPerDay(currentFte));
       if (bulkError) throw bulkError;
 
       setShowLeaveModal(false);
       setLeaveStart('');
       setLeaveEnd('');
+      setLeaveTypeId('');
+      const wasEditing = !!editingBlock;
+      setEditingBlock(null);
       await loadAvailability();
+      if (wasEditing) await openReviewLeave();
       setError(null);
     } catch (err) {
       setError(`Failed to add leave: ${err.message}`);
@@ -682,6 +706,37 @@ export default function StaffAvailabilityTab({ departmentId, staffList = [], lea
 
   const selectedStaff = staffList.find(s => s.staff_id === selectedStaffId);
   const currentFte = fteOverrides[selectedStaffId] ?? selectedStaff?.fte ?? DEFAULT_FTE;
+
+  // Review leave: this person's leave from 90 days ago on, in blocks.
+  async function openReviewLeave() {
+    if (!selectedStaffId) return;
+    const since = new Date();
+    since.setDate(since.getDate() - 90);
+    const { data, error: loadError } = await getStaffLeaveDays(selectedStaffId, toDateStr(since));
+    if (loadError) { setError(`Failed to load leave: ${loadError.message}`); return; }
+    setReviewBlocks(leaveBlocks(data));
+  }
+  const deleteLeaveBlock = async (block) => {
+    const typeName = leaveTypes.find(lt => lt.leave_type_id === block.leaveTypeId)?.name || 'leave';
+    if (!window.confirm(`Delete ${selectedStaff?.name || 'their'} ${typeName}, ${block.start} to ${block.end}? Those days become free to roster again.`)) return;
+    setApplyingRule(true);
+    const { error: clearError } = await clearStaffUnavailabilityRange(selectedStaffId, new Date(`${block.start}T00:00:00`), new Date(`${block.end}T00:00:00`));
+    setApplyingRule(false);
+    if (clearError) { setError(`Failed to delete leave: ${clearError.message}`); return; }
+    await loadAvailability();
+    await openReviewLeave();
+  };
+  const changeLeaveBlock = (block) => {
+    setEditingBlock({ start: block.start, end: block.end });
+    setLeaveTypeId(block.leaveTypeId);
+    setLeaveStart(block.start);
+    setLeaveEnd(block.end);
+    setReviewBlocks(null);
+    setShowLeaveModal(true);
+  };
+  const leaveDayCount = leaveStart && leaveEnd && leaveEnd >= leaveStart
+    ? Math.round((new Date(`${leaveEnd}T00:00:00`) - new Date(`${leaveStart}T00:00:00`)) / 86400000) + 1
+    : 0;
   const currentLeaving = (selectedStaffId in leavingOverrides ? leavingOverrides[selectedStaffId] : selectedStaff?.leaving_date) || '';
   const currentRank = rankOverrides[selectedStaffId] ?? selectedStaff?.rank ?? '';
   const currentName = nameOverrides[selectedStaffId] ?? selectedStaff?.name ?? '';
@@ -1113,11 +1168,18 @@ export default function StaffAvailabilityTab({ departmentId, staffList = [], lea
               Available All Month
             </button>
             <button
-              onClick={() => setShowLeaveModal(true)}
+              onClick={() => { setEditingBlock(null); setLeaveTypeId(''); setLeaveStart(''); setLeaveEnd(''); setShowLeaveModal(true); }}
               disabled={applyingRule}
               className="px-3 py-2 bg-purple-100 hover:bg-purple-200 text-purple-900 font-medium rounded-lg text-xs transition disabled:opacity-50"
             >
               + Add Leave
+            </button>
+            <button
+              onClick={openReviewLeave}
+              disabled={applyingRule}
+              className="px-3 py-2 bg-purple-50 hover:bg-purple-100 text-purple-900 font-medium rounded-lg text-xs border border-purple-200 transition disabled:opacity-50"
+            >
+              Review Leave
             </button>
             <button
               onClick={handleClearFutureUnavailability}
@@ -1317,17 +1379,30 @@ export default function StaffAvailabilityTab({ departmentId, staffList = [], lea
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-sm">
             <div className="flex justify-between items-start mb-4">
-              <h2 className="text-xl font-bold text-gray-900">Add Leave</h2>
-              <button onClick={() => setShowLeaveModal(false)} className="p-1 hover:bg-gray-100 rounded-lg">
+              <h2 className="text-xl font-bold text-gray-900">{editingBlock ? 'Change Leave' : 'Add Leave'}</h2>
+              <button onClick={() => { setShowLeaveModal(false); setEditingBlock(null); }} className="p-1 hover:bg-gray-100 rounded-lg">
                 <X size={20} />
               </button>
             </div>
 
             <p className="text-xs text-gray-600 mb-4">
-              Marks {selectedStaff?.name || 'this staff member'} unavailable for every day in this range.
+              Marks {selectedStaff?.name || 'this staff member'} on leave for every day from the first to the last, and counts their FTE's hours for it: 44 hours a week at 1.0 FTE, so two weeks at {formatFte(currentFte)} FTE counts {formatHours(leaveBlockHoursPerDay(currentFte) * 14)} hours.
             </p>
 
             <div className="space-y-4 mb-6">
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Leave Type</label>
+                <select
+                  value={leaveTypeId}
+                  onChange={(e) => setLeaveTypeId(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                >
+                  <option value="">Choose…</option>
+                  {leaveTypes.map(lt => (
+                    <option key={lt.leave_type_id} value={lt.leave_type_id}>{lt.code} · {lt.name}</option>
+                  ))}
+                </select>
+              </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Start Date</label>
                 <input
@@ -1338,7 +1413,7 @@ export default function StaffAvailabilityTab({ departmentId, staffList = [], lea
                 />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">End Date</label>
+                <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">Last Day</label>
                 <input
                   type="date"
                   value={leaveEnd}
@@ -1346,6 +1421,11 @@ export default function StaffAvailabilityTab({ departmentId, staffList = [], lea
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
                 />
               </div>
+              {leaveDayCount > 0 && (
+                <p className="text-sm text-gray-800">
+                  {leaveDayCount} day{leaveDayCount === 1 ? '' : 's'} · counts <strong>{formatHours(leaveBlockHoursPerDay(currentFte) * leaveDayCount)} hours</strong> towards FTE ({formatFte(currentFte)} FTE)
+                </p>
+              )}
             </div>
 
             <div className="flex gap-2">
@@ -1357,11 +1437,46 @@ export default function StaffAvailabilityTab({ departmentId, staffList = [], lea
               </button>
               <button
                 onClick={handleSubmitLeave}
-                disabled={!leaveStart || !leaveEnd || applyingRule}
+                disabled={!leaveStart || !leaveEnd || !leaveTypeId || applyingRule}
                 className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-medium py-2 rounded-lg transition"
               >
-                Add Leave
+                {editingBlock ? 'Save' : 'Add Leave'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {reviewBlocks && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50" onClick={() => setReviewBlocks(null)}>
+          <div className="bg-white rounded-lg shadow-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-between items-start mb-3">
+              <div>
+                <h2 className="text-xl font-bold text-gray-900">Leave</h2>
+                <p className="text-xs text-gray-600">{selectedStaff?.name} · from 90 days ago on</p>
+              </div>
+              <button onClick={() => setReviewBlocks(null)} className="p-1 hover:bg-gray-100 rounded-lg"><X size={20} /></button>
+            </div>
+            {reviewBlocks.length === 0 && <p className="text-sm text-gray-500">No leave recorded.</p>}
+            <div className="space-y-2">
+              {reviewBlocks.map(b => {
+                const lt = leaveTypes.find(t => t.leave_type_id === b.leaveTypeId);
+                const fmt = (d) => new Date(`${d}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+                return (
+                  <div key={`${b.start}-${b.leaveTypeId}`} className="p-3 border border-gray-200 rounded-lg">
+                    <p className="text-sm font-semibold text-gray-900">{lt ? `${lt.code} · ${lt.name}` : 'Leave'}</p>
+                    <p className="text-xs text-gray-600">
+                      {b.start === b.end ? fmt(b.start) : `${fmt(b.start)} – ${fmt(b.end)}`} · {b.days} day{b.days === 1 ? '' : 's'}
+                      {b.hours > 0 && ` · ${formatHours(b.hours)} h towards FTE`}
+                      {b.someUsualShift && (b.hours > 0 ? ' (plus usual shifts)' : ' · counts as their usual shifts')}
+                    </p>
+                    <div className="flex gap-2 mt-2">
+                      <button onClick={() => changeLeaveBlock(b)} disabled={applyingRule} className="px-3 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded-lg">Change</button>
+                      <button onClick={() => deleteLeaveBlock(b)} disabled={applyingRule} className="px-3 py-1 text-xs text-red-700 border border-red-300 hover:bg-red-50 rounded-lg">Delete</button>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>

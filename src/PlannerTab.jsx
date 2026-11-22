@@ -4,6 +4,9 @@ import {
   getJobTypesAndPlaces,
   getPlannerRange,
   getDaysBooked,
+  getOtherSiteBookings,
+  bulkSetStaffAvailability,
+  clearStaffUnavailabilityRange,
   getShiftPatternRules,
   createPlannerCard,
   deleteTheatreActivity,
@@ -119,6 +122,9 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
   // Every booking in the pay fortnights the view touches, for the FTE cap
   // (fteFortnight.js) — the view alone may be half a fortnight.
   const [fortnightBookings, setFortnightBookings] = useState([]);
+  // This department's staff at other Rstar sites (site and hours only), so
+  // booking and Suggest keep 10 hours' rest across sites.
+  const [otherSite, setOtherSite] = useState([]);
   const [selectedMeetingTypeId, setSelectedMeetingTypeId] = useState(null);
   const [meetingPick, setMeetingPick] = useState(null); // the meeting dialog: { meeting, draft }
   // Last 12 months of who did what, for ranking jobs in the Fill step.
@@ -131,6 +137,11 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
   const [suggesting, setSuggesting] = useState(false);
   // The + menu on a card (add or take off an extra place): its card id.
   const [placeMenuFor, setPlaceMenuFor] = useState(null);
+  // The Leave box's leave-type question: { staffId, dateStr, removeIds
+  // (bookings that day to take them off), current (their leave type, when
+  // changing it) }. lastLeaveTypeId: the type picked last, offered first.
+  const [leavePick, setLeavePick] = useState(null);
+  const [lastLeaveTypeId, setLastLeaveTypeId] = useState(null);
   // Height of the officer view's bottom tab bar, so the people picker can
   // sit just above it.
   const [navHeight, setNavHeight] = useState(64);
@@ -194,10 +205,14 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
     if (!departmentId) return;
     let cancelled = false;
     // Six days either side too, for the Shift Pattern Rules.
-    getDaysBooked(departmentId, addDays(payFortnightRange(startStr).from, -6), addDays(payFortnightRange(endStr).to, 6)).then(res => {
+    getDaysBooked(departmentId, addDays(payFortnightRange(startStr).from, -6), addDays(payFortnightRange(endStr).to, 6), { includeLeave: true }).then(res => {
       if (cancelled) return;
       if (res.error) setError(`Failed to load fortnight totals: ${res.error.message}`);
       else setFortnightBookings(res.data);
+    });
+    // Quietly empty if the other-site check isn't set up.
+    getOtherSiteBookings(departmentId, addDays(startStr, -1), addDays(endStr, 1)).then(res => {
+      if (!cancelled) setOtherSite(res.data || []);
     });
     return () => { cancelled = true; };
   }, [departmentId, startStr, endStr, refreshKey]);
@@ -282,6 +297,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
   const cardById = new Map(cards.map(c => [c.theatre_activity_id, c]));
   const cardTitle = (card, job) => job?.name || `${card.locations?.name || locationName(card.location_id)} · ${activityName(card.activity_id)}`;
   const assignmentLabel = (a) => {
+    if (a.otherSite) return `a shift at ${a.otherSite}`;
     const card = cardById.get(a.theatre_activity_id);
     return card ? cardTitle(card, jobForCard(card, jobTypes)) : (a.shifts?.name || 'a shift');
   };
@@ -454,7 +470,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
   // their FTE for that pay fortnight already allocated. null = free.
   const conflictFor = (staffId, card) => (hasLeft(staffById.get(staffId), card.date) ? leftLabel(staffById.get(staffId)) : null) || dayConflict({
     staffId, dateStr: card.date, startTime: card.start_time, endTime: card.end_time,
-    cardId: card.theatre_activity_id, assignments, unavailable, cardLabel: assignmentLabel,
+    cardId: card.theatre_activity_id, assignments: [...assignments, ...otherSite], unavailable, cardLabel: assignmentLabel,
     clashFree: isAdminCard(card),
     isClashFree: (a) => { const c = cardById.get(a.theatre_activity_id); return !!c && isAdminCard(c); },
   }) || (!isAdminCard(card) && fteFull(staffById.get(staffId), card.date, fortnightBookings, leaveHours) ? FTE_FULL_LABEL : null)
@@ -738,7 +754,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
         const result = suggestFill(slots, {
           staff: refData.staff.filter(st => st.active !== false && (!staffOnly || (st.fte ?? DEFAULT_FTE) > 0)),
           rankRows, todayStr, assignments, unavailable, bookings: fortnightBookings,
-          rules: patternRules, offShiftId, exposure, leaveHours, viewFrom: startStr, viewTo: endStr,
+          rules: patternRules, offShiftId, exposure, leaveHours, viewFrom: startStr, viewTo: endStr, otherSite,
           isAdminCard, sameJob: sameJobAs, cardLabel: assignmentLabel,
           cardOf: (a) => cardById.get(a.theatre_activity_id),
           activityKeyOf: (a) => {
@@ -942,6 +958,71 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
             Offer {OFFER_LABEL[role]}
           </button>
         )))}
+      </div>
+    );
+  };
+
+  // Leave: each day's Leave box (who's off, and the code). Leave lives in
+  // availability (unavailable with a leave type), like imported leave and
+  // leave requests, so it greys out their places, Suggest skips them, and
+  // it counts towards FTE (getDaysBooked includeLeave).
+  const leaveTypes = refData.leaveTypes || [];
+  const leaveCodeOf = (id) => leaveTypes.find(lt => lt.leave_type_id === id)?.code || 'Leave';
+  const startLeave = (staff, dateStr) => {
+    const booked = assignments.filter(a => a.staff_id === staff.staff_id && a.date === dateStr && !a.on_call && !a.leave_code);
+    if (booked.length && !window.confirm(`${staff.name} is booked on ${booked.map(assignmentLabel).join(', ')} that day. Take them off and put them on leave? The place is left empty to fill or offer.`)) return;
+    setLeavePick({ staffId: staff.staff_id, dateStr, removeIds: booked.map(a => a.assignment_id) });
+  };
+  const saveLeave = (leaveTypeId) => {
+    const { staffId, dateStr, removeIds = [] } = leavePick;
+    setLeavePick(null);
+    setLastLeaveTypeId(leaveTypeId);
+    run("Couldn't record the leave", async () => {
+      for (const id of removeIds) {
+        const { error } = await deleteStaffAssignment(id);
+        if (error) return { error };
+      }
+      return bulkSetStaffAvailability(departmentId, staffId, [new Date(`${dateStr}T00:00:00`)], false, leaveTypeId);
+    });
+  };
+  const removeLeave = () => {
+    const { staffId, dateStr } = leavePick;
+    setLeavePick(null);
+    const day = new Date(`${dateStr}T00:00:00`);
+    run("Couldn't take the leave off", () => clearStaffUnavailabilityRange(staffId, day, day));
+  };
+
+  const renderLeave = (dateStr) => {
+    const off = unavailable.filter(u => u.date === dateStr && u.leave_type_id);
+    const canAdd = mode === 'fill' && selectedStaff && !locked(dateStr) && !off.some(u => u.staff_id === selectedStaff.staff_id);
+    if (!off.length && !canAdd) return null;
+    return (
+      <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-1.5 space-y-0.5">
+        <p className="text-[10px] font-semibold text-gray-500 uppercase">Leave</p>
+        {off.map(u => {
+          const s = staffById.get(u.staff_id);
+          return (
+            <button
+              key={u.staff_id}
+              disabled={busy || locked(dateStr) || !!selectedStaff}
+              onClick={() => setLeavePick({ staffId: u.staff_id, dateStr, current: u.leave_type_id })}
+              className="block w-full text-left text-xs text-gray-700 truncate hover:underline disabled:no-underline"
+              title={`${s?.name || 'Someone'} · ${leaveTypes.find(lt => lt.leave_type_id === u.leave_type_id)?.name || 'Leave'}${selectedStaff ? '' : ' — tap to change or take off'}`}
+            >
+              {firstName(s?.name || '?')} · <span className="font-semibold">{leaveCodeOf(u.leave_type_id)}</span>
+            </button>
+          );
+        })}
+        {canAdd && (
+          <button
+            onClick={() => startLeave(selectedStaff, dateStr)}
+            disabled={busy || leaveTypes.length === 0}
+            className="w-full text-[10px] text-gray-700 border border-gray-400 rounded hover:bg-white"
+            title={leaveTypes.length ? `Put ${selectedStaff.name} on leave this day` : 'Add leave types in Settings first'}
+          >
+            + leave for {firstName(selectedStaff.name)}
+          </button>
+        )}
       </div>
     );
   };
@@ -1265,6 +1346,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
           {dutyTypes.length > 0 && (
             <div className="max-w-sm">{renderDuties(startStr)}</div>
           )}
+          <div className="max-w-sm">{renderLeave(startStr)}</div>
           {meetings.some(m => m.date === startStr) && (
             <div className="max-w-sm">{renderMeetings(startStr)}</div>
           )}
@@ -1356,6 +1438,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
                       {dayCards.map(renderCard)}
                       {renderDuties(dateStr)}
                       {renderMeetings(dateStr)}
+                      {renderLeave(dateStr)}
                     </div>
                   );
                 })}
@@ -1431,6 +1514,39 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
           </div>
         </div>
       )}
+
+      {leavePick && (() => {
+        const s = staffById.get(leavePick.staffId);
+        const ordered = [...leaveTypes].sort((x, y) => (y.leave_type_id === (leavePick.current || lastLeaveTypeId)) - (x.leave_type_id === (leavePick.current || lastLeaveTypeId)));
+        return (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50" onClick={() => setLeavePick(null)}>
+            <div className="bg-white rounded-lg shadow-lg p-5 w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
+              <h2 className="text-lg font-bold text-gray-900">{leavePick.current ? 'Change leave' : 'What type of leave?'}</h2>
+              <p className="text-sm text-gray-600 mb-3">
+                {s?.name} · {new Date(`${leavePick.dateStr}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long' })}
+              </p>
+              <div className="space-y-1">
+                {ordered.map(lt => (
+                  <button
+                    key={lt.leave_type_id}
+                    onClick={() => saveLeave(lt.leave_type_id)}
+                    disabled={busy}
+                    className={`w-full text-left px-3 py-2 rounded-lg border text-sm ${lt.leave_type_id === (leavePick.current || lastLeaveTypeId) ? 'border-blue-400 bg-blue-50' : 'border-gray-200 hover:bg-gray-50'}`}
+                  >
+                    <span className="font-semibold">{lt.code}</span> · {lt.name}
+                  </button>
+                ))}
+              </div>
+              <div className="flex justify-between mt-4">
+                {leavePick.current
+                  ? <button onClick={removeLeave} disabled={busy} className="px-3 py-1.5 text-sm text-red-700 border border-red-300 rounded-lg hover:bg-red-50">Take off leave</button>
+                  : <span />}
+                <button onClick={() => setLeavePick(null)} className="px-3 py-1.5 text-sm bg-gray-100 hover:bg-gray-200 rounded-lg">Cancel</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {suggestion && peopleListOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50" onClick={() => setPeopleListOpen(false)}>

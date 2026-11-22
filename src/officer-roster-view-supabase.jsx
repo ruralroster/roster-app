@@ -215,6 +215,9 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
   const [fortnightRankFilter, setFortnightRankFilter] = useState('');
   const [fortnightSelectedStaffId, setFortnightSelectedStaffId] = useState('');
   const [fortnightAllocations, setFortnightAllocations] = useState([]);
+  // Leave recorded as availability in the Fortnight tab's window, for its
+  // FTE totals only (getDaysBooked includeLeave; never drawn on the grid).
+  const [fortnightLeave, setFortnightLeave] = useState([]);
   const [fortnightDutyAssignments, setFortnightDutyAssignments] = useState([]);
   const [loadingFortnight, setLoadingFortnight] = useState(false);
   const [fortnightModalDate, setFortnightModalDate] = useState(null); // Date | null — which day cell's picker is open
@@ -566,7 +569,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     let cancelled = false;
     getDutyFairness(departmentId, selectedDate).then(({ data }) => { if (!cancelled) setDutyFairness(data); });
     const { from, to } = payFortnightRange(toLocalDateStr(selectedDate));
-    getDaysBooked(departmentId, from, to).then(({ data }) => { if (!cancelled && data) setFortnightBookings(data); });
+    getDaysBooked(departmentId, from, to, { includeLeave: true }).then(({ data }) => { if (!cancelled && data) setFortnightBookings(data); });
     const dateStr = toLocalDateStr(selectedDate);
     getDaysBooked(departmentId, dateStr, addDays(dateStr, 1)).then(({ data }) => { if (!cancelled && data) setOnCallLinkBookings(data); });
     return () => { cancelled = true; };
@@ -706,10 +709,13 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
       setLoadingFortnight(true);
 
       try {
-        const [assignRes, dutyRes] = await Promise.all([
+        const fnFrom = toLocalDateStr(fortnightStart);
+        const [assignRes, dutyRes, leaveRes] = await Promise.all([
           getAllStaffAssignmentsForRange(departmentId, fortnightStart, 14),
           getDutyAssignmentsForRange(departmentId, fortnightStart, 14),
+          getDaysBooked(departmentId, fnFrom, addDays(fnFrom, 13), { includeLeave: true }),
         ]);
+        setFortnightLeave((leaveRes.data || []).filter(r => !r.shift_id && r.leave_code));
         if (assignRes.error) throw assignRes.error;
         if (dutyRes.error) throw dutyRes.error;
         setFortnightAllocations(assignRes.data);
@@ -3549,7 +3555,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
       // A leave day counts as the average shift for their rank.
       const fnLeaveHours = leaveDayHours(refData.staff, fortnightAllocations);
       const fnLoad = (s) => {
-        const hours = hoursBooked(s.staff_id, fnFromStr, fnToStr, fortnightAllocations, fnLeaveHours);
+        const hours = hoursBooked(s.staff_id, fnFromStr, fnToStr, [...fortnightAllocations, ...fortnightLeave], fnLeaveHours);
         const target = fortnightTargetHours(s.fte);
         // FTE 0 (casual or locum): no cap, and listed last.
         return { hours, target, left: target > 0 ? Math.max(0, 1 - hours / target) : 0, full: target > 0 && hours >= target - 0.01 };

@@ -65,11 +65,19 @@ export function leaveDayHours(staffList, bookings) {
   return (staffId) => Math.floor(average.get(rankOf.get(staffId) ?? '') ?? fallback);
 }
 
+// A leave block (Staff & Availability > Add leave) counts the person's FTE
+// over its length: 44 hours a week x FTE, spread over every day of it, so
+// two weeks at 0.5 FTE is 44 hours and at 1.0 is 88. Hours a day.
+export function leaveBlockHoursPerDay(fte) {
+  return Math.round(((fte ?? DEFAULT_FTE) * FULL_TIME_HOURS_PER_WEEK / 7) * 100) / 100;
+}
+
 // Hours booked for staffId from fromStr to toStr. bookings: staff_assignments
 // rows with { staff_id, date, shift_id, on_call, leave_code, shifts: {
 // start_time, end_time } }. One shift over two session cards counts once;
 // on-call cards don't count (on call isn't rostered hours); a leave day
-// counts leaveHours(staffId) (leaveDayHours), once a day.
+// counts its own leave_hours if it has them (a leave block), else
+// leaveHours(staffId) (leaveDayHours), once a day.
 export function hoursBooked(staffId, fromStr, toStr, bookings, leaveHours = () => LEAVE_DAY_HOURS) {
   const seen = new Set();
   let hours = 0;
@@ -78,7 +86,9 @@ export function hoursBooked(staffId, fromStr, toStr, bookings, leaveHours = () =
     const key = b.leave_code ? `${b.date}|leave` : `${b.date}|${b.shift_id || ''}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    hours += b.leave_code ? leaveHours(staffId) : shiftHours(b.date, b.shifts?.start_time, b.shifts?.end_time);
+    hours += b.leave_code
+      ? (b.leave_hours != null ? Number(b.leave_hours) : leaveHours(staffId))
+      : shiftHours(b.date, b.shifts?.start_time, b.shifts?.end_time);
   }
   return hours;
 }

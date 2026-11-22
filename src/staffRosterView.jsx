@@ -9,6 +9,8 @@ import AvailableShifts from './AvailableShifts';
 import MyMeetings from './MyMeetings';
 import { CallbackBanner, MyCallbacks } from './CallbackPanel';
 import useScreenTime from './useScreenTime';
+import MySitesCalendar from './MySitesCalendar';
+import { supabase } from './supabaseClient';
 import {
   getStaffById,
   getStaffAssignmentsForStaffDate,
@@ -69,6 +71,7 @@ import {
 import { buildAssignmentsIcs, getIcsExportFilename, downloadTextFile } from './icsExport';
 import { toLocalDateStr } from './dateUtils';
 import { NO_COFFEE, NO_MILK, COFFEE_TYPES, MILK_TYPES, milkIsFixedForCoffeeType, parseCoffeeOrder, composeCoffeeOrder, coffeeAttention } from './coffeeUtils';
+import { coffeeTextMessage, pickCoffeeTextVariant } from './coffeeText';
 import { getMondayOfWeek } from './payrollExport';
 import { isIOS } from './installPrompt';
 import { GRADE_LABEL } from './staffGrade';
@@ -140,6 +143,15 @@ function startOfWeek(date) {
 export default function StaffRosterView({ departmentId, staffId }) {
   // Staff using the app, for Reports > Business case (adoption).
   useScreenTime(departmentId, 'staff_app');
+  // Every Rstar site this login is staff at (my_sites): two or more gives
+  // the Week tab an "All my sites" switch (MySitesCalendar).
+  const [mySites, setMySites] = useState([]);
+  const [allSites, setAllSites] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    supabase.rpc('my_sites').then(({ data }) => { if (!cancelled) setMySites(data || []); });
+    return () => { cancelled = true; };
+  }, []);
   // A notification about an offered shift links to ?tab=volunteer (see
   // supabase/functions/notify-volunteering), opening Variation directly.
   const [activeTab, setActiveTab] = useState(() => (
@@ -255,6 +267,8 @@ export default function StaffRosterView({ departmentId, staffId }) {
   const [coffeeModalStaff, setCoffeeModalStaff] = useState([]); // [{ staff_id, name, rank, coffee_order, sessionGroups, slots: [{ group, locationId }] }]
   const [coffeeCopied, setCoffeeCopied] = useState(false);
   const [coffeeChoosingHandover, setCoffeeChoosingHandover] = useState(false); // "Text order" pressed: pickup or delivery?
+  // Which of the ten wordings this text uses (coffeeUtils), new each press.
+  const [coffeeTextVariant, setCoffeeTextVariant] = useState(() => pickCoffeeTextVariant());
   // Today's people and visitors still needing a coffee order — the red count
   // on the Coffee button. coffeeAttentionPick holds the coffee chosen for
   // each one in the popup before it's added (key -> composed order).
@@ -1257,20 +1271,9 @@ export default function StaffRosterView({ departmentId, staffId }) {
   };
 
   // The text to the café, for picking the order up or having it delivered.
-  const COFFEE_HANDOVER_LINE = {
-    pickup: "I can pick it up at 10:25, but let me know if delivery is easier!",
-    delivery: "If you can deliver it to the hospital today at 10:30 that'd be awesome. If not, let me know.",
-  };
-  const coffeeOrderMessage = (handover) => [
-    'Good morning, the order for the hospital coffees is:',
-    '',
-    ...coffeeSummaryLines,
-    '',
-    COFFEE_HANDOVER_LINE[handover],
-    '',
-    'Thanks!',
-    'Have a good day',
-  ].join('\n');
+  // One of ten wordings (coffeeUtils COFFEE_TEXT_VARIANTS), picked afresh
+  // each time Text order is pressed.
+  const coffeeOrderMessage = (handover) => coffeeTextMessage(coffeeTextVariant, coffeeSummaryLines, handover);
 
   // iOS Safari and Android disagree on the separator between an sms: URI's
   // number and its query string (& vs ?) — there's no single syntax both
@@ -1609,10 +1612,35 @@ export default function StaffRosterView({ departmentId, staffId }) {
 
     if (activeTab === 'week') {
       const weekStart = getMondayOfWeek(currentDate);
+      const siteSwitch = mySites.length > 1 && (
+        <div className="flex gap-1 mb-4 p-1 bg-gray-100 rounded-lg text-sm font-medium">
+          {[[false, 'This site'], [true, `All my sites (${mySites.length})`]].map(([on, label]) => (
+            <button
+              key={label}
+              onClick={() => setAllSites(on)}
+              aria-pressed={allSites === on}
+              className={`flex-1 py-1.5 rounded-md ${allSites === on ? 'bg-white shadow-sm text-gray-900' : 'text-gray-600 hover:text-gray-900'}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      );
+      if (allSites && mySites.length > 1) {
+        return (
+          <div className="p-4 pb-24">
+            <div className="max-w-3xl mx-auto">
+              {siteSwitch}
+              <MySitesCalendar sites={mySites} staffName={staffMember?.name} />
+            </div>
+          </div>
+        );
+      }
 
       return (
         <div className="p-4 pb-24">
           <div className="max-w-3xl mx-auto">
+            {siteSwitch}
             <div className="bg-white rounded-lg shadow-sm p-6 mb-6 flex items-center justify-between">
               <div>
                 <h1 className="text-2xl font-bold text-gray-900">Week of {formatDateShort(weekStart)}</h1>
@@ -2663,7 +2691,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
                         </div>
                       ) : (
                         <button
-                          onClick={() => setCoffeeChoosingHandover(true)}
+                          onClick={() => { setCoffeeTextVariant(v => pickCoffeeTextVariant(v)); setCoffeeChoosingHandover(true); }}
                           className="block w-full text-center px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white text-sm font-medium rounded-lg transition"
                         >
                           Text order to {department?.coffee_place_name || 'Coffee Place'}

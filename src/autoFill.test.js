@@ -151,3 +151,13 @@ describe('leave hours', () => {
     expect(leaveDayHours(staff, [])('a')).toBe(8); // 8.8, rounded down
   });
 });
+
+describe('other sites', () => {
+  it('keeps 10 hours after a shift at another site', () => {
+    const staff = [person('alice')];
+    const early = slot(card('c1', '2026-11-03', { start_time: '07:00', end_time: '15:00' }));
+    const tullyNight = { staff_id: 'alice', date: '2026-11-02', on_call: false, theatre_activity_id: null, shifts: { start_time: '21:00', end_time: '08:30' }, otherSite: 'Tully Hospital' };
+    expect(suggestFill([early], ctxFor(staff, { otherSite: [tullyNight] })).unfilled).toEqual([early.key]);
+    expect(suggestFill([early], ctxFor(staff)).unfilled).toEqual([]);
+  });
+});

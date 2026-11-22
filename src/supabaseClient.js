@@ -1859,7 +1859,9 @@ export async function toggleStaffAvailability(departmentId, staffId, date, avail
 // off, fortnightly pattern, weekdays/all-month bulk actions) never
 // clobber whatever leave type a day already had. Pass it explicitly
 // (including `null`, to clear it) when the caller does care.
-export async function bulkSetStaffAvailability(departmentId, staffId, dates, available, leaveTypeId) {
+// leaveHours: a leave block's hours a day towards FTE (leaveBlockHoursPerDay),
+// or null for a day that counts as a usual shift.
+export async function bulkSetStaffAvailability(departmentId, staffId, dates, available, leaveTypeId, leaveHours) {
   console.log('bulkSetStaffAvailability called', departmentId, staffId, dates.length, available, leaveTypeId);
   if (!dates.length) return { data: [], error: null };
 
@@ -1872,6 +1874,7 @@ export async function bulkSetStaffAvailability(departmentId, staffId, dates, ava
       // A rule or leave block is a plain day off, not working elsewhere.
       working_elsewhere: false,
       ...(leaveTypeId !== undefined ? { leave_type_id: leaveTypeId } : {}),
+      ...(leaveHours !== undefined ? { leave_hours: leaveHours } : {}),
     }));
 
     const { data, error } = await supabase
@@ -1884,6 +1887,20 @@ export async function bulkSetStaffAvailability(departmentId, staffId, dates, ava
     console.error('bulkSetStaffAvailability error:', err);
     return { data: null, error: err };
   }
+}
+
+// A person's leave days (unavailable with a leave type) from fromStr on,
+// for Staff & Availability > Review leave.
+export async function getStaffLeaveDays(staffId, fromStr) {
+  const { data, error } = await supabase
+    .from('staff_availability')
+    .select('*')
+    .eq('staff_id', staffId)
+    .eq('available', false)
+    .not('leave_type_id', 'is', null)
+    .gte('date', fromStr)
+    .order('date');
+  return { data: data || [], error };
 }
 
 // Removes unavailable (false) records in a date range — used to undo
@@ -2587,15 +2604,49 @@ export async function getCaseMixReport(departmentId) {
   }
 }
 
+// When this department's staff work at another Rstar site (same login,
+// another department): the site and hours only, as booking rows the
+// Planner's clash and 10-hour rest checks can read (other_site_bookings,
+// migrations/2026-11-21_multi_site.sql). Empty for a non-officer.
+export async function getOtherSiteBookings(departmentId, fromStr, toStr) {
+  const { data, error } = await supabase.rpc('other_site_bookings', { p_department_id: departmentId, p_from: fromStr, p_to: toStr });
+  if (error) return { data: [], error };
+  return {
+    data: (data || []).map(r => ({
+      staff_id: r.staff_id, date: r.date, on_call: false, leave_code: null, theatre_activity_id: null,
+      shifts: { start_time: r.start_time, end_time: r.end_time }, otherSite: r.site_name,
+    })),
+    error: null,
+  };
+}
+
 // Everyone's bookings from fromStr to toStr, with shift times, for the FTE
 // cap (fteFortnight.js hoursBooked).
-export async function getDaysBooked(departmentId, fromStr, toStr) {
+// includeLeave: leave recorded as availability (unavailable with a leave
+// type: the Planner's Leave box, imports, leave requests) comes back too,
+// as leave rows ({ leave_code, no shift }), so it counts towards FTE like
+// leave on a booking (fteFortnight.js hoursBooked, once a day).
+export async function getDaysBooked(departmentId, fromStr, toStr, { includeLeave = false } = {}) {
   try {
-    const { data, error } = await supabase.from('staff_assignments')
-      .select('staff_id, date, shift_id, on_call, leave_code, shifts(start_time, end_time)')
-      .eq('department_id', departmentId).gte('date', fromStr).lte('date', toStr);
-    if (error) throw error;
-    return { data: data || [], error: null };
+    const [booked, leave, types] = await Promise.all([
+      supabase.from('staff_assignments')
+        .select('staff_id, date, shift_id, on_call, leave_code, shifts(start_time, end_time)')
+        .eq('department_id', departmentId).gte('date', fromStr).lte('date', toStr),
+      includeLeave
+        ? supabase.from('staff_availability')
+          .select('*, staff!inner(department_id)')
+          .eq('staff.department_id', departmentId).eq('available', false).not('leave_type_id', 'is', null)
+          .gte('date', fromStr).lte('date', toStr)
+        : Promise.resolve({ data: [] }),
+      includeLeave ? supabase.from('leave_types').select('leave_type_id, code').eq('department_id', departmentId) : Promise.resolve({ data: [] }),
+    ]);
+    if (booked.error) throw booked.error;
+    if (leave.error) throw leave.error;
+    const codeOf = new Map((types.data || []).map(t => [t.leave_type_id, t.code]));
+    const leaveRows = (leave.data || []).map(l => ({
+      staff_id: l.staff_id, date: l.date, shift_id: null, on_call: false, leave_code: codeOf.get(l.leave_type_id) || 'Leave', shifts: null, leave_hours: l.leave_hours ?? null,
+    }));
+    return { data: [...(booked.data || []), ...leaveRows], error: null };
   } catch (err) {
     console.error('getDaysBooked error:', err);
     return { data: null, error: err };
@@ -4813,7 +4864,7 @@ export async function getPlannerRange(departmentId, rangeStartDate, numDays) {
         .lte('date', toStr),
       supabase
         .from('staff_availability')
-        .select('staff_id, date, available, staff!inner(department_id)')
+        .select('staff_id, date, available, leave_type_id, staff!inner(department_id)')
         .eq('staff.department_id', departmentId)
         .eq('available', false)
         .gte('date', fromStr)

@@ -109,6 +109,8 @@ export function stretches(dates) {
 //     pay fortnight to 6 days after the last: { staff_id, date, shift_id,
 //     on_call, leave_code, shifts }), for FTE, leave and pattern rules,
 //   rules, offShiftId, exposure (getExposureStats),
+//   otherSite (this department's staff working at other Rstar sites, as
+//     booking rows: clashes and rest only, never fairness or FTE),
 //   viewFrom, viewTo (the days shown; FTE comes first only in a pay
 //     fortnight wholly inside them),
 //   isAdminCard(card), sameJob(cardA, cardB), cardLabel(assignment),
@@ -166,7 +168,7 @@ export function suggestFill(slots, ctx) {
     const admin = isAdminCard(card);
     const clash = dayConflict({
       staffId, dateStr: card.date, startTime: card.start_time, endTime: card.end_time,
-      cardId: card.theatre_activity_id, assignments: st.assignments, unavailable, cardLabel,
+      cardId: card.theatre_activity_id, assignments: [...st.assignments, ...(ctx.otherSite || [])], unavailable, cardLabel,
       clashFree: admin,
       isClashFree: (a) => a.isAdmin,
     });
