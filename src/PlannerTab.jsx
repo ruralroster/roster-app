@@ -15,6 +15,7 @@ import {
   deleteStaffAssignment,
   setPlannerVisitor,
   setCardExtraPlaces,
+  setBookingHours,
   renamePlannerVisitor,
   deletePlannerVisitor,
   updateDutyAssignment,
@@ -145,6 +146,9 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
   // An on-call slot tapped with nobody picked: { dateStr, dutyType, holder,
   // scores (staffId -> on-call fairness, lower = more due) }.
   const [dutyPick, setDutyPick] = useState(null);
+  // A booked name tapped: { a, card, job, start, end } — change their hours
+  // that day, or take them off.
+  const [bookingMenu, setBookingMenu] = useState(null);
   const [lastLeaveTypeId, setLastLeaveTypeId] = useState(null);
   // Height of the officer view's bottom tab bar, so the people picker can
   // sit just above it.
@@ -364,6 +368,16 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
     if (!window.confirm(`Take ${a.staff?.name || 'this person'} off ${cardTitle(card, job)}?`)) return;
     run("Couldn't remove the booking", () => deleteStaffAssignment(a.assignment_id));
   };
+  // Tapping a booked name: their hours that day can be changed (to get the
+  // fortnight's hours right), or they can be taken off.
+  const openBookingMenu = (a, card, job) => {
+    setBookingMenu({ a, card, job, start: hhmm(a.shifts?.start_time || card.start_time), end: hhmm(a.shifts?.end_time || card.end_time) });
+  };
+  const saveBookingHours = () => {
+    const { a, start, end } = bookingMenu;
+    setBookingMenu(null);
+    run(`Couldn't change ${a.staff?.name || 'their'} hours`, () => setBookingHours(departmentId, a.assignment_id, `${start}:00`, `${end}:00`));
+  };
 
   // place is null for a visitor DR App added with no place of their own.
   const editVisitor = (card, place, slot, existing) => {
@@ -518,15 +532,24 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
     const s = staffById.get(staffId);
     if (!s) return undefined;
     const text = staffHoverText(s, fortnightLoad(s, dateStr, fortnightBookings, leaveHours), refData.advancedSkills || []);
-    return mode === 'fill' && !locked(dateStr) ? `${text} — tap to remove` : text;
+    return mode === 'fill' && !locked(dateStr) ? `${text} — tap to change their hours or take them off` : text;
   };
-  const namePill = (staffId, name, category, dateStr, extraClass = '') => (
+  // A booking whose hours differ from its card's (changed in the booking
+  // menu): "08:00–15:00", shown after the name.
+  const adjustedHours = (a, card) => {
+    const st = a.shifts?.start_time;
+    const en = a.shifts?.end_time;
+    if (!st || !en || (hhmm(st) === hhmm(card.start_time) && hhmm(en) === hhmm(card.end_time))) return null;
+    return `${hhmm(st)}–${hhmm(en)}`;
+  };
+  const namePill = (staffId, name, category, dateStr, extraClass = '', hoursNote = null) => (
     <span
-      title={hoverFor(staffId, dateStr)}
+      title={`${hoverFor(staffId, dateStr) || ''}${hoursNote ? ` · working ${hoursNote} this day` : ''}`}
       className={`inline-block max-w-full truncate px-1.5 py-0.5 rounded text-xs font-medium ${extraClass}`}
       style={jobBoxStyle(category, holdsOnCallDuty(dutyKeysFor(staffId, dateStr), refData.dutyTypes))}
     >
       {firstName(name)}
+      {hoursNote && <span className="ml-1 text-[10px] font-normal opacity-80">{hoursNote}</span>}
     </span>
   );
 
@@ -546,11 +569,10 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
         <button
           key={key}
           disabled={mode !== 'fill' || busy || locked(card.date)}
-          onClick={() => unbook(a, card, job)}
+          onClick={() => openBookingMenu(a, card, job)}
           className={`block w-full text-left ${bookingRing(a.staff_id, card.date)}`}
-          title={mode === 'fill' ? `${a.staff?.name} — tap to remove` : a.staff?.name}
         >
-          {namePill(a.staff_id, a.staff?.name, category, card.date)}
+          {namePill(a.staff_id, a.staff?.name, category, card.date, '', adjustedHours(a, card))}
         </button>
       );
     }
@@ -945,11 +967,10 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
               <button
                 key={a.assignment_id}
                 disabled={mode !== 'fill' || busy || locked(card.date)}
-                onClick={() => unbook(a, card, job)}
+                onClick={() => openBookingMenu(a, card, job)}
                 className={bookingRing(a.staff_id, card.date)}
-                title={`${a.staff?.name}${job ? ' (extra)' : ''}${mode === 'fill' ? ' — tap to remove' : ''}`}
               >
-                {namePill(a.staff_id, a.staff?.name, category, card.date)}
+                {namePill(a.staff_id, a.staff?.name, category, card.date, '', adjustedHours(a, card))}
               </button>
             ))}
           </div>
@@ -1548,6 +1569,62 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
           </div>
         </div>
       )}
+
+      {bookingMenu && (() => {
+        const { a, card, job, start, end } = bookingMenu;
+        const s = staffById.get(a.staff_id);
+        const valid = /^\d{2}:\d{2}$/.test(start) && /^\d{2}:\d{2}$/.test(end) && start !== end;
+        const len = (st, en) => {
+          const toM = (t) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+          let d = toM(en) - toM(st);
+          if (d <= 0) d += 24 * 60;
+          return d / 60;
+        };
+        const before = s ? fortnightLoad(s, card.date, fortnightBookings, leaveHours) : null;
+        const oldLen = len(hhmm(a.shifts?.start_time || card.start_time), hhmm(a.shifts?.end_time || card.end_time));
+        const after = before && valid ? before.hours - oldLen + len(start, end) : null;
+        // Would the new hours clash, or leave under 10 hours' rest?
+        const clash = valid && s ? dayConflict({
+          staffId: a.staff_id, dateStr: card.date, startTime: `${start}:00`, endTime: `${end}:00`, cardId: null,
+          assignments: [...assignments, ...otherSite].filter(x => x.assignment_id !== a.assignment_id),
+          unavailable: [], cardLabel: assignmentLabel, clashFree: isAdminCard(card),
+          isClashFree: (x) => { const c = cardById.get(x.theatre_activity_id); return !!c && isAdminCard(c); },
+        }) : null;
+        const changed = valid && (start !== hhmm(a.shifts?.start_time || card.start_time) || end !== hhmm(a.shifts?.end_time || card.end_time));
+        return (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50" onClick={() => setBookingMenu(null)}>
+            <div className="bg-white rounded-lg shadow-lg p-5 w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
+              <h2 className="text-lg font-bold text-gray-900">{a.staff?.name}</h2>
+              <p className="text-sm text-gray-600 mb-3">
+                {cardTitle(card, job)} · {new Date(`${card.date}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long' })}
+              </p>
+              <p className="text-xs font-semibold text-gray-600 uppercase mb-1">Their hours this day</p>
+              <div className="flex items-center gap-2 mb-2">
+                <input type="time" value={start} onChange={(e) => setBookingMenu(m => ({ ...m, start: e.target.value }))} className="px-2 py-1 border border-gray-300 rounded" aria-label="Start" />
+                <span>to</span>
+                <input type="time" value={end} onChange={(e) => setBookingMenu(m => ({ ...m, end: e.target.value }))} className="px-2 py-1 border border-gray-300 rounded" aria-label="Finish" />
+              </div>
+              <p className="text-xs text-gray-500 mb-2">The card stays {hhmm(card.start_time)}–{hhmm(card.end_time)}; only {firstName(a.staff?.name)}'s hours change.</p>
+              {before && before.target > 0 && after !== null && (
+                <p className="text-sm text-gray-800 mb-2">
+                  Pay fortnight: {formatHours(before.hours)} → <strong>{formatHours(after)}</strong> of {formatHours(before.target)} h
+                  {after > before.target + 0.01 && <span className="text-amber-700"> (over their FTE)</span>}
+                </p>
+              )}
+              {clash && <p className="text-sm text-red-700 mb-2">{clash}</p>}
+              <div className="flex flex-wrap gap-2 mt-3">
+                <button onClick={saveBookingHours} disabled={busy || !changed} className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white rounded-lg font-medium">
+                  {clash ? 'Save anyway' : 'Save hours'}
+                </button>
+                <button onClick={() => { setBookingMenu(null); unbook(a, card, job); }} disabled={busy} className="px-3 py-1.5 text-sm text-red-700 border border-red-300 rounded-lg hover:bg-red-50">
+                  Take off {cardTitle(card, job)}
+                </button>
+                <button onClick={() => setBookingMenu(null)} className="px-3 py-1.5 text-sm bg-gray-100 hover:bg-gray-200 rounded-lg">Cancel</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {dutyPick && (() => {
         const list = dutyCandidates(dutyPick.dateStr, dutyPick.dutyType, dutyPick.scores);

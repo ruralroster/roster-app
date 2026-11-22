@@ -4921,6 +4921,20 @@ async function shiftForHours(departmentId, startTime, endTime, nameHint) {
   return created.shift_id;
 }
 
+// One person's hours on one day (the Planner's booking menu): their
+// booking moves to the shift with exactly these hours (made if need be), so
+// FTE, rest checks and payroll all read the new hours. The card's own
+// hours, and everyone else on it, are unchanged.
+export async function setBookingHours(departmentId, assignmentId, startTime, endTime) {
+  try {
+    const shiftId = await shiftForHours(departmentId, startTime, endTime, 'Adjusted');
+    const { error } = await supabase.from('staff_assignments').update({ shift_id: shiftId }).eq('assignment_id', assignmentId);
+    return { error };
+  } catch (err) {
+    return { error: err };
+  }
+}
+
 // A job dropped onto a day: an empty card for it with the job's hours.
 // extra: more theatre_activities fields, e.g. the import's required_grade.
 export async function createPlannerCard(departmentId, dateStr, job, extra = {}) {
