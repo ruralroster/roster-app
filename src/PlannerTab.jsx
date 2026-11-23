@@ -48,7 +48,7 @@ import { JOB_COLOURS, jobCategoryFor, jobCategoryRank, jobCardStyle, jobBoxStyle
 import {
   hhmm, addDays, firstName, jobForCard, isAdminJob, isSenior, hasAnySkill, onCallSeniorProblem, placeMismatch, layOutCard, dayConflict, rankJobsForPerson, rankPeopleForPlace, withBookings, extraPlacesFor,
 } from './plannerUtils';
-import { payFortnightRange, fortnightLoad, fteFull, hoursBooked, leaveDayHours, formatHours, FULL_TIME_HOURS_PER_WEEK, FTE_FULL_LABEL } from './fteFortnight';
+import { payFortnightRange, fortnightLoad, fteFull, hoursBooked, leaveDayHours, formatHours, shiftHours, FULL_TIME_HOURS_PER_WEEK, FTE_FULL_LABEL } from './fteFortnight';
 import { buildFairness, exposureKey, formatFairShare, isCasual } from './fairness';
 import { suggestFill, patternProblem, shiftsByPerson } from './autoFill';
 
@@ -1104,6 +1104,33 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
     );
   };
 
+  // FTE rostered over the days shown (the top of the Fill step): hours
+  // booked ÷ a full-time load for those days (44 h a week), split into
+  // staff (anyone with an FTE), locums (FTE 0, plus visitors on cards) and
+  // leave. On call isn't counted. Goes up as places are booked.
+  const fteRostered = (() => {
+    const fullTime = FULL_TIME_HOURS_PER_WEEK * (numDays / 7);
+    if (!fullTime) return null;
+    const workedRows = fortnightBookings.filter(b => !b.leave_code);
+    const leaveRows = fortnightBookings.filter(b => b.leave_code);
+    let staffHours = 0;
+    let locumHours = 0;
+    let leaveTotal = 0;
+    for (const st of refData.staff) {
+      const worked = hoursBooked(st.staff_id, startStr, endStr, workedRows, leaveHours);
+      if (isCasual(st)) locumHours += worked; else staffHours += worked;
+      leaveTotal += hoursBooked(st.staff_id, startStr, endStr, leaveRows, leaveHours);
+    }
+    for (const v of visitors) {
+      const card = cardById.get(v.theatre_activity_id);
+      if (card && card.date >= startStr && card.date <= endStr) locumHours += shiftHours(card.date, card.start_time, card.end_time);
+    }
+    const onStaff = refData.staff.filter(st => st.active !== false && !isCasual(st)).reduce((t, st) => t + (st.fte ?? DEFAULT_FTE), 0);
+    const fte = (h) => h / fullTime;
+    return { staff: fte(staffHours), locum: fte(locumHours), leave: fte(leaveTotal), total: fte(staffHours + locumHours + leaveTotal), onStaff };
+  })();
+  const fteText = (n) => (Math.round(n * 10) / 10).toFixed(1);
+
   const renderDuties = (dateStr) => {
     if (dutyTypes.length === 0) return null;
     return (
@@ -1275,6 +1302,24 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
           <AlertCircle size={18} className="text-red-600 flex-shrink-0 mt-0.5" />
           <p className="text-sm text-red-700 flex-1">{error}</p>
           <button onClick={() => setError(null)} className="text-red-600" aria-label="Dismiss"><X size={16} /></button>
+        </div>
+      )}
+
+      {mode === 'fill' && fteRostered && (
+        <div className="bg-white rounded-lg shadow-sm p-3 mb-3 text-sm flex flex-wrap items-start gap-4">
+          <div>
+            <p className="text-xs text-gray-500">FTE rostered{singleDay ? ' today' : ` · ${weeksShown} week${weeksShown === 1 ? '' : 's'} shown`}</p>
+            <p className="text-2xl font-bold text-gray-900 leading-tight">{fteText(fteRostered.total)}</p>
+            <p className="text-[11px] text-gray-500">of {fteText(fteRostered.onStaff)} FTE on staff</p>
+          </div>
+          <table className="text-xs">
+            <tbody>
+              <tr><td className="pr-3 text-gray-600">Staff</td><td className="text-right font-semibold">{fteText(fteRostered.staff)}</td></tr>
+              <tr><td className="pr-3 text-gray-600">Locum</td><td className="text-right font-semibold">{fteText(fteRostered.locum)}</td></tr>
+              <tr><td className="pr-3 text-gray-600">Leave</td><td className="text-right font-semibold">{fteText(fteRostered.leave)}</td></tr>
+            </tbody>
+          </table>
+          <p className="text-[11px] text-gray-500 max-w-xs">Hours booked ÷ a full-time load for the days shown (44 h a week = 1.0). Locum: anyone with no FTE, and visitors. On call isn't counted.</p>
         </div>
       )}
 

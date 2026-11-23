@@ -5448,6 +5448,23 @@ export async function updateDepartmentSessionTimes(departmentId, boundaries) {
 // getAllOnCallAssignmentsForWeek's "whole department, date range" shape
 // rather than getStaffAssignmentsForWeek's single-staff one, since both
 // consumers need every staff member at once.
+// The staff app's Week tab, Whole department: everyone's bookings and on
+// call for seven days from weekStartStr (names, places and hours only).
+export async function getDepartmentWeek(departmentId, weekStartStr) {
+  const end = new Date(`${weekStartStr}T00:00:00`);
+  end.setDate(end.getDate() + 6);
+  const endStr = toLocalDateStr(end);
+  const [booked, duties] = await Promise.all([
+    supabase.from('staff_assignments')
+      .select('assignment_id, date, staff_id, on_call, leave_code, location_id, staff(name), locations(name), shifts(start_time, end_time)')
+      .eq('department_id', departmentId).gte('date', weekStartStr).lte('date', endStr),
+    supabase.from('duty_assignments')
+      .select('duty_id, date, staff_id, duty_type, staff(name)')
+      .eq('department_id', departmentId).gte('date', weekStartStr).lte('date', endStr),
+  ]);
+  return { data: { bookings: booked.data || [], duties: duties.data || [] }, error: booked.error || duties.error || null };
+}
+
 export async function getAllStaffAssignmentsForRange(departmentId, rangeStartDate, numDays) {
   console.log('getAllStaffAssignmentsForRange called', departmentId, rangeStartDate, numDays);
   const startStr = toLocalDateStr(rangeStartDate);

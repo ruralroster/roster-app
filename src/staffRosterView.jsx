@@ -10,6 +10,7 @@ import MyMeetings from './MyMeetings';
 import { CallbackBanner, MyCallbacks } from './CallbackPanel';
 import useScreenTime from './useScreenTime';
 import MySitesCalendar from './MySitesCalendar';
+import DepartmentWeekGrid from './DepartmentWeekGrid';
 import { supabase } from './supabaseClient';
 import {
   getStaffById,
@@ -147,6 +148,9 @@ export default function StaffRosterView({ departmentId, staffId }) {
   // the Week tab an "All my sites" switch (MySitesCalendar).
   const [mySites, setMySites] = useState([]);
   const [allSites, setAllSites] = useState(false);
+  // Week tab: My week (the default) or Whole department (every location
+  // and person for the week, DepartmentWeekGrid).
+  const [wholeDept, setWholeDept] = useState(false);
   useEffect(() => {
     let cancelled = false;
     supabase.rpc('my_sites').then(({ data }) => { if (!cancelled) setMySites(data || []); });
@@ -1626,6 +1630,41 @@ export default function StaffRosterView({ departmentId, staffId }) {
           ))}
         </div>
       );
+      const viewSwitch = (
+        <div className="flex gap-1 mb-4 p-1 bg-gray-100 rounded-lg text-sm font-medium">
+          {[[false, 'My week'], [true, 'Whole department']].map(([on, label]) => (
+            <button
+              key={label}
+              onClick={() => setWholeDept(on)}
+              aria-pressed={wholeDept === on}
+              className={`flex-1 py-1.5 rounded-md ${wholeDept === on ? 'bg-white shadow-sm text-gray-900' : 'text-gray-600 hover:text-gray-900'}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      );
+      if (wholeDept && !(allSites && mySites.length > 1)) {
+        return (
+          <div className="p-4 pb-24">
+            <div className="max-w-5xl mx-auto">
+              {siteSwitch}
+              {viewSwitch}
+              <div className="bg-white rounded-lg shadow-sm p-4 mb-4 flex items-center justify-between">
+                <div>
+                  <h1 className="text-lg font-bold text-gray-900">Week of {formatDateShort(weekStart)}</h1>
+                  <p className="text-xs text-gray-500">Everyone, every location · scroll sideways · you're in bold</p>
+                </div>
+                <div className="flex gap-1">
+                  <button onClick={() => setCurrentDate(new Date(currentDate.getTime() - 7 * 24 * 60 * 60 * 1000))} className="p-2 hover:bg-gray-100 rounded-lg" aria-label="Previous week"><ChevronLeft size={22} /></button>
+                  <button onClick={() => setCurrentDate(new Date(currentDate.getTime() + 7 * 24 * 60 * 60 * 1000))} className="p-2 hover:bg-gray-100 rounded-lg" aria-label="Next week"><ChevronRight size={22} /></button>
+                </div>
+              </div>
+              <DepartmentWeekGrid departmentId={departmentId} weekStartStr={toLocalDateStr(weekStart)} dutyTypes={dutyTypes} myStaffId={staffId} />
+            </div>
+          </div>
+        );
+      }
       if (allSites && mySites.length > 1) {
         return (
           <div className="p-4 pb-24">
@@ -1641,6 +1680,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
         <div className="p-4 pb-24">
           <div className="max-w-3xl mx-auto">
             {siteSwitch}
+            {viewSwitch}
             <div className="bg-white rounded-lg shadow-sm p-6 mb-6 flex items-center justify-between">
               <div>
                 <h1 className="text-2xl font-bold text-gray-900">Week of {formatDateShort(weekStart)}</h1>
