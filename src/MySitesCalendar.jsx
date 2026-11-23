@@ -25,7 +25,7 @@ const pillStyle = (name) => {
   return { background: `hsl(${h} 70% 94%)`, borderColor: `hsl(${h} 55% 60%)`, color: `hsl(${h} 60% 22%)` };
 };
 
-export default function MySitesCalendar({ sites, staffName }) {
+export default function MySitesCalendar({ sites, staffName, staffId }) {
   const [from, setFrom] = useState(() => toLocalDateStr(getMondayOfWeek(new Date())));
   const to = addDays(from, 13);
   const [rows, setRows] = useState([]);
@@ -37,14 +37,14 @@ export default function MySitesCalendar({ sites, staffName }) {
     let cancelled = false;
     setLoading(true);
     // A day before, for a night that runs into the first morning.
-    supabase.rpc('my_rostered_days', { p_from: addDays(from, -1), p_to: to }).then(({ data, error: rpcError }) => {
+    supabase.rpc('my_rostered_days', { p_from: addDays(from, -1), p_to: to, p_staff_id: staffId || null }).then(({ data, error: rpcError }) => {
       if (cancelled) return;
       setError(rpcError ? rpcError.message : null);
       setRows(data || []);
       setLoading(false);
     });
     return () => { cancelled = true; };
-  }, [from, to]);
+  }, [from, to, staffId]);
 
   const problems = crossSiteProblems(rows).filter(p => p.second.date >= from);
   const days = Array.from({ length: 14 }, (_, i) => addDays(from, i));
@@ -52,7 +52,7 @@ export default function MySitesCalendar({ sites, staffName }) {
   const exportAll = async () => {
     setExporting(true);
     const today = toLocalDateStr(new Date());
-    const { data, error: rpcError } = await supabase.rpc('my_rostered_days', { p_from: today, p_to: addDays(today, EXPORT_WEEKS * 7) });
+    const { data, error: rpcError } = await supabase.rpc('my_rostered_days', { p_from: today, p_to: addDays(today, EXPORT_WEEKS * 7), p_staff_id: staffId || null });
     setExporting(false);
     if (rpcError) { window.alert(`Couldn't export: ${rpcError.message}`); return; }
     const events = rowsForIcs(data || []);

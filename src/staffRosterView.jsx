@@ -153,9 +153,11 @@ export default function StaffRosterView({ departmentId, staffId }) {
   const [wholeDept, setWholeDept] = useState(false);
   useEffect(() => {
     let cancelled = false;
-    supabase.rpc('my_sites').then(({ data }) => { if (!cancelled) setMySites(data || []); });
+    // The staff record shown: the person's own, or (View as) whoever a
+    // super admin is looking at.
+    supabase.rpc('my_sites', { p_staff_id: staffId || null }).then(({ data }) => { if (!cancelled) setMySites(data || []); });
     return () => { cancelled = true; };
-  }, []);
+  }, [staffId]);
   // A notification about an offered shift links to ?tab=volunteer (see
   // supabase/functions/notify-volunteering), opening Variation directly.
   const [activeTab, setActiveTab] = useState(() => (
@@ -1670,7 +1672,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
           <div className="p-4 pb-24">
             <div className="max-w-3xl mx-auto">
               {siteSwitch}
-              <MySitesCalendar sites={mySites} staffName={staffMember?.name} />
+              <MySitesCalendar sites={mySites} staffName={staffMember?.name} staffId={staffId} />
             </div>
           </div>
         );
