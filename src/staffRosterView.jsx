@@ -147,7 +147,6 @@ export default function StaffRosterView({ departmentId, staffId }) {
   // Every Rstar site this login is staff at (my_sites): two or more gives
   // the Week tab an "All my sites" switch (MySitesCalendar).
   const [mySites, setMySites] = useState([]);
-  const [allSites, setAllSites] = useState(false);
   // Week tab: My week (the default) or Whole department (every location
   // and person for the week, DepartmentWeekGrid).
   const [wholeDept, setWholeDept] = useState(false);
@@ -1618,20 +1617,9 @@ export default function StaffRosterView({ departmentId, staffId }) {
 
     if (activeTab === 'week') {
       const weekStart = getMondayOfWeek(currentDate);
-      const siteSwitch = mySites.length > 1 && (
-        <div className="flex gap-1 mb-4 p-1 bg-gray-100 rounded-lg text-sm font-medium">
-          {[[false, 'This site'], [true, `All my sites (${mySites.length})`]].map(([on, label]) => (
-            <button
-              key={label}
-              onClick={() => setAllSites(on)}
-              aria-pressed={allSites === on}
-              className={`flex-1 py-1.5 rounded-md ${allSites === on ? 'bg-white shadow-sm text-gray-900' : 'text-gray-600 hover:text-gray-900'}`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-      );
+      // Staff at more than one site: My week is every site together, with
+      // the sites beside the dates to hide or show (MySitesCalendar).
+      const multiSite = mySites.length > 1;
       const viewSwitch = (
         <div className="flex gap-1 mb-4 p-1 bg-gray-100 rounded-lg text-sm font-medium">
           {[[false, 'My week'], [true, 'Whole department']].map(([on, label]) => (
@@ -1646,11 +1634,10 @@ export default function StaffRosterView({ departmentId, staffId }) {
           ))}
         </div>
       );
-      if (wholeDept && !(allSites && mySites.length > 1)) {
+      if (wholeDept) {
         return (
           <div className="p-4 pb-24">
             <div className="max-w-5xl mx-auto">
-              {siteSwitch}
               {viewSwitch}
               <div className="bg-white rounded-lg shadow-sm p-4 mb-4 flex items-center justify-between">
                 <div>
@@ -1667,11 +1654,11 @@ export default function StaffRosterView({ departmentId, staffId }) {
           </div>
         );
       }
-      if (allSites && mySites.length > 1) {
+      if (multiSite) {
         return (
           <div className="p-4 pb-24">
             <div className="max-w-3xl mx-auto">
-              {siteSwitch}
+              {viewSwitch}
               <MySitesCalendar sites={mySites} staffName={staffMember?.name} staffId={staffId} />
             </div>
           </div>
@@ -1681,7 +1668,6 @@ export default function StaffRosterView({ departmentId, staffId }) {
       return (
         <div className="p-4 pb-24">
           <div className="max-w-3xl mx-auto">
-            {siteSwitch}
             {viewSwitch}
             <div className="bg-white rounded-lg shadow-sm p-6 mb-6 flex items-center justify-between">
               <div>
