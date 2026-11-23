@@ -162,7 +162,8 @@ export function suggestFill(slots, ctx) {
     const { card, place } = slot;
     if (!s) return 'Not active';
     if (hasLeft(s, card.date)) return 'Left';
-    const mismatch = placeMismatch(place, s, rankRows);
+    // Seniors stay out of junior places unless the officer allows it.
+    const mismatch = placeMismatch(place, s, rankRows, { seniorsInJunior: !!ctx.seniorsInJunior });
     if (mismatch) return mismatch;
     if (onLeave(staffId, card.date, st.bookings)) return 'On leave';
     const admin = isAdminCard(card);

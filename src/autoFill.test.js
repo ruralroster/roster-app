@@ -161,3 +161,14 @@ describe('other sites', () => {
     expect(suggestFill([early], ctxFor(staff)).unfilled).toEqual([]);
   });
 });
+
+describe('seniors in junior places', () => {
+  it('keeps seniors out of junior places unless allowed', () => {
+    const staff = [person('smo'), person('rmo', { rank: 'RMO' })];
+    const junior = slot(card('c1', '2026-11-03'), place('jr', { grade: 'junior' }));
+    const only = (extra) => suggestFill([junior], ctxFor([staff[0]], extra));
+    expect(only().unfilled).toEqual([junior.key]);
+    expect(only({ seniorsInJunior: true }).unfilled).toEqual([]);
+    expect(suggestFill([junior], ctxFor(staff)).drafts[0].staffId).toBe('rmo');
+  });
+});

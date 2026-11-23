@@ -119,6 +119,8 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
   const [showSeniors, setShowSeniors] = useState(true);
   const [showJuniors, setShowJuniors] = useState(true);
   const [staffOnly, setStaffOnly] = useState(true); // hide people with 0 FTE (locums, casuals)
+  // Off: seniors aren't offered for, or suggested into, junior places.
+  const [seniorsInJunior, setSeniorsInJunior] = useState(false);
   const [templateIdForWeek, setTemplateIdForWeek] = useState({});
   const [meetingTypes, setMeetingTypes] = useState([]);
   const [meetings, setMeetings] = useState([]);
@@ -519,7 +521,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
     const slotPlace = layout.places.find(({ place, slots }) =>
       place.kind !== 'visitor'
       && (place.grade === 'senior' ? 'consultant' : 'registrar') === role
-      && !placeMismatch(place, staff, rankRows)
+      && !placeMismatch(place, staff, rankRows, { seniorsInJunior })
       && slots.some(slot => !slot.assignment && !slot.visitor));
     setVolunteerPick(null);
     run(`Couldn't book ${staff.name}`, async () => {
@@ -633,7 +635,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
       return <span key={key} className={`${base} border-gray-400 text-gray-500`}>{place.role}</span>;
     }
     if (selectedStaff) {
-      const reason = placeMismatch(place, selectedStaff, rankRows) || conflictFor(selectedStaff.staff_id, card);
+      const reason = placeMismatch(place, selectedStaff, rankRows, { seniorsInJunior }) || conflictFor(selectedStaff.staff_id, card);
       if (!reason) {
         return (
           <button
@@ -737,7 +739,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
       .map(a => a.staff_id));
     const people = refData.staff
       .filter(s => s.active !== false && (!staffOnly || (s.fte ?? DEFAULT_FTE) > 0))
-      .filter(s => !placeMismatch(place, s, rankRows) && !conflictFor(s.staff_id, card))
+      .filter(s => !placeMismatch(place, s, rankRows, { seniorsInJunior }) && !conflictFor(s.staff_id, card))
       .map(s => {
         const load = fortnightLoad(s, card.date, fortnightBookings, leaveHours);
         return { staffId: s.staff_id, name: s.name, share: load.target > 0 ? load.hours / load.target : Infinity, casual: isCasual(s) };
@@ -778,7 +780,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
         const layout = layOutCard(card, job, places, assignments.filter(a => a.theatre_activity_id === card.theatre_activity_id),
           visitors.filter(v => v.theatre_activity_id === card.theatre_activity_id), staffById, rankRows);
         return layout.places.some(({ place, slots }) =>
-          place.kind === 'staff' && !placeMismatch(place, selectedStaff, rankRows) && slots.some(slot => !slot.assignment && !slot.visitor));
+          place.kind === 'staff' && !placeMismatch(place, selectedStaff, rankRows, { seniorsInJunior }) && slots.some(slot => !slot.assignment && !slot.visitor));
       })
       // Ranked as the place they'd take: a skilled place (an ED AST place)
       // counts as that skilled work, an ordinary one as the common job.
@@ -787,7 +789,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
         const layout = layOutCard(card, job, places, assignments.filter(a => a.theatre_activity_id === card.theatre_activity_id),
           visitors.filter(v => v.theatre_activity_id === card.theatre_activity_id), staffById, rankRows);
         const open = layout.places.find(({ place, slots }) =>
-          place.kind === 'staff' && !placeMismatch(place, selectedStaff, rankRows) && slots.some(slot => !slot.assignment && !slot.visitor));
+          place.kind === 'staff' && !placeMismatch(place, selectedStaff, rankRows, { seniorsInJunior }) && slots.some(slot => !slot.assignment && !slot.visitor));
         return { cardId: card.theatre_activity_id, activityId: exposureKey(card.activity_id, open?.place), date: card.date };
       });
     return rankJobsForPerson(selectedStaff.staff_id, candidates, planned.fairness, planned.history.statsByStaffActivity);
@@ -832,7 +834,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
         const result = suggestFill(slots, {
           staff: refData.staff.filter(st => st.active !== false && (!staffOnly || (st.fte ?? DEFAULT_FTE) > 0)),
           rankRows, todayStr, assignments, unavailable, bookings: fortnightBookings,
-          rules: patternRules, offShiftId, exposure, leaveHours, viewFrom: startStr, viewTo: endStr, otherSite,
+          rules: patternRules, offShiftId, exposure, leaveHours, viewFrom: startStr, viewTo: endStr, otherSite, seniorsInJunior,
           isAdminCard, sameJob: sameJobAs, cardLabel: assignmentLabel,
           cardOf: (a) => cardById.get(a.theatre_activity_id),
           activityKeyOf: (a) => {
@@ -1589,6 +1591,10 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
             <label className="flex items-center gap-1 text-xs text-gray-700 whitespace-nowrap cursor-pointer">
               <input type="checkbox" checked={staffOnly} onChange={(e) => setStaffOnly(e.target.checked)} className="w-3.5 h-3.5 accent-blue-600" />
               Staff only
+            </label>
+            <label className="flex items-center gap-1 text-xs text-gray-700 whitespace-nowrap cursor-pointer" title="Off: seniors aren't offered for, or suggested into, junior places">
+              <input type="checkbox" checked={seniorsInJunior} onChange={(e) => setSeniorsInJunior(e.target.checked)} className="w-3.5 h-3.5 accent-blue-600" />
+              Seniors in junior places
             </label>
             {rankRows.length > 2 && (
               <select value={staffFilter} onChange={(e) => setStaffFilter(e.target.value)} className="px-2 py-1 border border-gray-300 rounded text-xs" aria-label="Rank">
