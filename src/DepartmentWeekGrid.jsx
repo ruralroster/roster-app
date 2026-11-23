@@ -2,6 +2,19 @@ import React, { useEffect, useState } from 'react';
 import { Loader } from 'lucide-react';
 import { getDepartmentWeek } from './supabaseClient';
 import { toLocalDateStr } from './dateUtils';
+import { JOB_COLOURS, jobCategoryFor } from './jobColours';
+import { siteHue } from './mySites';
+
+// Each location's colour: the roster's own colour for its kind (Emergency
+// green, Ward blue, Theatre/Endoscopy cyan, Maternity red, Admin yellow),
+// as on the cards; any other location a soft colour of its own, the same
+// every week.
+function locationColours(name) {
+  const c = JOB_COLOURS[jobCategoryFor(name, null)];
+  if (c) return { cell: c.card, head: c.box, border: c.border };
+  const h = siteHue(name);
+  return { cell: `hsl(${h} 70% 96%)`, head: `hsl(${h} 60% 85%)`, border: `hsl(${h} 45% 60%)` };
+}
 
 // The staff app's Week tab, Whole department: one week, every location
 // down the side and every day across, each cell the people there with
@@ -63,11 +76,13 @@ export default function DepartmentWeekGrid({ departmentId, weekStartStr, dutyTyp
           </tr>
         </thead>
         <tbody>
-          {locations.map(([locId, locName]) => (
+          {locations.map(([locId, locName]) => {
+            const colour = locationColours(locName);
+            return (
             <tr key={locId}>
-              <td className="sticky left-0 bg-white px-2 py-1 border border-gray-200 font-semibold whitespace-nowrap align-top">{locName}</td>
+              <td className="sticky left-0 px-2 py-1 border font-semibold whitespace-nowrap align-top" style={{ backgroundColor: colour.head, borderColor: colour.border }}>{locName}</td>
               {days.map(d => (
-                <td key={d} className="px-1.5 py-1 border border-gray-200 align-top">
+                <td key={d} className="px-1.5 py-1 border align-top" style={{ backgroundColor: colour.cell, borderColor: colour.border }}>
                   {cell(worked.filter(b => b.location_id === locId && b.date === d)).map(b => (
                     <div key={b.assignment_id} className={nameCls(b.staff_id)}>
                       {firstName(b.staff?.name)} {brief(b.shifts?.start_time)}–{brief(b.shifts?.end_time)}
@@ -76,7 +91,8 @@ export default function DepartmentWeekGrid({ departmentId, weekStartStr, dutyTyp
                 </td>
               ))}
             </tr>
-          ))}
+            );
+          })}
           {data.duties.length > 0 && (
             <tr>
               <td className="sticky left-0 bg-fuchsia-50 px-2 py-1 border border-gray-200 font-semibold">On call</td>
