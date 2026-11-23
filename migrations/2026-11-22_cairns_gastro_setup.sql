@@ -12,7 +12,7 @@
 --     non-clinical, and the outreach sites.
 --   - Activities: Endoscopy, Manometry, Ward Round, Clinic, Admin,
 --     Outreach Endoscopy, Outreach Clinic.
---   - On call: On Call Endoscopy, 08:00 to 08:00 the next day.
+--   - On call: On Call Endoscopy, 17:00 to 08:00 (confirmed 2026-11-24).
 --   - Leave: AL.
 --   - Planner jobs (one place each, anyone) for the rooms, manometry, the
 --     clinic and the ward round, AM and PM, so each session is a card the
@@ -75,10 +75,10 @@ BEGIN
     INSERT INTO activity_types (department_id, name) VALUES (v_dept, 'On Call Endoscopy')
     RETURNING activity_id INTO v_activity;
     INSERT INTO shifts (department_id, name, day_type, start_time, end_time, session, active)
-    VALUES (v_dept, 'On Call Endoscopy On Call', 'weekday', '08:00', '08:00', 'night', true)
+    VALUES (v_dept, 'On Call Endoscopy On Call', 'weekday', '17:00', '08:00', 'night', true)
     RETURNING shift_id INTO v_shift;
     INSERT INTO duty_types (department_id, key, label, counts_as_on_call, sort_order, start_time, end_time, activity_type_id, shift_id, abbreviation)
-    VALUES (v_dept, 'on_call_endoscopy', 'On Call Endoscopy', true, 0, '08:00', '08:00', v_activity, v_shift, 'Endo OC');
+    VALUES (v_dept, 'on_call_endoscopy', 'On Call Endoscopy', true, 0, '17:00', '08:00', v_activity, v_shift, 'Endo OC');
   END IF;
 
   FOR r IN

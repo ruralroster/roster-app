@@ -29,6 +29,8 @@ const READ_RPCS = new Set([
   'validate_supervision',
   'my_roster_swap_shifts',
   'my_department_swaps',
+  'my_sites',
+  'my_rostered_days',
 ]);
 
 export const PREVIEW_MESSAGE = 'Preview only — nothing is saved or sent while viewing as someone.';
