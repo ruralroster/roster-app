@@ -2542,7 +2542,8 @@ async function loadFairnessInputs(departmentId, asOfDate) {
     dutyCounts.set(key, (dutyCounts.get(key) || 0) + 1);
   }
   return {
-    staff: raw.staffList,
+    // Officers who aren't clinical are never rostered (staff.non_clinical).
+    staff: raw.staffList.filter(s => !s.non_clinical),
     totalShiftsByStaff: raw.totalShiftsByStaff,
     weekendShiftsByStaff: raw.weekendShiftsByStaff,
     statsByStaffActivity: raw.fairStatsByStaffActivity,
@@ -7060,6 +7061,13 @@ export async function createDepartment(name) {
 // staff row (see the "Invite" action on a "Not linked" row in
 // StaffAccountsTab) instead of creating a new one — see
 // supabase/functions/invite-staff/index.ts for the two modes.
+// A rostering officer who isn't clinical (Staff Accounts): left out of
+// rostering everywhere (staff.non_clinical), with no FTE.
+export async function markStaffNonClinical(staffId) {
+  const { error } = await supabase.from('staff').update({ non_clinical: true, fte: 0 }).eq('staff_id', staffId);
+  return { error };
+}
+
 export async function inviteStaff(departmentId, name, email, rank, role, staffId = null) {
   console.log('inviteStaff called', departmentId, name, email, rank, role, staffId);
 

@@ -1,12 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { AlertCircle, Loader, CheckCircle2, CircleDashed } from 'lucide-react';
-import { getStaffList, inviteStaff, updateStaffRole, generateTempPassword, emailTempPassword, supabase } from './supabaseClient';
+import { getStaffList, inviteStaff, markStaffNonClinical, updateStaffRole, generateTempPassword, emailTempPassword, supabase } from './supabaseClient';
 
 const ROLE_OPTIONS = [
   { value: 'staff', label: 'Staff' },
   { value: 'officer', label: 'Officer' },
   { value: 'intern', label: 'Intern' },
+  { value: 'officer_non_clinical', label: 'Rostering officer (not clinical)' },
 ];
+// An admin officer who does the roster: an officer with no rank, never
+// rostered themselves (staff.non_clinical).
+const NON_CLINICAL_RANK = 'Rostering Officer';
 
 // Officer-facing tool for creating logins. Deliberately separate from
 // StaffProfilesTab (which edits contact/coffee/activity-restriction fields
@@ -88,14 +92,19 @@ export default function StaffAccountsTab({ departmentId, refreshKey, staffRanks 
 
   const handleInvite = async (e) => {
     e.preventDefault();
-    if (!name.trim() || !email.trim() || !rank) return;
+    const nonClinical = role === 'officer_non_clinical';
+    if (!name.trim() || !email.trim() || (!rank && !nonClinical)) return;
 
     setInviting(true);
     setInviteError(null);
     setInviteSuccess(null);
     try {
-      const { data, error: inviteErr } = await inviteStaff(departmentId, name.trim(), email.trim(), rank, role);
+      const { data, error: inviteErr } = await inviteStaff(departmentId, name.trim(), email.trim(), nonClinical ? NON_CLINICAL_RANK : rank, nonClinical ? 'officer' : role);
       if (inviteErr) throw inviteErr;
+      if (nonClinical && data?.staffId) {
+        const { error: markErr } = await markStaffNonClinical(data.staffId);
+        if (markErr) throw new Error(`invited, but couldn't mark them as not clinical: ${markErr.message}`);
+      }
 
       setInviteSuccess(data?.invited ? `Invite sent to ${email.trim()}.` : `${email.trim()} already has an account — linked to this department.`);
       setName('');
@@ -252,7 +261,7 @@ export default function StaffAccountsTab({ departmentId, refreshKey, staffRanks 
             required
             className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
           />
-          <select
+          {role !== 'officer_non_clinical' && <select
             value={rank}
             onChange={(e) => setRank(e.target.value)}
             required
@@ -262,7 +271,7 @@ export default function StaffAccountsTab({ departmentId, refreshKey, staffRanks 
             {staffRanks.map(r => (
               <option key={r.rule_id} value={r.rank}>{r.rank}</option>
             ))}
-          </select>
+          </select>}
           <select
             value={role}
             onChange={(e) => setRole(e.target.value)}
@@ -274,6 +283,9 @@ export default function StaffAccountsTab({ departmentId, refreshKey, staffRanks 
           </select>
         </div>
 
+        {role === 'officer_non_clinical' && (
+          <p className="text-xs text-gray-600">They get the officer side of Rstar but are never rostered: not in the Planner's people list, Suggest, on call or the FTE totals.</p>
+        )}
         {inviteError && <p className="text-sm text-red-700">{inviteError}</p>}
         {inviteSuccess && <p className="text-sm text-green-700">{inviteSuccess}</p>}
 
@@ -283,7 +295,7 @@ export default function StaffAccountsTab({ departmentId, refreshKey, staffRanks 
 
         <button
           type="submit"
-          disabled={inviting || !rank}
+          disabled={inviting || (!rank && role !== 'officer_non_clinical')}
           className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-medium rounded-lg transition text-sm flex items-center justify-center gap-2"
         >
           {inviting ? <Loader size={16} className="animate-spin" /> : null}

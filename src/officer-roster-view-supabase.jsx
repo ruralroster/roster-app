@@ -919,12 +919,13 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
 
   const getDutyStaffOptions = (dutyType) => {
     const currentStaffId = dutyAssignments[dutyType];
+    // (officers who aren't clinical are never on call: see the filter below)
     const dutyTypeRow = refData.dutyTypes.find(d => d.key === dutyType);
     const requiredSkillIds = dutyTypeRow?.required_advanced_skills;
     return refData.staff
       // On call is for seniors only (plannerUtils onCallSeniorProblem).
       .filter(s => s.staff_id === currentStaffId || (
-        s.active !== false && isAvailableForDuty(s.staff_id) && hasRequiredAdvancedSkill(s.staff_id, requiredSkillIds)
+        s.active !== false && !s.non_clinical && isAvailableForDuty(s.staff_id) && hasRequiredAdvancedSkill(s.staff_id, requiredSkillIds)
         && !onCallSeniorProblem(dutyTypeRow, s, refData.staffRanks)
       ))
       .map(s => ({
@@ -2978,6 +2979,10 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
     );
   };
 
+  // The Planner rosters clinical staff only: officers who aren't clinical
+  // (staff.non_clinical) are left out of its people, Suggest and FTE.
+  const rosterRefData = { ...refData, staff: refData.staff.filter(s => !s.non_clinical) };
+
   const renderContent = () => {
     if (activeTab === 'day' && selectedDate && !classicDayView) {
       return (
@@ -2988,7 +2993,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
           {pendingSickReports.length > 0 && <div className="px-4">{renderSickReportsBanner()}</div>}
           <PlannerTab
             departmentId={departmentId}
-            refData={refData}
+            refData={rosterRefData}
             singleDate={selectedDate}
             onSingleDateChange={setSelectedDate}
           />
@@ -3000,7 +3005,7 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
       return (
         <PlannerTab
           departmentId={departmentId}
-          refData={refData}
+          refData={rosterRefData}
           onWeekTemplatesChange={(weekTemplates) => setRefData(prev => ({ ...prev, weekTemplates }))}
         />
       );
