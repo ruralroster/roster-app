@@ -7068,8 +7068,11 @@ export async function markStaffNonClinical(staffId) {
   return { error };
 }
 
-export async function inviteStaff(departmentId, name, email, rank, role, staffId = null) {
-  console.log('inviteStaff called', departmentId, name, email, rank, role, staffId);
+export async function inviteStaff(departmentId, name, emailRaw, rank, role, staffId = null) {
+  console.log('inviteStaff called', departmentId, name, emailRaw, rank, role, staffId);
+  // Logins are found by email exactly, so send it as the logins store it:
+  // lower case ("Jane.Citizen@…" must find jane.citizen@…'s login).
+  const email = (emailRaw || '').trim().toLowerCase();
 
   try {
     const { data, error } = await supabase.functions.invoke('invite-staff', {
