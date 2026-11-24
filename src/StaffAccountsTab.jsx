@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { AlertCircle, Loader, CheckCircle2, CircleDashed } from 'lucide-react';
-import { getStaffList, inviteStaff, markStaffNonClinical, updateStaffRole, generateTempPassword, emailTempPassword, supabase } from './supabaseClient';
+import { getStaffList, inviteStaff, markStaffNonClinical, createStaffRank, updateStaffRole, generateTempPassword, emailTempPassword, supabase } from './supabaseClient';
 
 const ROLE_OPTIONS = [
   { value: 'staff', label: 'Staff' },
@@ -99,6 +99,12 @@ export default function StaffAccountsTab({ departmentId, refreshKey, staffRanks 
     setInviteError(null);
     setInviteSuccess(null);
     try {
+      // A staff rank has to be one of the department's: add "Rostering
+      // Officer" (needs supervision, so never counted senior) the first time.
+      if (nonClinical && !staffRanks.some(r => r.rank === NON_CLINICAL_RANK)) {
+        const { error: rankErr } = await createStaffRank(departmentId, NON_CLINICAL_RANK, true);
+        if (rankErr && !/duplicate|already/i.test(rankErr.message || '')) throw new Error(`couldn't add the ${NON_CLINICAL_RANK} rank: ${rankErr.message}`);
+      }
       const { data, error: inviteErr } = await inviteStaff(departmentId, name.trim(), email.trim(), nonClinical ? NON_CLINICAL_RANK : rank, nonClinical ? 'officer' : role);
       if (inviteErr) throw inviteErr;
       if (nonClinical && data?.staffId) {

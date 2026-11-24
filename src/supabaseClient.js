@@ -7088,7 +7088,12 @@ export async function inviteStaff(departmentId, name, email, rank, role, staffId
       },
     });
 
-    if (error) throw error;
+    if (error) {
+      // The function's own reason, not "returned a non-2xx status code".
+      let message = error.message;
+      try { message = (await error.context.json()).error ?? message; } catch { /* keep the generic one */ }
+      throw new Error(message);
+    }
     if (data?.error) throw new Error(data.error);
 
     return { data: data?.data ?? data, error: null };
