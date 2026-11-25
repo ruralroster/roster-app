@@ -6,7 +6,7 @@ import StaffAvailabilityTab from './StaffAvailabilityTab';
 import ShiftPatternRulesUI from './ShiftPatternRulesUI';
 import CaseMixReport from './CaseMixReport';
 import { staffHoverText } from './staffHover';
-import { payFortnightRange, fteFull, hoursBooked, leaveDayHours, fortnightTargetHours, formatHours, FTE_FULL_LABEL } from './fteFortnight';
+import { payFortnightRange, fteFull, hoursBooked, leaveDayHours, fortnightTargetHours, formatHours, FTE_FULL_LABEL, setFullTimeHoursPerWeek } from './fteFortnight';
 import { addDays, withBookings, onCallSeniorProblem } from './plannerUtils';
 import { formatFairShare, goesWithOnCall, buildFairness, isCasual } from './fairness';
 import FairnessReport from './FairnessReport';
@@ -2978,6 +2978,10 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
       </div>
     );
   };
+
+  // This department's full-time week (44 h for doctors, 38 for admin…),
+  // before anything below works out FTE.
+  setFullTimeHoursPerWeek(refData.department?.full_time_hours_per_week);
 
   // The Planner rosters clinical staff only: officers who aren't clinical
   // (staff.non_clinical) are left out of its people, Suggest and FTE.

@@ -6,6 +6,7 @@ import { getWeekDateRanges, parseRosterWeek, applyCodeMappings, applyPrimaryAllo
 import { getEdSheetNames, getEdWeekDateRanges, parseEdWeek, getEdStaffRoster, resolveEdShiftCode } from './edRosterExcelImport';
 import { getShiftListDateRanges, parseShiftListRange, getShiftListStaffRoster } from './shiftListRosterExcelImport';
 import useScreenTime from './useScreenTime';
+import { getAdminSheets, getAdminWeekRanges, parseAdminRange, getAdminStaffRoster, adminHistoryTabs } from './adminRosterExcelImport';
 import { getMareebaSheets, getMareebaWeekRanges, parseMareebaRange, getMareebaStaffRoster } from './mareebaRosterExcelImport';
 import { getGastroSheets, getGastroWeekRanges, parseGastroRange, getGastroStaffRoster } from './gastroRosterExcelImport';
 import { getTullySheets, getTullyWeekRanges, parseTullyRange, applyTullyMappings, getTullyStaffRoster, tullyStaffTabs } from './tullyRosterExcelImport';
@@ -35,10 +36,11 @@ const FORMATS = [
   { value: 'tully', label: 'Fortnight tabs (e.g. Tully: hours over a Work Area, SBOC on call)' },
   { value: 'gastro', label: 'Session tabs (e.g. Cairns Gastroenterology: rooms and clinics by AM/PM, staff codes)' },
   { value: 'mareeba', label: 'Days down, people across (e.g. Mareeba: four weeks, back-up on call by name)' },
+  { value: 'admin', label: 'Admin fortnight tabs (hours over a Work Area code: RCP, PTS, REV…)' },
 ];
 
 // Formats with one tab per roster period, picked from a Sheet list.
-const SHEET_FORMATS = ['ed', 'tully', 'gastro', 'mareeba'];
+const SHEET_FORMATS = ['ed', 'tully', 'gastro', 'mareeba', 'admin'];
 
 // Tully's "All fortnights up to now" choice in the tab list: every
 // fortnight tab that has started, imported one after another — a year of
@@ -53,7 +55,14 @@ const currentGastroSheet = (wb) => {
   const tabs = getGastroSheets(wb);
   return (tabs.filter(t => t.monday <= todayIso()).pop() || tabs[0])?.sheetName;
 };
+// Admin: the tab that's on now (its Actual if there is one), else the first.
+const currentAdminSheet = (wb) => {
+  const tabs = adminHistoryTabs(wb);
+  return tabs[tabs.length - 1] || getAdminSheets(wb)[0]?.sheetName;
+};
 const startedTullySheets = (wb) => getTullySheets(wb).filter(t => t.monday <= todayIso()).map(t => t.sheetName);
+// The tabs "All fortnights up to now" imports, for the formats that have it.
+const historyTabs = (wb, fmt) => (fmt === 'admin' ? adminHistoryTabs(wb) : startedTullySheets(wb));
 
 // Tully: the fortnight tab that's on now (the latest that has started),
 // else the first.
@@ -217,6 +226,8 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
       ? (name === ALL_TULLY_TABS ? [{ label: `The whole of each (${startedTullySheets(wb).length} fortnights)` }] : getTullyWeekRanges(wb, name))
       : sheetFormat === 'gastro' ? getGastroWeekRanges(wb, name)
       : sheetFormat === 'mareeba' ? getMareebaWeekRanges(wb, name)
+      : sheetFormat === 'admin'
+        ? (name === ALL_TULLY_TABS ? [{ label: `The whole of each (${historyTabs(wb, 'admin').length} fortnights)` }] : getAdminWeekRanges(wb, name))
       : getEdWeekDateRanges(wb, name));
     setWeekIndex(0);
     setMissingStaff(null);
@@ -233,6 +244,9 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
       const names = getEdSheetNames(workbook);
       setSheetNames(names);
       loadEdSheet(workbook, names[0], nextFormat);
+    } else if (workbook && nextFormat === 'admin') {
+      setSheetNames(getAdminSheets(workbook).map(t => t.sheetName));
+      loadEdSheet(workbook, currentAdminSheet(workbook), nextFormat);
     } else if (workbook && nextFormat === 'mareeba') {
       const tabs = getMareebaSheets(workbook);
       setSheetNames(tabs);
@@ -271,6 +285,11 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
         const names = getEdSheetNames(wb);
         setSheetNames(names);
         loadEdSheet(wb, names[0]);
+      } else if (format === 'admin') {
+        const tabs = getAdminSheets(wb);
+        if (!tabs.length) throw new Error('no fortnight tabs found (tabs are named by their Monday, e.g. "23.11.26")');
+        setSheetNames(tabs.map(t => t.sheetName));
+        loadEdSheet(wb, currentAdminSheet(wb));
       } else if (format === 'mareeba') {
         const tabs = getMareebaSheets(wb);
         if (!tabs.length) throw new Error('no roster found (weekdays in column N, day numbers in column O)');
@@ -341,6 +360,19 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
           const rank = shiftListRank(p.grade);
           const suggestedStaff = suggestStaffMatches(p.name, knownStaff);
           return { rawLabel: p.name, name: p.name, fte: p.fte ?? 0, phone: p.phone, suggestedRank: rank, rank, create: suggestedStaff.length === 0, suggestedStaff };
+        });
+      setMissingStaff(missing);
+      return;
+    }
+    if (format === 'admin') {
+      // The three latest fortnights: name, payroll number, and FTE from
+      // their hours (76 a fortnight is 1.0). Rank: the department's first.
+      const missing = getAdminStaffRoster(workbook)
+        .filter(p => !mappedLabels.has(staffLabelKey(p.name)) && !matchStaffName(p.name, knownStaff))
+        .map(p => {
+          const rank = staffRanks.find(r => /officer|ao/i.test(r.rank))?.rank || staffRanks[0]?.rank || '';
+          const suggestedStaff = suggestStaffMatches(p.name, knownStaff);
+          return { rawLabel: p.name, name: p.name, fte: p.fte, payroll: p.payroll, suggestedRank: rank, rank, create: suggestedStaff.length === 0, suggestedStaff };
         });
       setMissingStaff(missing);
       return;
@@ -486,9 +518,9 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
   // saving one, before the state update has landed.
   const runImport = async (dryRun, mappingList = mappings, extraStaff = []) => {
     if (!workbook) return;
-    const allTabs = format === 'tully' && sheetName === ALL_TULLY_TABS;
-    const what = allTabs ? `all ${startedTullySheets(workbook).length} fortnights up to now`
-      : format === 'shift_list' && weekIndex === 0 ? 'the whole file' : format === 'tully' && weekIndex === 0 ? 'this fortnight'
+    const allTabs = (format === 'tully' || format === 'admin') && sheetName === ALL_TULLY_TABS;
+    const what = allTabs ? `all ${historyTabs(workbook, format).length} fortnights up to now`
+      : format === 'shift_list' && weekIndex === 0 ? 'the whole file' : (format === 'tully' || format === 'admin') && weekIndex === 0 ? 'this fortnight'
       : (format === 'gastro' || format === 'mareeba') && weekIndex === 0 ? 'these four weeks' : 'this week';
     if (!dryRun && !window.confirm(`Write ${what} to the roster now? Review the dry run above first if you haven't already.`)) {
       return;
@@ -501,11 +533,13 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
       const refs = { staffList: [...staffList, ...extraStaff], locations, activities, leaveTypes, dutyTypes, nameMappings };
       if (allTabs) {
         // One tab at a time, each replacing just its own dates.
-        const tabs = startedTullySheets(workbook);
+        const tabs = historyTabs(workbook, format);
         const allResults = [];
         const summary = { dateStrs: [], existingAssignmentCount: 0, existingCardCount: 0, existingDutyCount: 0, applied: !dryRun };
         for (let t = 0; t < tabs.length; t++) {
-          const tabPeople = applyTullyMappings(parseTullyRange(workbook, tabs[t], 0), codeMap);
+          const tabPeople = format === 'admin'
+            ? applyCodeMappings(parseAdminRange(workbook, tabs[t], 0), codeMap, (c) => ({ unmapped: c }))
+            : applyTullyMappings(parseTullyRange(workbook, tabs[t], 0), codeMap);
           const { data, error: importError, deletionSummary: tabSummary } = await importRosterWeek(departmentId, tabPeople, refs, {
             dryRun, addUnnamedAsUnfilled, onCallChoices, keepOnCall,
             onProgress: (current, total) => setImportProgress({ current, total, label: `Fortnight ${t + 1} of ${tabs.length} (${tabs[t]}): ${current} of ${total} people` }),
@@ -533,6 +567,8 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
         people = applyCodeMappings(parseGastroRange(workbook, sheetName, weekIndex), codeMap, (c) => ({ unmapped: c }));
       } else if (format === 'mareeba') {
         people = applyCodeMappings(parseMareebaRange(workbook, sheetName, weekIndex), codeMap, (c) => ({ unmapped: c }));
+      } else if (format === 'admin') {
+        people = applyCodeMappings(parseAdminRange(workbook, sheetName, weekIndex), codeMap, (c) => ({ unmapped: c }));
       } else if (format === 'tully') {
         // A mapped work area keeps the sheet's hours for that day.
         people = applyTullyMappings(parseTullyRange(workbook, sheetName, weekIndex), codeMap);
@@ -766,7 +802,7 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
             onChange={(e) => loadEdSheet(workbook, e.target.value)}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
           >
-            {format === 'tully' && <option value={ALL_TULLY_TABS}>All fortnights up to now ({startedTullySheets(workbook).length} tabs, for a year of fairness history)</option>}
+            {(format === 'tully' || format === 'admin') && <option value={ALL_TULLY_TABS}>All fortnights up to now ({historyTabs(workbook, format).length} tabs, for fairness history)</option>}
             {sheetNames.map(name => (
               <option key={name} value={name}>{name}</option>
             ))}
@@ -776,7 +812,7 @@ export default function RosterExcelImportTab({ departmentId, department, staffLi
 
       {workbook && (
         <div className="mb-4">
-          <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">{['shift_list', 'tully', 'gastro', 'mareeba'].includes(format) ? 'Dates to import' : 'Week to import'}</label>
+          <label className="block text-xs font-semibold text-gray-600 uppercase mb-2">{['shift_list', 'tully', 'gastro', 'mareeba', 'admin'].includes(format) ? 'Dates to import' : 'Week to import'}</label>
           <select
             value={weekIndex}
             onChange={(e) => { setWeekIndex(parseInt(e.target.value, 10)); setResults(null); setDeletionSummary(null); }}

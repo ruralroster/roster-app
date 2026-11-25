@@ -9,6 +9,7 @@ import AvailableShifts from './AvailableShifts';
 import MyMeetings from './MyMeetings';
 import { CallbackBanner, MyCallbacks } from './CallbackPanel';
 import useScreenTime from './useScreenTime';
+import { setFullTimeHoursPerWeek } from './fteFortnight';
 import MySitesCalendar from './MySitesCalendar';
 import DepartmentWeekGrid from './DepartmentWeekGrid';
 import { supabase } from './supabaseClient';
@@ -206,6 +207,8 @@ export default function StaffRosterView({ departmentId, staffId }) {
   const [loadingOnCall, setLoadingOnCall] = useState(false);
   const [phoneBookEntries, setPhoneBookEntries] = useState([]);
   const [department, setDepartment] = useState(null); // for coffee_place_name/coffee_place_phone — see the Coffee Orders modal
+  // The department's full-time week, for anything working out FTE.
+  setFullTimeHoursPerWeek(department?.full_time_hours_per_week);
 
   // This department's Morning/Afternoon/Night windows (see
   // migrations/2026-08-31_department_session_times.sql) — passed into every

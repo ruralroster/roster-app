@@ -8,10 +8,20 @@
 import { DEFAULT_FTE } from './availabilityUtils';
 import { addDays, intervalOn } from './plannerUtils';
 
-export const FULL_TIME_HOURS_PER_WEEK = 44;
+// Full time, hours a week: 44 for doctors by default; a department can set
+// its own (departments.full_time_hours_per_week, e.g. 38 for admin), which
+// the officer and staff views pass in with setFullTimeHoursPerWeek when the
+// department loads. A live binding: everything importing it sees the
+// department's.
+export let FULL_TIME_HOURS_PER_WEEK = 44;
 // A leave day counts as a normal shift for the person: see leaveDayHours.
 // With no shifts to average, a fifth of the full-time week.
-export const LEAVE_DAY_HOURS = FULL_TIME_HOURS_PER_WEEK / 5;
+export let LEAVE_DAY_HOURS = FULL_TIME_HOURS_PER_WEEK / 5;
+export function setFullTimeHoursPerWeek(hours) {
+  const h = Number(hours) > 0 ? Number(hours) : 44;
+  FULL_TIME_HOURS_PER_WEEK = h;
+  LEAVE_DAY_HOURS = h / 5;
+}
 
 // A known pay fortnight start (Monday); every pay fortnight is 14 days on
 // from it. Same boundary as edRuleChecks' FORTNIGHT_ANCHOR.

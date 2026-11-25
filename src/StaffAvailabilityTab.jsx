@@ -21,7 +21,7 @@ import {
   clearBookingsAfter,
   getStaffLeaveDays,
 } from './supabaseClient';
-import { leaveBlockHoursPerDay, formatHours } from './fteFortnight';
+import { leaveBlockHoursPerDay, formatHours, FULL_TIME_HOURS_PER_WEEK } from './fteFortnight';
 import { leaveBlocks } from './leaveBlocks';
 import {
   FTE_OPTIONS,
@@ -1386,7 +1386,7 @@ export default function StaffAvailabilityTab({ departmentId, staffList = [], lea
             </div>
 
             <p className="text-xs text-gray-600 mb-4">
-              Marks {selectedStaff?.name || 'this staff member'} on leave for every day from the first to the last, and counts their FTE's hours for it: 44 hours a week at 1.0 FTE, so two weeks at {formatFte(currentFte)} FTE counts {formatHours(leaveBlockHoursPerDay(currentFte) * 14)} hours.
+              Marks {selectedStaff?.name || 'this staff member'} on leave for every day from the first to the last, and counts their FTE's hours for it: {FULL_TIME_HOURS_PER_WEEK} hours a week at 1.0 FTE, so two weeks at {formatFte(currentFte)} FTE counts {formatHours(leaveBlockHoursPerDay(currentFte) * 14)} hours.
             </p>
 
             <div className="space-y-4 mb-6">

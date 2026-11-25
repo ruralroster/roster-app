@@ -1321,7 +1321,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
               <tr><td className="pr-3 text-gray-600">Leave</td><td className="text-right font-semibold">{fteText(fteRostered.leave)}</td></tr>
             </tbody>
           </table>
-          <p className="text-[11px] text-gray-500 max-w-xs">Hours booked ÷ a full-time load for the days shown (44 h a week = 1.0). Locum: anyone with no FTE, and visitors. On call isn't counted.</p>
+          <p className="text-[11px] text-gray-500 max-w-xs">Hours booked ÷ a full-time load for the days shown ({FULL_TIME_HOURS_PER_WEEK} h a week = 1.0). Locum: anyone with no FTE, and visitors. On call isn't counted.</p>
         </div>
       )}
 
@@ -1604,7 +1604,7 @@ export default function PlannerTab({ departmentId, refData, onWeekTemplatesChang
             )}
             <p className="text-xs text-gray-600">
               {selectedStaff
-                ? <>Booking <span className="font-semibold text-gray-900">{selectedStaff.name}</span> — green places are theirs to take; 1 is the fairest job for them. Once their FTE's hours for a pay fortnight are booked (44 h a week full time), that fortnight's places stay grey. Tap their name again to stop.</>
+                ? <>Booking <span className="font-semibold text-gray-900">{selectedStaff.name}</span> — green places are theirs to take; 1 is the fairest job for them. Once their FTE's hours for a pay fortnight are booked ({FULL_TIME_HOURS_PER_WEEK} h a week full time), that fortnight's places stay grey. Tap their name again to stop.</>
                 : 'Pick a person (most in need of shifts first), or tap an empty place to see who\'s fairest for it (tap again for the list). With nobody picked, tap a name on the grid to remove it, or an amber place to type a visitor.'}
             </p>
           </div>
