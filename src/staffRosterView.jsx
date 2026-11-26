@@ -11,6 +11,7 @@ import { CallbackBanner, MyCallbacks } from './CallbackPanel';
 import useScreenTime from './useScreenTime';
 import { setFullTimeHoursPerWeek } from './fteFortnight';
 import MySitesCalendar from './MySitesCalendar';
+import VariationsReminder from './VariationsReminder';
 import DepartmentWeekGrid from './DepartmentWeekGrid';
 import { supabase } from './supabaseClient';
 import {
@@ -2036,7 +2037,9 @@ export default function StaffRosterView({ departmentId, staffId }) {
               staffName={staffMember?.name}
               dutyTypes={dutyTypes}
               onRecorded={() => setCallbacksVersion(v => v + 1)}
+              esoEmail={department?.variations_email}
             />
+            <VariationsReminder staffId={staffId} staffName={staffMember?.name} esoEmail={department?.variations_email} dutyTypes={dutyTypes} />
             <CollapsibleSection title="My Variations">
               <MyCallbacks staffId={staffId} dutyTypes={dutyTypes} refreshKey={callbacksVersion} />
             </CollapsibleSection>

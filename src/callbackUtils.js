@@ -130,9 +130,57 @@ export function formatCallDate(date) {
 
 // The text file downloaded to the staff member's phone when a variation is
 // stopped — the only place the patient details ever go.
-export function buildCallbackNoteText({ staffName, variationLabel: label, startedAt, endedAt, mrn, surname, firstName }) {
+// A variation's short reference ("V-4F2K"), from its id: on the ESO's
+// Monday list, the doctor's email and the text file, so they can be
+// matched up.
+export function variationRef(callbackId) {
+  return `V-${String(callbackId || '').replace(/-/g, '').slice(0, 4).toUpperCase()}`;
+}
+
+const clean = (v) => String(v ?? '').replace(/[|\r\n]+/g, ' ').trim();
+const isoDate = (d) => toLocalDateStr(new Date(d));
+
+// The one machine-readable line each email and text file carries, for the
+// ESO's collator: RSTAR|ref|type|date|start|end|minutes|staff|for|MRN|surname|first name.
+export function esoSummaryLine({ ref, kind, label, startedAt, endedAt, staffName, mrn, surname, firstName }) {
+  const minutes = Math.round((new Date(endedAt) - new Date(startedAt)) / 60000);
+  return ['RSTAR', ref, kind === 'overtime' ? 'Overtime' : 'Callback', isoDate(startedAt), formatClock(startedAt), formatClock(endedAt), minutes,
+    clean(staffName), clean(label), clean(mrn), clean(surname).toUpperCase(), clean(firstName)].join('|');
+}
+
+// A text file's (or email's) RSTAR line back into its parts; null if none.
+export function parseEsoSummaryLines(text) {
+  return String(text || '').split(/\r?\n/).map(l => l.trim()).filter(l => l.startsWith('RSTAR|')).map(l => {
+    const [, ref, type, date, start, end, minutes, staff, what, mrn, surname, firstName] = l.split('|');
+    return { ref, type, date, start, end, minutes: Number(minutes) || 0, staff, what, mrn, surname, firstName };
+  });
+}
+
+// The email to the department's ESO for one or more variations: subject
+// and body, readable, with each one's RSTAR line under it.
+export function buildEsoEmail(staffName, variations) {
+  const first = variations[0];
+  const subject = variations.length === 1
+    ? `Pay variation ${first.ref}: ${first.kind === 'overtime' ? 'Overtime' : 'Callback'}, ${formatCallDate(first.startedAt)}`
+    : `Pay variations: ${variations.length} from ${staffName || 'me'}`;
+  const blocks = variations.map(v => {
+    const patient = [v.mrn && `MRN ${v.mrn}`, (v.surname || v.firstName) && [String(v.surname || '').toUpperCase(), v.firstName].filter(Boolean).join(', ')].filter(Boolean).join(' · ');
+    return [
+      `${v.ref} · ${v.kind === 'overtime' ? 'Overtime' : 'Callback'}${v.label ? ` (${v.label})` : ''}`,
+      `${formatCallDate(v.startedAt)}, ${formatClock(v.startedAt)}–${formatClock(v.endedAt)} (${formatDuration(new Date(v.endedAt) - new Date(v.startedAt))})`,
+      `Patient: ${patient || 'not given'}`,
+      esoSummaryLine({ ...v, staffName }),
+    ].join('\n');
+  });
+  return { subject, body: `${blocks.join('\n\n')}\n\n${staffName || ''}\n` };
+}
+
+export const mailtoHref = (to, { subject, body }) => `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+
+export function buildCallbackNoteText({ staffName, variationLabel: label, startedAt, endedAt, mrn, surname, firstName, ref, kind }) {
   const lines = [
     'Pay variation',
+    ...(ref ? [`Ref: ${ref}`] : []),
     `Staff: ${staffName || ''}`,
     `Type: ${label || ''}`,
     `Date: ${formatCallDate(startedAt)}`,
@@ -142,13 +190,16 @@ export function buildCallbackNoteText({ staffName, variationLabel: label, starte
   ];
   if (mrn) lines.push(`MRN: ${mrn}`);
   if (surname || firstName) lines.push(`Patient: ${[surname?.toUpperCase(), firstName].filter(Boolean).join(', ')}`);
+  if (ref) lines.push('', esoSummaryLine({ ref, kind, label, startedAt, endedAt, staffName, mrn, surname, firstName }));
   return `${lines.join('\n')}\n`;
 }
 
-export function callbackNoteFilename(startedAt) {
+// "Rstar variation 2026-11-24 2240 V-4F2K.txt": easy to spot and pick
+// together in the phone's files.
+export function callbackNoteFilename(startedAt, ref) {
   const d = new Date(startedAt);
   const pad = n => String(n).padStart(2, '0');
-  return `variation_${toLocalDateStr(d)}_${pad(d.getHours())}${pad(d.getMinutes())}.txt`;
+  return `Rstar variation ${toLocalDateStr(d)} ${pad(d.getHours())}${pad(d.getMinutes())}${ref ? ` ${ref}` : ''}.txt`;
 }
 
 // Calls longer than this are rejected when editing times — almost

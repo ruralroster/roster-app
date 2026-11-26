@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { PhoneCall, PhoneOff, AlertCircle, Loader, Download, X, Moon, Trash2, Pencil, Clock } from 'lucide-react';
+import { PhoneCall, PhoneOff, AlertCircle, Loader, Download, X, Moon, Trash2, Pencil, Clock, Mail } from 'lucide-react';
 import {
   getMyVariationOptions,
   getMyOpenCallback,
@@ -8,6 +8,7 @@ import {
   deleteCallback,
   getMyCallbacks,
   updateCallbackTimes,
+  markMyVariationsSent,
 } from './supabaseClient';
 import {
   SHORT_CALL_MS,
@@ -19,6 +20,9 @@ import {
   formatCallDate,
   buildCallbackNoteText,
   callbackNoteFilename,
+  variationRef,
+  buildEsoEmail,
+  mailtoHref,
   toDateTimeLocalValue,
   validateCallTimes,
   variationLabel,
@@ -46,7 +50,9 @@ const VARIATION_CSV_COLUMNS = [
 // ended. While one is running it becomes a timer with a Stop button — shown even if the on-call/overtime window has since ended,
 // so it can always be stopped. Calls onRecorded after one is kept, so the
 // My Variations list below can refresh.
-export function CallbackBanner({ staffId, departmentId, staffName, dutyTypes, onRecorded }) {
+// esoEmail: the department's variations address (Settings); set, the
+// completion screen offers Email to ESO.
+export function CallbackBanner({ staffId, departmentId, staffName, dutyTypes, onRecorded, esoEmail }) {
   const [options, setOptions] = useState({ onCalls: [], shifts: [] });
   const [openCall, setOpenCall] = useState(null);
   const [loaded, setLoaded] = useState(false);
@@ -184,16 +190,32 @@ export function CallbackBanner({ staffId, departmentId, staffName, dutyTypes, on
 
   // Patient details go into a text file on this phone only — never sent
   // to the server.
+  const ref = completedCall?.callback_id ? variationRef(completedCall.callback_id) : null;
+  const noteFields = () => ({
+    staffName,
+    variationLabel: variationLabel(completedCall, dutyTypes),
+    startedAt: completedCall.started_at,
+    endedAt: completedCall.ended_at,
+    mrn: mrn.trim(),
+    surname: surname.trim(),
+    firstName: firstName.trim(),
+    ref,
+    kind: completedCall.kind,
+  });
   const handleDownloadNote = () => {
-    downloadTextFile(callbackNoteFilename(completedCall.started_at), 'text/plain', buildCallbackNoteText({
-      staffName,
-      variationLabel: variationLabel(completedCall, dutyTypes),
-      startedAt: completedCall.started_at,
-      endedAt: completedCall.ended_at,
-      mrn: mrn.trim(),
-      surname: surname.trim(),
-      firstName: firstName.trim(),
-    }));
+    downloadTextFile(callbackNoteFilename(completedCall.started_at, ref), 'text/plain', buildCallbackNoteText(noteFields()));
+    finishPatientStep();
+  };
+  // Email to ESO: their own email app, addressed, with this variation's
+  // times and the patient details just typed. Nothing goes to Rstar but
+  // "sent". The text file is saved too, as a backup.
+  const handleEmailEso = async () => {
+    const f = noteFields();
+    downloadTextFile(callbackNoteFilename(completedCall.started_at, ref), 'text/plain', buildCallbackNoteText(f));
+    const email = buildEsoEmail(staffName, [{ ref, kind: completedCall.kind, label: variationFor(completedCall, dutyTypes), startedAt: f.startedAt, endedAt: f.endedAt, mrn: f.mrn, surname: f.surname, firstName: f.firstName }]);
+    // Marked first: opening the email app can pause this page.
+    if (completedCall.callback_id) await markMyVariationsSent([completedCall.callback_id]);
+    window.location.href = mailtoHref(esoEmail, email);
     finishPatientStep();
   };
 
@@ -256,7 +278,10 @@ export function CallbackBanner({ staffId, departmentId, staffName, dutyTypes, on
               {formatClock(completedCall.started_at)} – {formatClock(completedCall.ended_at)} ({formatDuration(new Date(completedCall.ended_at) - new Date(completedCall.started_at))})
             </p>
             <p className="text-xs text-gray-500 mb-4">
-              Optional: which patient was this for? This is <span className="font-semibold">only saved to a text file on this phone</span> — the app never stores patient details.
+              {esoEmail
+                ? <>Which patient was this for? It goes <span className="font-semibold">only in your email to the ESO</span> and a text file on this phone — the app never stores patient details.</>
+                : <>Optional: which patient was this for? This is <span className="font-semibold">only saved to a text file on this phone</span> — the app never stores patient details.</>}
+              {ref && <span className="block mt-1">Reference: <span className="font-mono font-semibold">{ref}</span></span>}
             </p>
             <label className="block text-xs font-semibold text-gray-600 uppercase mb-1">MRN</label>
             <input value={mrn} onChange={e => setMrn(e.target.value)} inputMode="numeric" autoComplete="off" className="w-full px-3 py-2 border border-gray-300 rounded-lg mb-3" />
@@ -271,13 +296,22 @@ export function CallbackBanner({ staffId, departmentId, staffName, dutyTypes, on
                 <input value={firstName} onChange={e => setFirstName(e.target.value)} autoComplete="off" className="w-full px-3 py-2 border border-gray-300 rounded-lg" />
               </div>
             </div>
+            {esoEmail && (
+              <button
+                onClick={handleEmailEso}
+                className="w-full mb-3 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition flex items-center justify-center gap-2"
+              >
+                <Mail size={18} />
+                Email to ESO
+              </button>
+            )}
             <div className="flex gap-3">
               <button onClick={finishPatientStep} className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 text-gray-800 font-semibold rounded-lg transition">
                 Skip
               </button>
               <button
                 onClick={handleDownloadNote}
-                className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition flex items-center justify-center gap-2"
+                className={`flex-1 py-3 font-semibold rounded-lg transition flex items-center justify-center gap-2 ${esoEmail ? 'bg-gray-100 hover:bg-gray-200 text-gray-800' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}
               >
                 <Download size={18} />
                 Download to phone

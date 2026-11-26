@@ -137,3 +137,25 @@ describe('editing call times', () => {
     expect(toDateTimeLocalValue(at('2026-10-14T02:05:00'))).toBe('2026-10-14T02:05');
   });
 });
+
+describe('variations to the ESO', () => {
+  const { variationRef, esoSummaryLine, parseEsoSummaryLines, buildEsoEmail, mailtoHref, callbackNoteFilename } = require('./callbackUtils');
+  const v = { ref: variationRef('4f2ka1b2-0000-0000-0000-000000000000'), kind: 'callback', label: 'ED on call', startedAt: '2026-11-24T22:40:00', endedAt: '2026-11-24T23:55:00', mrn: '1234567', surname: 'Citizen', firstName: 'Jane' };
+  it('gives each variation a short reference', () => {
+    expect(v.ref).toBe('V-4F2K');
+  });
+  it('writes a summary line the collator can read back', () => {
+    const line = esoSummaryLine({ ...v, staffName: 'Ann Example' });
+    expect(line).toBe('RSTAR|V-4F2K|Callback|2026-11-24|22:40|23:55|75|Ann Example|ED on call|1234567|CITIZEN|Jane');
+    expect(parseEsoSummaryLines(`hello\n${line}\n`)[0]).toMatchObject({ ref: 'V-4F2K', minutes: 75, mrn: '1234567', surname: 'CITIZEN' });
+  });
+  it('builds the email with the patient details', () => {
+    const { subject, body } = buildEsoEmail('Ann Example', [v]);
+    expect(subject).toMatch(/V-4F2K: Callback/);
+    expect(body).toMatch(/MRN 1234567 · CITIZEN, Jane/);
+    expect(mailtoHref('eso@example.com', { subject, body })).toMatch(/^mailto:eso%40example\.com\?subject=/);
+  });
+  it('names the file so they sort together', () => {
+    expect(callbackNoteFilename('2026-11-24T22:40:00', 'V-4F2K')).toBe('Rstar variation 2026-11-24 2240 V-4F2K.txt');
+  });
+});

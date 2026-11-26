@@ -12,6 +12,7 @@ import { formatFairShare, goesWithOnCall, buildFairness, isCasual } from './fair
 import FairnessReport from './FairnessReport';
 import CallbacksReport from './CallbacksReport';
 import BusinessCaseReport from './BusinessCaseReport';
+import VariationsEmailSetting from './VariationsEmailSetting';
 import RuleViolationsReport, { createDefaultRuleCheckState } from './RuleViolationsReport';
 import InvestigateViolationModal from './InvestigateViolationModal';
 import DayReviewModal from './DayReviewModal';
@@ -6291,6 +6292,11 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
             {/* Pay variations (callbacks + overtime) staff recorded from
                 their Variation tab */}
             <CollapsibleSection title="Pay Variations">
+              <VariationsEmailSetting
+                departmentId={departmentId}
+                current={refData.department?.variations_email}
+                onSaved={(email) => setRefData(prev => ({ ...prev, department: { ...prev.department, variations_email: email } }))}
+              />
               <CallbacksReport departmentId={departmentId} refreshKey={staffVersion} />
             </CollapsibleSection>
 

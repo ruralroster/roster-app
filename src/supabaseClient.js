@@ -7061,6 +7061,28 @@ export async function createDepartment(name) {
 // staff row (see the "Invite" action on a "Not linked" row in
 // StaffAccountsTab) instead of creating a new one — see
 // supabase/functions/invite-staff/index.ts for the two modes.
+// Pay variations to the ESO: a doctor's own variations not yet emailed
+// (details_sent_at), and marking them sent. Times only; patient details
+// never come here.
+export async function getMyUnsentVariations(staffId) {
+  const { data, error } = await supabase.from('callbacks').select('*, shifts(name)')
+    .eq('staff_id', staffId).not('ended_at', 'is', null).is('details_sent_at', null).order('started_at');
+  return { data: data || [], error };
+}
+export async function getMyLastVariationSend(staffId) {
+  const { data } = await supabase.from('callbacks').select('details_sent_at')
+    .eq('staff_id', staffId).not('details_sent_at', 'is', null).order('details_sent_at', { ascending: false }).limit(1);
+  return data?.[0]?.details_sent_at || null;
+}
+export async function markMyVariationsSent(callbackIds) {
+  const { error } = await supabase.rpc('mark_my_variations_sent', { p_callback_ids: callbackIds });
+  return { error };
+}
+export async function saveVariationsEmail(departmentId, email) {
+  const { error } = await supabase.from('departments').update({ variations_email: email?.trim().toLowerCase() || null }).eq('department_id', departmentId);
+  return { error };
+}
+
 // A rostering officer who isn't clinical (Staff Accounts): left out of
 // rostering everywhere (staff.non_clinical), with no FTE.
 export async function markStaffNonClinical(staffId) {
