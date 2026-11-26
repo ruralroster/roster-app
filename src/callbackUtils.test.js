@@ -159,3 +159,11 @@ describe('variations to the ESO', () => {
     expect(callbackNoteFilename('2026-11-24T22:40:00', 'V-4F2K')).toBe('Rstar variation 2026-11-24 2240 V-4F2K.txt');
   });
 });
+
+describe('called in when not on call', () => {
+  const { variationLabel, esoSummaryLine } = require('./callbackUtils');
+  it('labels it apart from on-call callbacks', () => {
+    expect(variationLabel({ kind: 'callin' }, [])).toBe('Called in — not on call');
+    expect(esoSummaryLine({ ref: 'V-1', kind: 'callin', startedAt: '2026-11-27T02:00:00', endedAt: '2026-11-27T03:00:00', staffName: 'A' })).toMatch(/^RSTAR\|V-1\|Called in\|/);
+  });
+});

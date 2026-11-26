@@ -13,6 +13,7 @@ import FairnessReport from './FairnessReport';
 import CallbacksReport from './CallbacksReport';
 import BusinessCaseReport from './BusinessCaseReport';
 import VariationsEmailSetting from './VariationsEmailSetting';
+import CalledInSetting from './CalledInSetting';
 import RuleViolationsReport, { createDefaultRuleCheckState } from './RuleViolationsReport';
 import InvestigateViolationModal from './InvestigateViolationModal';
 import DayReviewModal from './DayReviewModal';
@@ -6152,6 +6153,24 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
               <StaffProfilesTab departmentId={departmentId} refreshKey={staffVersion} />
             </CollapsibleSection>
 
+            {/* Pay variations: where they go (the ESO) and who may be
+                called in when not on call. */}
+            <CollapsibleSection title="Pay Variations">
+              <VariationsEmailSetting
+                departmentId={departmentId}
+                current={refData.department?.variations_email}
+                onSaved={(email) => setRefData(prev => ({ ...prev, department: { ...prev.department, variations_email: email } }))}
+              />
+              <CalledInSetting
+                departmentId={departmentId}
+                department={refData.department}
+                staff={refData.staff}
+                onChanged={(change) => setRefData(prev => (change.department
+                  ? { ...prev, department: change.department }
+                  : { ...prev, staff: prev.staff.map(st => (st.staff_id === change.staffId ? { ...st, can_be_called_in: change.can_be_called_in } : st)) }))}
+              />
+            </CollapsibleSection>
+
             {/* Staff Accounts Section */}
             <CollapsibleSection title="Staff Accounts">
               <StaffAccountsTab departmentId={departmentId} refreshKey={staffVersion} staffRanks={refData.staffRanks} />
@@ -6292,11 +6311,6 @@ export default function OfficerRosterView({ departmentId: departmentIdProp, staf
             {/* Pay variations (callbacks + overtime) staff recorded from
                 their Variation tab */}
             <CollapsibleSection title="Pay Variations">
-              <VariationsEmailSetting
-                departmentId={departmentId}
-                current={refData.department?.variations_email}
-                onSaved={(email) => setRefData(prev => ({ ...prev, department: { ...prev.department, variations_email: email } }))}
-              />
               <CallbacksReport departmentId={departmentId} refreshKey={staffVersion} />
             </CollapsibleSection>
 

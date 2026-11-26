@@ -31,6 +31,7 @@ import {
   VARIATION_KIND_LABEL,
 } from './callbackUtils';
 import { buildCsv, downloadTextFile } from './icsExport';
+import { toLocalDateStr } from './dateUtils';
 
 const VARIATION_CSV_COLUMNS = [
   { header: 'Date', value: c => formatCallDate(c.started_at) },
@@ -52,7 +53,9 @@ const VARIATION_CSV_COLUMNS = [
 // My Variations list below can refresh.
 // esoEmail: the department's variations address (Settings); set, the
 // completion screen offers Email to ESO.
-export function CallbackBanner({ staffId, departmentId, staffName, dutyTypes, onRecorded, esoEmail }) {
+// calledIn: this person may start a "Called in (not on call)" timer any
+// time (their department allows it and the officer ticked them).
+export function CallbackBanner({ staffId, departmentId, staffName, dutyTypes, onRecorded, esoEmail, calledIn = false }) {
   const [options, setOptions] = useState({ onCalls: [], shifts: [] });
   const [openCall, setOpenCall] = useState(null);
   const [loaded, setLoaded] = useState(false);
@@ -353,7 +356,7 @@ export function CallbackBanner({ staffId, departmentId, staffName, dutyTypes, on
     </div>
   );
 
-  const hasOptions = options.onCalls.length > 0 || options.shifts.length > 0;
+  const hasOptions = options.onCalls.length > 0 || options.shifts.length > 0 || calledIn;
   if (!loaded || (!hasOptions && !openCall)) {
     return <>{completeModal}{overtimeSinceModal}{fatigueNotice}</>;
   }
@@ -413,6 +416,19 @@ export function CallbackBanner({ staffId, departmentId, staffName, dutyTypes, on
                 </span>
               </button>
             ))}
+            {calledIn && (
+              <button
+                onClick={() => handleStart({ kind: 'callin', dutyDate: toLocalDateStr(new Date()) })}
+                disabled={busy}
+                className="w-full py-4 px-4 bg-amber-600 hover:bg-amber-700 text-white rounded-lg flex items-center gap-3 disabled:opacity-50 text-left"
+              >
+                {busy ? <Loader size={22} className="animate-spin flex-shrink-0" /> : <PhoneCall size={22} className="flex-shrink-0" />}
+                <span>
+                  <span className="block text-lg font-bold">Called in (not on call)</span>
+                  <span className="block text-xs text-amber-100">Called in when you weren't on call or on shift</span>
+                </span>
+              </button>
+            )}
             {options.shifts.map(sh => (
               <button
                 key={`${sh.date}-${sh.shift_id}`}

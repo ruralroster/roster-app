@@ -2038,6 +2038,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
               dutyTypes={dutyTypes}
               onRecorded={() => setCallbacksVersion(v => v + 1)}
               esoEmail={department?.variations_email}
+              calledIn={!!department?.allow_called_in && !!staffMember?.can_be_called_in}
             />
             <VariationsReminder staffId={staffId} staffName={staffMember?.name} esoEmail={department?.variations_email} dutyTypes={dutyTypes} />
             <CollapsibleSection title="My Variations">

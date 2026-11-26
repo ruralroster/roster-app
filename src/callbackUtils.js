@@ -86,11 +86,13 @@ export function overtimeStartMode(end, now = new Date()) {
   return now < new Date(end) ? 'scheduled' : 'ask';
 }
 
-export const VARIATION_KIND_LABEL = { callback: 'Callback', overtime: 'Overtime' };
+export const VARIATION_KIND_LABEL = { callback: 'Callback', overtime: 'Overtime', callin: 'Called in' };
+const kindLabel = (kind) => VARIATION_KIND_LABEL[kind] || 'Callback';
 
 // What a stored variation row was for: the on-call slot's label, or the
 // shift's name for overtime (needs `shifts(name)` joined).
 export function variationFor(row, dutyTypes) {
+  if (row.kind === 'callin') return 'not on call';
   return row.kind === 'overtime'
     ? row.shifts?.name || ''
     : dutyTypes.find(d => d.key === row.duty_type)?.label || row.duty_type || '';
@@ -144,7 +146,7 @@ const isoDate = (d) => toLocalDateStr(new Date(d));
 // ESO's collator: RSTAR|ref|type|date|start|end|minutes|staff|for|MRN|surname|first name.
 export function esoSummaryLine({ ref, kind, label, startedAt, endedAt, staffName, mrn, surname, firstName }) {
   const minutes = Math.round((new Date(endedAt) - new Date(startedAt)) / 60000);
-  return ['RSTAR', ref, kind === 'overtime' ? 'Overtime' : 'Callback', isoDate(startedAt), formatClock(startedAt), formatClock(endedAt), minutes,
+  return ['RSTAR', ref, kindLabel(kind), isoDate(startedAt), formatClock(startedAt), formatClock(endedAt), minutes,
     clean(staffName), clean(label), clean(mrn), clean(surname).toUpperCase(), clean(firstName)].join('|');
 }
 
@@ -161,12 +163,12 @@ export function parseEsoSummaryLines(text) {
 export function buildEsoEmail(staffName, variations) {
   const first = variations[0];
   const subject = variations.length === 1
-    ? `Pay variation ${first.ref}: ${first.kind === 'overtime' ? 'Overtime' : 'Callback'}, ${formatCallDate(first.startedAt)}`
+    ? `Pay variation ${first.ref}: ${kindLabel(first.kind)}, ${formatCallDate(first.startedAt)}`
     : `Pay variations: ${variations.length} from ${staffName || 'me'}`;
   const blocks = variations.map(v => {
     const patient = [v.mrn && `MRN ${v.mrn}`, (v.surname || v.firstName) && [String(v.surname || '').toUpperCase(), v.firstName].filter(Boolean).join(', ')].filter(Boolean).join(' · ');
     return [
-      `${v.ref} · ${v.kind === 'overtime' ? 'Overtime' : 'Callback'}${v.label ? ` (${v.label})` : ''}`,
+      `${v.ref} · ${kindLabel(v.kind)}${v.label ? ` (${v.label})` : ''}`,
       `${formatCallDate(v.startedAt)}, ${formatClock(v.startedAt)}–${formatClock(v.endedAt)} (${formatDuration(new Date(v.endedAt) - new Date(v.startedAt))})`,
       `Patient: ${patient || 'not given'}`,
       esoSummaryLine({ ...v, staffName }),

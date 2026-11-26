@@ -7078,6 +7078,16 @@ export async function markMyVariationsSent(callbackIds) {
   const { error } = await supabase.rpc('mark_my_variations_sent', { p_callback_ids: callbackIds });
   return { error };
 }
+// Called in when not on call: the department's switch, and who may.
+export async function setDepartmentAllowCalledIn(departmentId, allow) {
+  const { error } = await supabase.from('departments').update({ allow_called_in: !!allow }).eq('department_id', departmentId);
+  return { error };
+}
+export async function setStaffCanBeCalledIn(staffId, can) {
+  const { error } = await supabase.from('staff').update({ can_be_called_in: !!can }).eq('staff_id', staffId);
+  return { error };
+}
+
 export async function saveVariationsEmail(departmentId, email) {
   const { error } = await supabase.from('departments').update({ variations_email: email?.trim().toLowerCase() || null }).eq('department_id', departmentId);
   return { error };
