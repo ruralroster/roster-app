@@ -1653,7 +1653,7 @@ export default function StaffRosterView({ departmentId, staffId }) {
                   <button onClick={() => setCurrentDate(new Date(currentDate.getTime() + 7 * 24 * 60 * 60 * 1000))} className="p-2 hover:bg-gray-100 rounded-lg" aria-label="Next week"><ChevronRight size={22} /></button>
                 </div>
               </div>
-              <DepartmentWeekGrid departmentId={departmentId} weekStartStr={toLocalDateStr(weekStart)} dutyTypes={dutyTypes} myStaffId={staffId} />
+              <DepartmentWeekGrid departmentId={departmentId} weekStartStr={toLocalDateStr(weekStart)} dutyTypes={dutyTypes} myStaffId={staffId} staffRanks={staffRanks} />
             </div>
           </div>
         );

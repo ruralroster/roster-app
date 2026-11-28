@@ -5457,7 +5457,7 @@ export async function getDepartmentWeek(departmentId, weekStartStr) {
   const endStr = toLocalDateStr(end);
   const [booked, duties] = await Promise.all([
     supabase.from('staff_assignments')
-      .select('assignment_id, date, staff_id, on_call, leave_code, location_id, staff(name), locations(name), shifts(start_time, end_time)')
+      .select('assignment_id, date, staff_id, on_call, leave_code, location_id, staff(name, rank), locations(name), shifts(start_time, end_time)')
       .eq('department_id', departmentId).gte('date', weekStartStr).lte('date', endStr),
     supabase.from('duty_assignments')
       .select('duty_id, date, staff_id, duty_type, staff(name)')
